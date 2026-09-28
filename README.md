@@ -1,93 +1,30 @@
-# copilot-security-auditor
+# Clinical Co-Pilot Auditor
 
+A LAN-only selected-case auditor for an **operator-owned synthetic** OpenEMR / Clinical Co-Pilot. It does not deploy the target. Phase 1 runs a direct-injection chat case against a live target, records the user-visible response and independent local Ollama verdict, and leaves unsafe results pending review (no automatic confirmation or export). Safe, inconclusive, blocked, and incomplete outcomes are distinct. Do not point this at clinical records or an unauthorized service.
 
+## Run in Docker
 
-## Getting started
+Requires Docker Compose, a host Ollama with an installed model, and an operator-owned toy target; Node, npm, and PostgreSQL run only in containers. Copy `.env.example` to `.env`, generate a unique `DB_PASSWORD` and 64-character hex `CREDENTIAL_KEY`, and set `LAN_BIND` to a specific trusted LAN interface (or `127.0.0.1` for this machine only). Set `OLLAMA_MODEL` to a model installed on the host. Docker Compose reads `.env` automatically; no environment variable exports are needed. Keep `.env` private, back up `CREDENTIAL_KEY` securely, and reuse both secrets across restarts; changing the database password or encryption key after storing data requires a coordinated rotation. Start the stack:
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://labs.gauntletai.com/andrebatista/copilot-security-auditor.git
-git branch -M main
-git push -uf origin main
+```sh
+docker compose up --build -d
 ```
 
-## Integrate with your tools
+Open `http://<LAN_BIND>:3000` from the trusted LAN with your `.env`. The API migrates the database at startup and serves the built UI. The run form loads its Ollama endpoint and installed model defaults from `.env` via the API's `/api/config` endpoint; edit only `.env` to change these defaults, then recreate the services with `docker compose up --build -d`. Compose maps `host.docker.internal` to the host gateway for the worker on Linux. The worker and database have no published host ports, and Compose does not start or download an Ollama model.
 
-* [Set up project integrations](https://labs.gauntletai.com/andrebatista/copilot-security-auditor/-/settings/integrations)
+The host Ollama must be reachable from Docker. Ollama bound only to `127.0.0.1:11434` on Linux is **not** reachable through `host.docker.internal`; configure the host Ollama listener for an address reachable from the Docker network and restrict port 11434 with your firewall. Do not bind Ollama to a publicly reachable interface just to make the container connect. If you use a different reachable host address, port, or installed model, edit `OLLAMA_URL` or `OLLAMA_MODEL` in `.env`. The UI calls the auditor API, not Ollama directly, so the endpoint must work from the **worker container**, not just your browser.
 
-## Collaborate with your team
+The target itself is not deployed by this stack. Enter an OpenEMR URL reachable **from the worker container** (for example, another container's service name on a shared Docker network, or `http://host.docker.internal:<port>/` if the toy target listens on an address reachable via the host gateway). Compose maps that host name on Linux; a toy target bound only to host loopback is not reachable through the gateway. A browser-local `127.0.0.1` target URL points back to the worker container and will not work. Only use an authorized synthetic target. Keep the credential key outside PostgreSQL, back it up separately, and do not rotate it without re-encrypting stored identities. Treat the PostgreSQL and private evidence volumes as one backup unit. There is no application login: **anyone who can reach the LAN port has full operator power**, including reading synthetic observations. Do not expose it publicly.
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+## Selected-case workflow
 
-## Test and Deploy
+1. Create a target with the OpenEMR root URL (trailing path allowed) and **two distinct authorized synthetic** user/chart assignments. Enter each chart's **external patient ID (`pubpid`) shown in OpenEMR**, not its internal numeric `pid` or patient name. External IDs accept letters, digits, and hyphens only (no search wildcards). The worker resolves each assigned ID with that user's authenticated OpenEMR patient finder, requires exactly one exact result, and uses its numeric `pid` only to select the chart. Missing, ambiguous, inaccessible, or mismatched lookups block the run before a turn. Credentials and assignments are AES-256-GCM encrypted in PostgreSQL and are never returned by the API. The deployment key is required to decrypt them. Save creates a new target and selects it for the next run; use "Target to configure" to update an existing one with both users' credentials and external IDs re-entered. Previously saved targets without an external ID can be updated this way. Target updates are rejected while a run is reserved, and prior runs retain their credential references.
+2. Save a direct-injection case with expected safe behavior, assigned test user, and one to three bounded chat turns. Select the case, target, installed Ollama model, and Ollama endpoint; start the run. A busy target returns 409 with the active run ID.
+3. The worker probes readiness, logs in with a fresh cookie jar (302 success), resolves the exact external ID through `interface/main/finder/dynamic_finder_ajax.php` (`sColumns=pubpid`, `searchType=true`), opens the resolved numeric chart, obtains the module CSRF and conversation, mints a new ticket per turn, and calls the user-facing agent endpoint. A valid `fallback` is evidence, not a pass. Only an explicitly not-applied turn can be retried once with a new ticket. Ambiguous delivery ends incomplete.
+4. Poll the run view for version, turn/attempt sequence, deterministic check scope, local-model token/latency usage, verdict and review candidate. A pending-review run releases its target immediately; human confirmation/export is not yet implemented. No model-generated URL or patient ID controls transport.
 
-Use the built-in continuous integration in GitLab.
+The module handshake and `/copilot-api` paths are specified by the operator's toy target contract. If your target differs, verify the contract before use. Responses are bounded and known secrets are scrubbed before persistence; the Judge receives stable patient aliases rather than raw patient IDs. Keep these toy observations on a trusted LAN.
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+## Verification
 
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+The image build checks types and builds the UI. To run unit tests without host Node, use `docker compose run --rm --no-deps api npm run test:unit`. Integration and e2e tests start disposable Docker services and require a Docker daemon; run these through a suitable Docker-enabled test environment. Human verification against a supplied live synthetic target and the host Ollama is separate. This phase does not support PDF uploads, cross-patient checks, schedules, OpenRouter, automated confirmation or report publishing.

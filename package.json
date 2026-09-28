@@ -1,0 +1,36 @@
+{
+  "name": "clinical-copilot-auditor",
+  "private": true,
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build --config apps/web/vite.config.ts",
+    "test:unit": "node --import tsx --test tests/unit.test.ts tests/session.test.ts",
+    "test:integration": "node --import tsx --test tests/integration.test.ts",
+    "test:e2e": "node --import tsx --test tests/e2e.test.ts",
+    "migrate": "tsx db/migrate.ts",
+    "dev:api": "tsx apps/api/src/main.ts",
+    "dev:worker": "tsx apps/worker/src/main.ts",
+    "dev:web": "vite --config apps/web/vite.config.ts"
+  },
+  "dependencies": {
+    "@langchain/langgraph": "^1.4.18",
+    "express": "^5.1.0",
+    "pg": "^8.16.3",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "zod": "^4.0.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.0.3",
+    "@types/pg": "^8.15.4",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^5.8.3",
+    "tsx": "^4.20.3",
+    "vite": "^6.3.5"
+  }
+}

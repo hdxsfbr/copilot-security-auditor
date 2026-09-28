@@ -1,0 +1,11 @@
+
+# Riptide artifacts (cloud-synced)
+.humanlayer/tasks/
+
+node_modules/
+dist/
+.env
+*.log
+
+# Riptide artifacts (cloud-synced)
+.humanlayer/tasks/
