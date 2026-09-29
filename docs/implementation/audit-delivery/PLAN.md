@@ -161,6 +161,16 @@ The initial sequence is:
 
 ## Coordination rules
 
+### Revision: parallel lanes (2026-09-29, 20:45 UTC)
+
+A new coordinator session (Claude) resumed delivery after the previous agent session ended with X02 and U04 dispatched but uncommitted. The user approved these changes, which supersede the conflicting rules below:
+
+- **Concurrency:** up to five active or awaiting-review issues (`limits` in the manifest). Subagents are Claude Sonnet; the manifest's Sol/Luna labels now record the intended role, not the model.
+- **Merges:** the coordinator merges after its own diff review, exact-head local validation and a successful GitLab pipeline for that head, then verifies fresh `origin/main` ancestry. Deployment, report publication and paid/live validation still need separate authorization.
+- **Semantic locks:** the coarse `api-data`, `contracts`, `migrations` and `worker-*` locks are replaced by feature locks (for example `spend-accounting`, `report-jobs`, `coverage-api`, `regression-suite`). Shared registration files (`apps/api/src/app.ts`, `apps/api/src/repository.ts`, `packages/contracts/src/index.ts`, `db/migrate.ts`, `apps/worker/src/main.ts`) take small additive edits from concurrent issues; new logic goes in feature-named modules. The coordinator rebases each branch onto current main before merge, resolves conflicts and re-runs the full fixture suite on the rebased head. Semantically overlapping work stays serialized through a shared lock: F00 and M02 hold `spend-accounting`.
+- **Migrations:** numbers are pre-assigned in the manifest (`migration` field: O01 014, F00 015, V01 016, M02 017, F01 018, G01 019, G02 020, A17 021, S01 022), so concurrent branches never race for a number. `db/migrate.ts` exports `migrationNames`; the health check and its test derive the expected count from it.
+- **Priority:** the early submission is due about eight hours after this revision; the final submission is due Friday, October 2. Dispatch favours the report path (F00 → F01 → F02), the composer, coverage and operations visibility first. G01 → G02 → A17 → Q02 → P01 → D02 complete for the final submission.
+
 The root agent coordinates this single session. Subagents use **Sol or Luna only**, as recorded in the manifest. At most three issues may be active or awaiting review combined, including repair work. This bounds both agent concurrency and the review queue. A finished coding agent with an open MR still consumes a work slot and holds its locks.
 
 Linear is the visible work tracker; GitLab is authoritative for branches, MR state and merged commits. The versioned manifest owns the intended dependency graph, file areas, acceptance and lock names. The ignored journal records dispatch details; it is not evidence of a merge. Conflicting or missing records stop the affected dispatch for reconciliation.
@@ -172,13 +182,13 @@ For every launch:
 4. Give the agent the issue, exact workspace, allowed file areas, acceptance, base SHA, locks and dependency facts. The root working checkout must not be reset to manage another agent.
 5. The agent implements and validates its bounded scope. Shared test-harness changes belong to Q01; feature tests use separate files and declared fixture facilities. Migrations are numbered only while holding the migration lock against freshly merged main.
 6. Root reviews the diff for scope and correctness, runs the relevant checks, records their output against the MR head commit and opens/updates one MR. Link the MR to Linear and attach it to this task. Move the issue to In Review.
-7. The user reviews and merges. The coordinator never merges, deploys, publishes reports or runs paid/live validation on their behalf from this routine loop.
+7. The user authorized coordinator merges on 2026-09-29. Root may merge after independent review, exact-source required checks and successful GitLab CI, then verifies fresh origin/main ancestry before releasing dependencies. This does not authorize deployment, report publication or paid/live validation.
 
 Locks are semantic file-area ownership. `api-data`, `contracts`, `migrations`, `worker-pipeline`, `worker-models`, `worker-session`, `worker-loop` and shared UI/harness locks cover their respective shared files. Files listed in issues are scope boundaries, not a claim that all files must change. If a worker needs another owner's shared file, it requests the lock and pauses that portion; it does not bypass the scheduler. Route imports/shared exports and fixtures count as shared changes.
 
 One issue normally produces one bounded MR. Split an unexpectedly large or cross-domain implementation into explicit child issues before expanding scope; update the manifest and native dependencies. Roughly 750 changed non-generated lines is a review checkpoint, not a substitute for judgment. D00 includes the audit, manifest and plan as a documentation baseline. Do not combine unrelated fixes to fill an agent slot.
 
-A failed check gets at most two focused repair rounds per attempt. Record the failure and correction. Repeated failure, unclear product policy or incompatible contract pauses the affected task and asks for the missing decision, while independent ready work may continue. Never hide a flaky test with unlimited reruns.
+A failed check gets at most two focused repair rounds per attempt. Record the failure and correction. The same issue surviving two repair rounds, 30 minutes without a reviewable milestone, or scope exceeding its agreed boundary halts only the affected task and records the reason. Independent ready work continues; the orchestrator stops only when all available work is blocked. Ask for a decision only when missing product policy or an incompatible contract requires one. Never hide a flaky test with unlimited reruns.
 
 MR evidence should identify the tested commit and scenario, give the relevant check results, and link the same evidence from the MR and Linear issue. For UI changes, attach authentic before/after screenshots of the affected state; add a short video when interaction, navigation or timing is easier to assess in motion. Use synthetic data and capture the tested build, not a mockup or unrelated revision. For backend-only changes, use API/fixture evidence when a visual capture would add no useful proof.
 

@@ -18,7 +18,7 @@ function taskKeys(manifest) { return new Set(manifest.tasks.map(task => task.key
 export function validateInputs(manifest, state) {
   assert(manifest && manifest.schemaVersion === 1 && Array.isArray(manifest.tasks), 'Invalid manifest');
   assert(manifest.project?.gitlabProjectId === 2059 && manifest.project.gitlabHost === 'labs.gauntletai.com' && manifest.project.defaultBranch === 'main', 'Project is not allowlisted');
-  assert(manifest.limits?.maxSubagents === 3 && manifest.limits?.maxWorkInProgress === 3, 'Invalid concurrency limits');
+  assert([manifest.limits?.maxSubagents, manifest.limits?.maxWorkInProgress].every(n => Number.isInteger(n) && n >= 1 && n <= 5), 'Invalid concurrency limits');
   assert(state && state.schemaVersion === 1 && state.mode === 'active-session' && state.tasks && typeof state.tasks === 'object' && !Array.isArray(state.tasks), 'Invalid journal');
   const keys = taskKeys(manifest);
   assert(keys.size === manifest.tasks.length, 'Duplicate task key');
