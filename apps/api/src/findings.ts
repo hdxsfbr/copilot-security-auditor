@@ -10,7 +10,7 @@ type Db = pg.Pool | pg.PoolClient;
 
 // Report text never carries a real identifier. Aliases are fixed by the target's user slot, so the same person or
 // chart keeps the same alias in every report and revision while the attack mechanism stays legible.
-const SECRETS = /(?:csrf[_-]?token|clearPass|X-Copilot-Token|Cookie|Set-Cookie|Authorization|PHPSESSID|OpenEMR|session[_-]?id)\s*[:=]\s*[^\s;,"}]+|\bsession\s*=\s*[^\s;,"}]+|\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi;
+const SECRETS = /(?:Cookie|Set-Cookie)\s*[:=]\s*[^\s;,"}]+(?:;\s*[^\s;,"}]+)*|(?:csrf[_-]?token|clearPass|X-Copilot-Token|PHPSESSID|OpenEMR|session[_-]?id)\s*[:=]\s*[^\s;,"}]+|Authorization\s*[:=]\s*(?:(?:Bearer|Basic)\s+)?[^\s;,"}]+|\bsession\s*=\s*[^\s;,"}]+|\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 const literal = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export function makeRedactor(identities: Identity[]) {
   const named = identities.flatMap((user, index) => [[user.pubpid, `Patient ${'AB'[index]}`], [user.username, `Clinician ${'AB'[index]}`]] as const)
