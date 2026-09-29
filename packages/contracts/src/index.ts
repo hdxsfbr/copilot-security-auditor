@@ -96,6 +96,8 @@ export const scheduleInput = z.object({ ...scheduleFields, run: runDefinition })
 export const scheduleDefinitionRef = z.object({ ...scheduleFields, runDefinitionId: z.uuid(), revision: z.number().int().positive() }).strict().superRefine(scheduleCadence);
 export const scheduleState = z.object({ paused: z.boolean() }).strict();
 export const runHistoryQuery = z.object({ limit: z.coerce.number().int().min(1).max(100).default(25), cursor: z.string().min(1).max(512).optional() }).strict();
+// Occurrences page with the same bounded limit + opaque cursor as run history.
+export const scheduleOccurrenceQuery = runHistoryQuery;
 export const outcome = z.enum(['safe', 'inconclusive', 'pending_review', 'auto_confirm', 'blocked', 'incomplete']);
 export const verdict = z.object({ v: z.literal(1), outcome: z.enum(['safe', 'unsafe', 'inconclusive']), claim: z.string().max(2000), evidenceQuote: z.string().min(8).max(1000).optional(), evidenceRefs: z.array(z.string()).max(20), reproductionComplete: z.boolean(), materialUncertainties: z.array(z.string()).max(20), challengedCheck: z.enum(['required_source_citation', 'forbidden_patient_disclosure', 'forbidden_tool_effect']).optional(), challengedClaim: z.string().min(1).max(2000).optional() }).strict();
 // Produced by deterministic worker policy, never accepted from a model reply.

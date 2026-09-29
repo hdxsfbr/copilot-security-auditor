@@ -42,7 +42,7 @@ function validCursorTime(value: string) {
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1] && hour <= 23 && minute <= 59 && second <= 59;
 }
-function decodeRunCursor(cursor?: string): { t: string; id: string } | null {
+export function decodeRunCursor(cursor?: string): { t: string; id: string } | null {
   if (!cursor) return null;
   try {
     if (cursor.length > 512 || !/^[A-Za-z0-9_-]+$/.test(cursor)) throw new InvalidRunCursor();
@@ -54,7 +54,7 @@ function decodeRunCursor(cursor?: string): { t: string; id: string } | null {
     return { t: row.t, id: row.id };
   } catch { throw new InvalidRunCursor(); }
 }
-function encodeRunCursor(row: { cursorCreatedAt: string; id: string }) {
+export function encodeRunCursor(row: { cursorCreatedAt: string; id: string }) {
   return Buffer.from(JSON.stringify({ v: 1, t: row.cursorCreatedAt, id: row.id })).toString('base64url');
 }
 
@@ -175,8 +175,8 @@ export class Repository {
       const prepared = input.run.kind === 'selected' ? { ...input.run.input, case: saved.rows[0].definition } : { ollamaUrl: run.ollamaUrl, adaptive: { categories: input.run.input.categories, maxCases: input.run.input.maxCases, maxMinutes: input.run.input.maxMinutes, seeds: ids.map(caseId => ({ id: caseId, definition: saved.rows.find(row => row.id === caseId)!.definition })) } };
       const next = nextFire(input, now);
       const scheduleId = id ?? randomUUID();
-      if (id) await db.query('UPDATE schedules SET definition=$2,run_snapshot=$3,model_snapshot=$4,next_fire_at=$5 WHERE id=$1', [id, input, prepared, modelSnapshot, next]);
-      else await db.query('INSERT INTO schedules(id,definition,run_snapshot,model_snapshot,next_fire_at) VALUES ($1,$2,$3,$4,$5)', [scheduleId, input, prepared, modelSnapshot, next]);
+      if (id) await db.query('UPDATE schedules SET definition=$2,run_snapshot=$3,model_snapshot=$4,next_fire_at=$5,source_definition_id=$6,source_revision=$7 WHERE id=$1', [id, input, prepared, modelSnapshot, next, reference?.id ?? null, reference?.revision ?? null]);
+      else await db.query('INSERT INTO schedules(id,definition,run_snapshot,model_snapshot,next_fire_at,source_definition_id,source_revision) VALUES ($1,$2,$3,$4,$5,$6,$7)', [scheduleId, input, prepared, modelSnapshot, next, reference?.id ?? null, reference?.revision ?? null]);
       await db.query('COMMIT');
       return { id: scheduleId, nextFireAt: next.toISOString() };
     } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
@@ -193,7 +193,7 @@ export class Repository {
       return { id, paused, nextFireAt: next.toISOString() };
     } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
   }
-  async deleteSchedule(id: string) { return (await this.pool.query('UPDATE schedules SET deleted=true WHERE id=$1 AND NOT deleted RETURNING id', [id])).rowCount !== 0; }
+  async deleteSchedule(id: string) { return (await this.pool.query('UPDATE schedules SET deleted=true,archived_at=now() WHERE id=$1 AND NOT deleted RETURNING id', [id])).rowCount !== 0; }
   async tick(now = new Date()) {
     const processed: { id: string; state: string; runId?: string }[] = [];
     for (;;) {

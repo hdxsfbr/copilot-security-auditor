@@ -77,16 +77,14 @@ test('task routes preserve drafts, support history and hard reload, and isolate 
     if (capture) await page.screenshot({ path: join(output, 'desktop-launch.png'), fullPage: true });
     await page.getByRole('link', { name: 'Schedules' }).click();
     await page.getByLabel('Schedule name').fill('Draft synthetic schedule');
-    await page.waitForFunction(() => (document.querySelector('.schedule-desk input[type="url"]') as HTMLInputElement | null)?.value === 'http://127.0.0.1:11434');
-    await page.locator('.schedule-desk').getByLabel('Local model server URL').fill('');
-    assert.equal(await page.locator('.schedule-desk').getByLabel('Local model server URL').inputValue(), '');
+    await page.locator('.schedule-desk').getByLabel('IANA time zone').fill('America/Chicago');
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
     await page.getByRole('link', { name: 'Targets' }).click();
     assert.equal(await page.getByLabel('Target name').inputValue(), 'Draft synthetic target');
     await page.goBack();
     await page.getByRole('heading', { name: 'Schedules', level: 1 }).waitFor();
     assert.equal(await page.getByLabel('Schedule name').inputValue(), 'Draft synthetic schedule');
-    assert.equal(await page.locator('.schedule-desk').getByLabel('Local model server URL').inputValue(), '');
+    assert.equal(await page.locator('.schedule-desk').getByLabel('IANA time zone').inputValue(), 'America/Chicago');
     await page.goBack();
     await page.getByRole('heading', { name: 'Launch evaluation', level: 1 }).waitFor();
     assert.equal(await page.locator('.run-composer').getByLabel('Local model server URL').inputValue(), '');
