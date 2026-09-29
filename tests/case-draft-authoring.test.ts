@@ -136,7 +136,9 @@ test('draft API round-trips incomplete ordered authoring and requires strict pub
     const finalDraft = await request(`/cases/drafts/${id}`, 'PUT', full);
     assert.equal(finalDraft.status, 200);
     assert.equal(finalDraft.data.metadataStatus, 'complete');
-    assert.equal((await request(`/cases/drafts/${id}/publish`, 'POST')).status, 200);
+    const publishResponse = await request(`/cases/drafts/${id}/publish`, 'POST');
+    assert.equal(publishResponse.status, 200);
+    assert.equal(publishResponse.data.metadataStatus, 'complete');
 
     const published = await request(`/cases/${id}`);
     assert.equal(published.data.metadataStatus, 'complete');

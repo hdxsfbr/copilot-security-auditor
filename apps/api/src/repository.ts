@@ -230,7 +230,7 @@ export class Repository {
       }
       await db.query("UPDATE cases SET state='published',definition=$2,published_at=now() WHERE id=$1", [id, parsed.data]);
       await db.query('COMMIT');
-      return { id, familyId: row.family_id as string, version: row.version as number, state: 'published' as const, ...parsed.data };
+      return { id, familyId: row.family_id as string, version: row.version as number, state: 'published' as const, ...parsed.data, metadataStatus: caseMetadataStatus(parsed.data, 'published') };
     } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
   }
   async cloneCase(id: string) {

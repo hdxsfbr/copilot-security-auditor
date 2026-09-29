@@ -239,6 +239,7 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
     await fillCaseRubric(page);
     await page.getByRole('button', { name: 'Publish version' }).click();
     await page.getByText(/Published version 1/).waitFor();
+    assert.match(await page.locator('.case-history').innerText(), /Version 1 · published · complete/);
     const withDocument = (await db.repo.cases()).find(c => c.title === 'Indirect PDF boundary');
     assert.equal(withDocument?.id, draftId);
     assert.equal(withDocument?.actions[0].kind, 'attach_pdf');

@@ -76,6 +76,10 @@ export function CaseEditor({ id, active, onMutate }: { id?: string; active: bool
   const updateAction = (index: number, patch: Partial<ActionEditor>) => { revisionRef.current += 1; setForm(current => ({ ...current, actions: current.actions.map((action, i) => i === index ? { ...action, ...patch } : action) })); };
   const updateCheck = (index: number, patch: Partial<CheckEditor>) => { revisionRef.current += 1; setForm(current => ({ ...current, checks: current.checks.map((check, i) => i === index ? { ...check, ...patch } : check) })); };
   const updateRubric = (patch: Partial<CaseRubric>) => { revisionRef.current += 1; setForm(current => ({ ...current, rubric: { ...current.rubric, ...patch } })); };
+  const applyCurrentRecord = (item: CaseRecord) => {
+    setRecord(item);
+    setVersions(current => current.map(version => version.id === item.id ? item : version));
+  };
   const saveDraft = async (checkCurrent: () => void): Promise<CaseRecord> => {
     const body = definitionFromForm(form);
     const path = record?.state === "draft" ? `/cases/drafts/${record.id}` : "/cases/drafts";
@@ -83,7 +87,7 @@ export function CaseEditor({ id, active, onMutate }: { id?: string; active: bool
     await onMutate();
     checkCurrent();
     if (saved.state !== "draft" || (record?.state === "draft" && (saved.id !== record.id || saved.familyId !== record.familyId || saved.version !== record.version)) || (!record && (saved.familyId !== saved.id || saved.version !== 1))) throw new Error("Saved draft identity did not match the selected case.");
-    setRecord(saved);
+    applyCurrentRecord(saved);
     if (!id) { retainFormForId.current = saved.id; pendingNotice.current = { id: saved.id, message: `Draft version ${saved.version} saved. It is not runnable until published.` }; navigate(`/cases/${saved.id}`); }
     return saved;
   };
@@ -111,7 +115,7 @@ export function CaseEditor({ id, active, onMutate }: { id?: string; active: bool
     checkCurrent();
     if (saved.id !== record.id || saved.familyId !== record.familyId || saved.version !== record.version || saved.state !== "draft") throw new Error("Updated draft identity did not match the selected case.");
     setForm(next);
-    setRecord(saved); setPdfFile(null); setReplaceFiles({}); setNotice("PDF linked to this draft. You can now preview and publish it.");
+    applyCurrentRecord(saved); setPdfFile(null); setReplaceFiles({}); setNotice("PDF linked to this draft. You can now preview and publish it.");
   });
   const replacePdf = async (index: number) => perform(async checkCurrent => {
     if (record?.state !== "draft") throw new Error("Only drafts accept replacement PDFs.");
@@ -126,7 +130,7 @@ export function CaseEditor({ id, active, onMutate }: { id?: string; active: bool
     checkCurrent();
     if (saved.id !== record.id || saved.familyId !== record.familyId || saved.version !== record.version || saved.state !== "draft") throw new Error("Updated draft identity did not match the selected case.");
     setForm(next);
-    setRecord(saved); setReplaceFiles(current => ({ ...current, [index]: null })); setNotice("Replacement PDF linked to the same draft.");
+    applyCurrentRecord(saved); setReplaceFiles(current => ({ ...current, [index]: null })); setNotice("Replacement PDF linked to the same draft.");
   });
   const publishDraft = async () => perform(async checkCurrent => {
     if (record?.state !== "draft") throw new Error("Save a draft before publishing.");
@@ -139,7 +143,7 @@ export function CaseEditor({ id, active, onMutate }: { id?: string; active: bool
     await onMutate();
     checkCurrent();
     if (published.id !== record.id || published.familyId !== record.familyId || published.version !== record.version || published.state !== "published") throw new Error("Published response did not match the selected draft.");
-    setRecord(published); setVersions(current => current.map(item => item.id === published.id ? published : item));
+    applyCurrentRecord(published);
     setNotice(`Published version ${published.version}. Future changes require a clone.`);
   });
   const cloneVersion = async () => perform(async checkCurrent => {
@@ -165,7 +169,7 @@ export function CaseEditor({ id, active, onMutate }: { id?: string; active: bool
     await onMutate();
     checkCurrent();
     if (result.id !== record.id || result.familyId !== record.familyId || result.version !== record.version) throw new Error("Archived response did not match the selected case.");
-    setRecord({ ...record, state: "archived" }); setArchiveArmed(false);
+    applyCurrentRecord({ ...record, state: "archived" }); setArchiveArmed(false);
     setNotice("This version is archived and no longer available for new runs. Existing executions remain visible.");
   });
 

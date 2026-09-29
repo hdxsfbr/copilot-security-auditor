@@ -61,7 +61,9 @@ async function setup(capture = false) {
     if (parts[0] === 'cases' && parts[1] === 'drafts' && parts[2] && method === 'PUT') {
       const current = records.get(parts[2]);
       if (!current) return reply(route, { message: 'Draft unavailable' }, 404);
-      records.set(parts[2], { ...current, ...(route.request().postDataJSON() as RecordShape), id: current.id, familyId: current.familyId, version: current.version, state: 'draft' });
+      const body = route.request().postDataJSON() as RecordShape;
+      const completeRubric = body.rubric && ['subcategory', 'severityRationale', 'exploitabilityRationale', 'boundary', 'invariant', 'regressionRisk'].every(key => typeof body.rubric?.[key as keyof typeof rubric] === 'string' && String(body.rubric[key as keyof typeof rubric]).trim());
+      records.set(parts[2], { ...current, ...body, id: current.id, familyId: current.familyId, version: current.version, state: 'draft', metadataStatus: completeRubric ? 'complete' : 'incomplete_draft' });
       if (control.holdPut === parts[2]) { control.heldPut = route; return; }
       return reply(route, records.get(parts[2]));
     }
@@ -131,6 +133,7 @@ test('case workspace keeps partial drafts, recovers clone failures and archived 
     await page.getByRole('button', { name: 'Archive version' }).click();
     await page.getByRole('button', { name: 'Confirm archive' }).click();
     await page.getByText(/no longer available for new runs/).waitFor();
+    assert.match(await page.locator('.case-history').innerText(), /Version 1 · archived · complete/);
     await page.getByRole('link', { name: 'Targets' }).click();
     await page.getByRole('link', { name: 'Cases' }).click();
     await page.getByRole('heading', { name: 'Archived' }).waitFor();
@@ -204,6 +207,14 @@ test('wrong case identity blocks editing and action-index shifts clear replaceme
     control.wrongId = undefined;
     await page.getByRole('button', { name: 'Retry case' }).click();
     await page.getByLabel('Replace PDF for step 2').waitFor();
+    await page.getByLabel('Exercised trust boundary').fill('');
+    await page.getByRole('button', { name: 'Save draft' }).click();
+    await page.getByText(/Draft version 1 saved/).waitFor();
+    assert.match(await page.locator('.case-history').innerText(), /Version 1 · draft · incomplete_draft/);
+    await page.getByLabel('Exercised trust boundary').fill('Current chart');
+    await page.getByRole('button', { name: 'Save draft' }).click();
+    await page.getByText(/Draft version 1 saved/).waitFor();
+    assert.match(await page.locator('.case-history').innerText(), /Version 1 · draft · complete/);
     await page.getByLabel('Replace PDF for step 2').setInputFiles({ name: 'shift.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 shift') });
     assert.equal(await page.getByRole('button', { name: 'Upload replacement for step 2' }).isEnabled(), true);
     await page.getByRole('button', { name: 'Remove step 1' }).click();
