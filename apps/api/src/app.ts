@@ -6,6 +6,7 @@ import { targetInput, targetUpdateInput, caseInput, caseDraftInput, startInput, 
 import { DefinitionRevisionConflict, InvalidRunCursor, Repository, type CandidateIntegrity, type RunDefinitionReference } from './repository.js';
 import { auditArtifactVolume, storePdf, loadPdf } from './artifacts.js';
 import { catalog, installedOllama, preflightModels } from '../../worker/src/models.js';
+import { migrationNames } from '../../../db/migrate.js';
 
 export function createApp(repo: Repository) {
   const app = express();
@@ -25,7 +26,7 @@ export function createApp(repo: Repository) {
     try {
       await repo.pool.query('SELECT 1');
       const migrations = await repo.pool.query('SELECT count(*)::int AS count FROM schema_migrations');
-      if (migrations.rows[0].count !== 13) return res.status(503).json({ status: 'unavailable', database: 'migration_incomplete' });
+      if (migrations.rows[0].count !== migrationNames.length) return res.status(503).json({ status: 'unavailable', database: 'migration_incomplete' });
       return res.json({ status: 'ok', database: 'ready', migrations: migrations.rows[0].count });
     } catch {
       return res.status(503).json({ status: 'unavailable', database: 'unavailable' });

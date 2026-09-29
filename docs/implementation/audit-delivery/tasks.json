@@ -8,8 +8,8 @@
     "linearProjectUrl": "https://linear.app/hdxsfbr/project/clinical-auditor-evidence-and-operator-workflow-20b47f75a996"
   },
   "limits": {
-    "maxSubagents": 3,
-    "maxWorkInProgress": 3,
+    "maxSubagents": 5,
+    "maxWorkInProgress": 5,
     "maxRepairRounds": 2
   },
   "tasks": [
@@ -375,7 +375,7 @@
         "tests/contracts/",
         "docs/implementation/contracts.md"
       ],
-      "scope": "Publish versioned schemas for Orchestrator\u2192Red Team, Red Team\u2192Judge and Judge\u2192Documentation envelopes and known errors. Use shared runtime validators at producer/consumer boundaries, include stable evidence references and explicit compatibility/migration notes. Define the Documentation contract before its implementation; F01 must consume and test it. Cover target unreachable, budget exceeded, Judge timeout, no findings and regression outcomes. This internal work does not depend on a peer service.",
+      "scope": "Publish versioned schemas for Orchestrator→Red Team, Red Team→Judge and Judge→Documentation envelopes and known errors. Use shared runtime validators at producer/consumer boundaries, include stable evidence references and explicit compatibility/migration notes. Define the Documentation contract before its implementation; F01 must consume and test it. Cover target unreachable, budget exceeded, Judge timeout, no findings and regression outcomes. This internal work does not depend on a peer service.",
       "accept": [
         "Published schemas and runtime definitions cannot drift silently; every implemented producing and consuming role has fixture contract checks.",
         "Malformed or incompatible messages fail with typed errors before privileged execution.",
@@ -643,13 +643,23 @@
       "locks": [
         "web-composer",
         "web-modeldesk",
-        "web-shell"
+        "web-shell",
+        "web-runs",
+        "web-api-client"
       ],
       "files": [
         "apps/web/src/pages/RunComposer*",
         "apps/web/src/components/models/",
         "apps/web/src/ModelDesk.tsx",
-        "apps/web/src/pages/LegacyRunLauncher.tsx"
+        "apps/web/src/pages/LegacyRunLauncher.tsx",
+        "apps/web/src/pages/Workspace.tsx",
+        "apps/web/src/pages/controller.ts",
+        "apps/web/src/api/client.ts",
+        "apps/web/src/style.css",
+        "tests/run-composer.test.ts",
+        "tests/e2e.test.ts",
+        "tests/ui-resilience.test.ts",
+        "tests/ui-shell-navigation.test.ts"
       ],
       "scope": "Compose target, one selected case or adaptive seeds, active role profile and bounds in one flow; show availability, conservative reservation and meaningful conflict links. Remove superseded launchers and inactive Documentation controls until its implementation exists.",
       "accept": [
@@ -677,9 +687,9 @@
         "U04"
       ],
       "locks": [
-        "api-data",
         "web-schedules",
-        "web-scheduledesk"
+        "web-scheduledesk",
+        "schedule-api"
       ],
       "files": [
         "apps/api/src/",
@@ -697,7 +707,8 @@
         "uuid": "09afb520-8e50-4f50-b806-b029aa616440",
         "title": "[S01] Make schedules reusable, correctly zoned and historically accessible",
         "url": "https://linear.app/hdxsfbr/issue/HDX-20/s01-make-schedules-reusable-correctly-zoned-and-historically"
-      }
+      },
+      "migration": "022"
     },
     {
       "key": "O01",
@@ -713,9 +724,8 @@
         "U03"
       ],
       "locks": [
-        "api-data",
-        "migrations",
-        "worker-loop",
+        "worker-heartbeat",
+        "event-cursor",
         "web-operations"
       ],
       "files": [
@@ -736,7 +746,8 @@
         "uuid": "7bf29491-9e2b-42e8-aed9-79e136071ceb",
         "title": "[O01] Expose worker, queue and incremental evidence health",
         "url": "https://linear.app/hdxsfbr/issue/HDX-21/o01-expose-worker-queue-and-incremental-evidence-health"
-      }
+      },
+      "migration": "014"
     },
     {
       "key": "F00",
@@ -754,12 +765,8 @@
         "K01"
       ],
       "locks": [
-        "api-data",
-        "contracts",
-        "migrations",
-        "worker-loop",
-        "worker-pipeline",
-        "worker-models"
+        "spend-accounting",
+        "report-jobs"
       ],
       "files": [
         "apps/api/src/",
@@ -780,7 +787,8 @@
         "uuid": "84af4a4c-16f0-4f48-a176-6e1f001ccece",
         "title": "[F00] Add leased report jobs and bounded post-run model accounting",
         "url": "https://linear.app/hdxsfbr/issue/HDX-39/f00-add-leased-report-jobs-and-bounded-post-run-model-accounting"
-      }
+      },
+      "migration": "015"
     },
     {
       "key": "F01",
@@ -798,12 +806,8 @@
         "F00"
       ],
       "locks": [
-        "api-data",
-        "contracts",
-        "migrations",
-        "worker-models",
-        "worker-pipeline",
-        "worker-loop"
+        "report-jobs",
+        "documentation-role"
       ],
       "files": [
         "packages/contracts/src/",
@@ -825,7 +829,8 @@
         "uuid": "d8b17f7d-0e62-4f01-8bb2-c9ad93411937",
         "title": "[F01] Implement evidence-grounded finding metadata and report drafting",
         "url": "https://linear.app/hdxsfbr/issue/HDX-22/f01-implement-evidence-grounded-finding-metadata-and-report-drafting"
-      }
+      },
+      "migration": "018"
     },
     {
       "key": "F02",
@@ -882,8 +887,7 @@
         "R01"
       ],
       "locks": [
-        "api-data",
-        "contracts"
+        "coverage-api"
       ],
       "files": [
         "apps/api/src/",
@@ -901,7 +905,8 @@
         "uuid": "19af6be3-2dc5-4b8b-ab61-d428feba2d79",
         "title": "[V01] Scope coverage by target/version with honest denominators",
         "url": "https://linear.app/hdxsfbr/issue/HDX-24/v01-scope-coverage-by-targetversion-with-honest-denominators"
-      }
+      },
+      "migration": "016"
     },
     {
       "key": "V02",
@@ -950,9 +955,7 @@
         "C01"
       ],
       "locks": [
-        "api-data",
-        "contracts",
-        "migrations"
+        "regression-identity"
       ],
       "files": [
         "apps/api/src/",
@@ -970,7 +973,8 @@
         "uuid": "45ea9e09-94b3-4e37-b731-2696b13d89da",
         "title": "[G01] Add regression identity, deduplication and explicit replay lineage",
         "url": "https://linear.app/hdxsfbr/issue/HDX-26/g01-add-regression-identity-deduplication-and-explicit-replay-lineage"
-      }
+      },
+      "migration": "019"
     },
     {
       "key": "G02",
@@ -986,11 +990,9 @@
         "U04"
       ],
       "locks": [
-        "api-data",
-        "worker-pipeline",
+        "regression-identity",
+        "regression-suite",
         "web-regressions",
-        "contracts",
-        "migrations",
         "web-composer"
       ],
       "files": [
@@ -1003,7 +1005,7 @@
       ],
       "scope": "Launch bounded selected suites using existing reservations/ledger, link results across explicit versions, and offer an operator-triggered new-version validation action. Preserve no-ambiguous-retry policy. Add an explicit opt-in target-version-change trigger for the Orchestrator to enqueue a bounded suite, with deduplication and the existing target reservation. Introduce selected-suite definitions/execution and composer selection here; M01/U04 initially support one selected case. Include suite persistence migrations and snapshots.",
       "accept": [
-        "A synthetic fail \u2192 fix \u2192 resurface sequence is displayed correctly.",
+        "A synthetic fail → fix → resurface sequence is displayed correctly.",
         "A suite preserves individual incomplete/blocked cases and releases its reservation.",
         "No automatic deployment, unbounded campaign or missing-result-as-safe behavior."
       ],
@@ -1012,7 +1014,8 @@
         "uuid": "591f1379-dddc-43ae-878b-463f9e44ebc3",
         "title": "[G02] Run regression suites and show fixed/resurfaced/unknown states",
         "url": "https://linear.app/hdxsfbr/issue/HDX-27/g02-run-regression-suites-and-show-fixedresurfacedunknown-states"
-      }
+      },
+      "migration": "020"
     },
     {
       "key": "M02",
@@ -1028,9 +1031,7 @@
         "U03"
       ],
       "locks": [
-        "api-data",
-        "worker-models",
-        "migrations",
+        "spend-accounting",
         "web-spend"
       ],
       "files": [
@@ -1050,7 +1051,8 @@
         "uuid": "ac8bdf3f-228a-4f63-847f-ef4f1d2ec803",
         "title": "[M02] Make unresolved spend investigable and explicitly reconcilable",
         "url": "https://linear.app/hdxsfbr/issue/HDX-28/m02-make-unresolved-spend-investigable-and-explicitly-reconcilable"
-      }
+      },
+      "migration": "017"
     },
     {
       "key": "A17",
@@ -1067,10 +1069,9 @@
         "G02"
       ],
       "locks": [
-        "worker-pipeline",
-        "api-data",
-        "contracts",
-        "migrations"
+        "adaptive-strategy",
+        "regression-suite",
+        "coverage-api"
       ],
       "files": [
         "apps/worker/src/adaptive.ts",
@@ -1089,7 +1090,8 @@
         "uuid": "77858612-b102-49c9-96b0-ccaa57f5a5d3",
         "title": "[A17] Give bounded adaptive exploration feedback and mutation lineage",
         "url": "https://linear.app/hdxsfbr/issue/HDX-29/a17-give-bounded-adaptive-exploration-feedback-and-mutation-lineage"
-      }
+      },
+      "migration": "021"
     },
     {
       "key": "Q02",
@@ -1309,9 +1311,7 @@
         "X03"
       ],
       "locks": [
-        "contracts",
-        "worker-pipeline",
-        "worker-session"
+        "worker-evidence"
       ],
       "files": [
         "apps/worker/src/process.ts",
@@ -1323,7 +1323,8 @@
         "apps/worker/src/session.ts",
         "apps/worker/src/main.ts",
         "apps/worker/src/adaptive.ts",
-        "apps/worker/src/judge.ts"
+        "apps/worker/src/judge.ts",
+        "tests/session.test.ts"
       ],
       "scope": "Integrate the merged read-only provider through worker-built exact correlation and a versioned corroboration sidecar. Keep existing v1 checks and Judge envelopes interpretable. Independent positive synthetic fact/write evidence routes to pending human review; scoped absence requires fresh exact complete coverage and never proves global safety. Sentinel exclusion covers every executed prompt/PDF and allowed-chart fact; unverifiable exclusion remains unknown. No live activation or raw private facts/auth in events/models.",
       "accept": [

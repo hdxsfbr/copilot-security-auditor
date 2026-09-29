@@ -9,6 +9,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { snapshot, legacyRoles } from '../apps/worker/src/models.js';
+import { migrationNames } from '../db/migrate.js';
 
 process.env.TARGET_ALLOWED_HOSTS = '127.0.0.1,localhost';
 
@@ -34,7 +35,7 @@ test('served UI and API start, poll and inspect safe, incomplete and reviewable 
     assert.deepEqual(await (await fetch(`${url}/api/config`)).json(), { ollamaUrl: process.env.OLLAMA_URL ?? '', model: process.env.OLLAMA_MODEL ?? '' });
     const health = await fetch(`${url}/api/health`);
     assert.equal(health.status, 200);
-    assert.deepEqual(await health.json(), { status: 'ok', database: 'ready', migrations: 13 });
+    assert.deepEqual(await health.json(), { status: 'ok', database: 'ready', migrations: migrationNames.length });
     assert.deepEqual(await (await fetch(`${url}/api/integrity`)).json(), { ok: true, orphaned: [], missing: [], corrupt: [] });
     const post = async (path: string, body: unknown) => {
       const response = await fetch(url + '/api' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
