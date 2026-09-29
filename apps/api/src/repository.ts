@@ -11,7 +11,9 @@ import type { CoverageQuery } from '../../../packages/contracts/src/coverage.js'
 import { enqueueReportJob, releaseAllowance, ReportJobStore, snapshotReportPolicy } from './report-jobs.js';
 import { recordAutomaticDecision, recordDecision } from './findings.js';
 import { ReportRevisions } from './report-revisions.js';
+import { backfillRegressionIdentities, linkRegressionIdentity, recordReplayLaunch, settleReplay } from './regression-identity.js';
 import type { ReviewRationale } from '../../../packages/contracts/src/report.js';
+import type { ReplayTrigger } from '../../../packages/contracts/src/regressions.js';
 
 export type CandidateIntegrity = {
   status: 'complete' | 'missing' | 'corrupt' | 'unlinked' | 'invalid_definition' | 'unavailable';
@@ -404,7 +406,7 @@ export class Repository {
       return { id, ...definition };
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
-  async start(input: StartInput, models?: Snapshot, reference?: RunDefinitionReference): Promise<{ id: string; status: 'queued' } | { active_run_id: string } | null> {
+  async start(input: StartInput, models?: Snapshot, reference?: RunDefinitionReference, options: { replayTrigger?: ReplayTrigger } = {}): Promise<{ id: string; status: 'queued' } | { active_run_id: string } | null> {
     input = startInput.parse(input);
     if (!input.roles && !input.model) throw new Error('A Judge model is required');
     const assigned = projectRoles('selected', input.roles ?? legacyRoles(input.model!));
@@ -431,6 +433,7 @@ export class Repository {
       if (input.reportPolicy) await snapshotReportPolicy(db, id, input.reportPolicy, models, input.openRouterCapUsd);
       await db.query('INSERT INTO jobs(run_id) VALUES ($1)', [id]);
       await db.query('UPDATE targets SET active_run_id=$1 WHERE id=$2', [id, target.id]);
+      await recordReplayLaunch(db, { id, targetId: target.id, caseId: input.caseId }, options.replayTrigger);
       await db.query('COMMIT');
       return { id, status: 'queued' };
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
@@ -475,6 +478,7 @@ export class Repository {
         await db.query("UPDATE runs SET stop_requested=true,status='finished',outcome='incomplete',finished_at=now(),lease_until=NULL WHERE id=$1", [id]);
         await db.query("UPDATE schedule_occurrences SET state='finished',reason='Stopped before dispatch' WHERE run_id=$1 AND state='queued'", [id]);
         await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [run.target_id, id]);
+        await settleReplay(db, id);
         await releaseAllowance(db, id, 'run_cancelled');
         await db.query('COMMIT');
         return { stopRequested: true, status: 'finished' as const, outcome: 'incomplete' as const };
@@ -669,12 +673,14 @@ export class Repository {
       }
       await db.query("UPDATE schedule_occurrences SET state=CASE WHEN $2='blocked' THEN 'blocked' ELSE 'finished' END,reason=CASE WHEN $3 THEN 'Stopped after in-flight work' WHEN $2='blocked' THEN 'Target/login/chart preflight unavailable' ELSE NULL END WHERE run_id=$1", [id, row.outcome, row.stop_requested]);
       await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [row.target_id, id]);
+      await settleReplay(db, id);
       await db.query('COMMIT');
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
   private async insertRegression(db: pg.PoolClient, candidate: string, run: string, adaptiveCaseId?: string | null) {
     await db.query('INSERT INTO regressions(id,candidate_id,source_run_id,definition) SELECT $1,$2,r.id,COALESCE(ac.definition,r.definition->\'case\') FROM runs r LEFT JOIN adaptive_cases ac ON ac.id=$4 WHERE r.id=$3 ON CONFLICT (candidate_id) DO NOTHING', [randomUUID(), candidate, run, adaptiveCaseId ?? null]);
     // Every confirmation site (review, auto-confirm, adaptive auto-confirm) passes here, so each also records its idempotent report job.
+    await linkRegressionIdentity(db, candidate);
     await recordAutomaticDecision(db, candidate);
     await enqueueReportJob(db, candidate);
   }
@@ -701,7 +707,7 @@ export class Repository {
       return { caseId };
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
-  async regressions() { return (await this.pool.query(`SELECT g.id,g.source_run_id AS "sourceRunId",g.definition,r.version,r.target_id AS "targetId",
+  async regressions() { await backfillRegressionIdentities(this.pool); return (await this.pool.query(`SELECT g.id,g.identity_id AS "identityId",g.source_run_id AS "sourceRunId",g.definition,r.version,r.target_id AS "targetId",
     COALESCE((SELECT jsonb_agg(jsonb_build_object('runId',v.id,'version',v.version,'outcome',v.outcome) ORDER BY v.created_at)
       FROM runs v WHERE v.case_id=COALESCE(g.replay_case_id,r.case_id) AND v.target_id=r.target_id AND v.id<>r.id AND v.status='finished'), '[]'::jsonb) AS replays
     FROM regressions g JOIN runs r ON r.id=g.source_run_id ORDER BY g.created_at DESC`)).rows; }
@@ -819,6 +825,7 @@ export class Repository {
         await db.query("UPDATE adaptive_cases SET state='incomplete',finished_at=now(),reason='Lease expired' WHERE run_id=$1 AND state IN ('proposed','executing')", [row.id]);
         await db.query("UPDATE schedule_occurrences SET state='blocked',reason='Worker lease expired; execution uncertain' WHERE run_id=$1", [row.id]);
         await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [row.target_id, row.id]);
+        await settleReplay(db, row.id);
       }
       await db.query('COMMIT');
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
