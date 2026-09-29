@@ -25,7 +25,7 @@ const pageInfo: Record<string, { title: string; description: string }> = {
   "/runs/new": { title: "Launch evaluation", description: "Compose and preflight a saved evaluation." },
   "/runs": { title: "Runs", description: "Recover saved evaluations and inspect their exact evidence." },
   "/findings": { title: "Findings & review", description: "Inspect reviewable observations and make explicit decisions." },
-  "/regressions": { title: "Regressions", description: "Select a confirmed definition for a new replay." },
+  "/regressions": { title: "Regressions", description: "See which confirmed attacks recur, are fixed or resurfaced per target version, and run bounded suites." },
   "/coverage": { title: "Coverage", description: "See tested outcomes and visible gaps by category." },
   "/schedules": { title: "Schedules", description: "Create, pause and inspect recurring evaluations." },
 };
@@ -68,7 +68,7 @@ export function Workspace() {
       {path === "/runs/new" && state.run?.id && <div className="route-panel"><RunActivity key={state.run.id} /></div>}
       {path === "/findings" && <div className="route-panel"><FindingsPage /></div>}
       {findingRouteId && <div className="route-panel"><ErrorBoundary name="Finding review"><FindingDetailPage key={findingRouteId} findingId={decodeURIComponent(findingRouteId)} /></ErrorBoundary></div>}
-      <div hidden={path !== "/regressions"} className="route-panel"><RegressionsPage /></div>
+      <div hidden={path !== "/regressions"} className="route-panel"><RegressionsPage active={path === "/regressions"} /></div>
       <div hidden={path !== "/coverage"} className="route-panel"><CoveragePage /></div>
       <div hidden={path !== "/schedules"} className="route-panel"><SchedulesPage active={path === "/schedules"} /></div>
       {!runRouteId && !caseRouteId && !findingRouteId && !pageInfo[path] && <div className="panel" role="status">This route has no operator task yet. Use the navigation to open an available page.</div>}

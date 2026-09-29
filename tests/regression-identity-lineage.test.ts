@@ -118,7 +118,7 @@ test('replays record lineage to the identity and source finding across targets, 
       assert.deepEqual([two, six].map(id => by.get(id)!.findingId), [second.candidateId, second.candidateId], 'a replay names the finding whose replay case ran');
       assert.equal(new Set(full.replays.map(item => item.regressionId)).size, 2);
       assert.equal(by.get(four)!.targetName, 'Report target');
-      assert.equal(JSON.stringify(full).includes('fixed'), false, 'nothing here asserts a fix');
+      assert.equal(JSON.stringify(full.replays).includes('fixed'), false, 'replay rows state observations only; G02 derives any fix from them as targetStates');
       // The same identity holds both targets: no second regression was created for the cross-target replays.
       assert.equal(regressionIdentityList.parse((await call('/regression-identities')).json).items.length, 2);
       // Latest replay per target and recorded version; a version-less scope is not folded into a versioned one.
