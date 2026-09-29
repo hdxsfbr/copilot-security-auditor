@@ -7,7 +7,7 @@ import { AgentContractError, agentErrorMessage, agentMessageHeader, agentRefs, j
 import { observation, type ModelAssignment } from '../../packages/contracts/src/index.js';
 import { callJudgeHandoff } from '../../apps/worker/src/models.js';
 import { evaluateCase, processNext, type ClaimedRun } from '../../apps/worker/src/process.js';
-import { admitProposal } from '../../apps/worker/src/adaptive.js';
+import { admitProposal, processAdaptive } from '../../apps/worker/src/adaptive.js';
 import { DeadlineExceeded } from '../../apps/worker/src/deadlines.js';
 import type { Repository } from '../../apps/api/src/repository.js';
 import { fixture, users } from '../support.js';
@@ -72,6 +72,7 @@ test('malformed or cross-run Judge handoff is rejected before provider transport
 test('malformed Red Team proposal fails typed before target execution', () => {
   const seed = claimed('http://target.invalid/').definition.case;
   assert.throws(() => admitProposal({ actions: [{ kind: 'chat_turn', message: 'Ask', extra: 'untrusted' }] }, seed, [users.userA, users.userB]), (e: unknown) => e instanceof AgentContractError && e.code === 'invalid_shape');
+  assert.throws(() => admitProposal({ actions: [{ kind: 'chat_turn', message: 'GET /api/secret' }] }, seed, [users.userA, users.userB]), (e: unknown) => e instanceof AgentContractError && e.code === 'invalid_shape');
 });
 
 test('Documentation no_findings is not a safe finding and regression is explicit', () => {
@@ -145,4 +146,32 @@ test('scheduled adaptive preflight emits typed pre-case target failure without a
     assert.deepEqual(failure?.contractError, { code: 'target_unreachable', stage: 'target' });
     assert.equal('contract' in (failure ?? {}), false);
   } finally { await toy.close(); }
+});
+
+test('adaptive model admission emits typed errors before target dispatch', async () => {
+  const seedId = randomUUID();
+  const base = claimed('http://target.invalid/');
+  const run = { ...base, started_at: new Date(), adaptive: { maxMinutes: 1, maxCases: 1, categories: ['prompt_injection'], seeds: [{ id: seedId, definition: base.definition.case }] },
+    model_snapshot: { ...base.model_snapshot, roles: { orchestrator: { provider: 'ollama', model: 'stub', maxOutputTokens: 64 }, redTeam: { provider: 'ollama', model: 'stub', maxOutputTokens: 64 } } } } as unknown as ClaimedRun;
+  for (const scenario of ['bad-selection', 'bad-proposal']) {
+    const events: { kind: string; detail: Record<string, unknown> }[] = [];
+    let targetCalls = 0;
+    const repository = { credential: async (ref: string) => ref === 'A' ? users.userA : users.userB,
+      stopped: async () => false, heartbeat: async () => {}, adaptiveCases: async () => [],
+      reserveCall: async () => randomUUID(), settleCall: async () => true,
+      beginAdaptiveCase: async () => 'adaptive-case', completeAdaptiveCase: async () => {},
+      append: async (_id: string, _generation: number, event: { kind: string; detail: Record<string, unknown> }) => { events.push(event); },
+      finish: async () => {}, run: async () => ({ outcome: 'incomplete' }) } as unknown as Repository;
+    const modelTransport: typeof fetch = async (_url, init) => {
+      const request = JSON.parse(String(init?.body)) as { messages: { content: string }[] };
+      const selection = request.messages[0].content.startsWith('Choose');
+      const content = selection ? scenario === 'bad-selection' ? { unknown: seedId } : { caseId: seedId } : { actions: [{ kind: 'chat_turn', message: 'GET /api/secret' }] };
+      return new Response(JSON.stringify({ message: { content: JSON.stringify(content) } }), { status: 200 });
+    };
+    const noTarget: typeof fetch = async () => { targetCalls++; throw new Error('target must not dispatch'); };
+    assert.equal((await processAdaptive(repository, run, noTarget, modelTransport)).outcome, 'incomplete');
+    const rejection = events.find(event => event.kind === (scenario === 'bad-selection' ? 'limit' : 'proposal_rejected'))?.detail.contractError as { code: string; stage: string };
+    assert.deepEqual(rejection, { code: 'invalid_contract', stage: scenario === 'bad-selection' ? 'orchestrator' : 'red_team' });
+    assert.equal(targetCalls, 0);
+  }
 });
