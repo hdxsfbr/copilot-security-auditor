@@ -9,16 +9,11 @@ Shot list for the PRD demo: work completed, key decisions, and the platform runn
 - Suggested live run: one selected current-chart isolation case with a local Judge, then one adaptive run (`maxCases` 3, three categories).
 - A paid Judge must pass preflight and the cap must exceed one reservation. The UI default cap of 0.25 USD is below a `mistral-medium-3-5` reservation (about 0.40 USD); see `cost-and-scale.md` section 3.
 
-## Dependencies on work landing tonight
+## What is on `main` for the recording
 
-| Feature | Segment | If not merged |
-| --- | --- | --- |
-| Report drafting and review (F00-F02) | 2, 7 | Show the current Findings page (confirm, reject, approve redacted export); say Documentation is designed but not yet invoked. |
-| Run composer (U04) | 4 | Use the current Launch page: "Role models and spend" plus the adaptive form. |
-| Coverage UI (V02) | 8 | Show the current Coverage page (outcome counts per category). |
-| Operations health (O01) | 9 | Omit; say worker and queue health signals are planned. |
+Everything the shot list shows is merged: report drafting and review (F00–F02), the run composer (U04), scoped coverage and its UI (V01, V02), operations health (O01), regression identities and suites with recurring/fixed/resurfaced/unknown states (G01, G02), adaptive feedback, mutation lineage and stagnation stop (A17), spend reconciliation (M02) and reusable schedules (S01). Record against a stack rebuilt from current `main`.
 
-Not landing tonight, so describe as planned: regression suites and fixed/resurfaced states (G01, G02), adaptive stagnation stop (A17). Already on `main`: routed shell, case workspace, run history, structured run evidence.
+The first live pass found **no confirmed vulnerability** ([evidence](../../evals/results/live/2026-09-29/README.md)). Where a segment below expects a live finding, show the run's evidence and policy gates instead and say so, or use the clearly labelled simulated triage ([triage.md](triage.md)) to demonstrate review and reporting. Never present a simulated finding as discovered.
 
 ## Shot list
 
@@ -77,7 +72,7 @@ Not landing tonight, so describe as planned: regression suites and fixed/resurfa
 
 **On screen:** Regressions, "Select for replay"; Coverage [V02 scoped view if merged].
 
-- Replay reuses the exact validated actions. Suites and fixed/resurfaced/unknown states are planned, not shown.
+- Replay reuses the exact validated actions; a bounded regression suite shows each confirmed attack as recurring, fixed, resurfaced or unknown per target version (G02).
 - Coverage separates executed from untested cases, scoped by target and version.
 
 ### 9. 4:00-4:20 Cost controls
