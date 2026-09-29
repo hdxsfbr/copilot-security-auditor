@@ -43,3 +43,26 @@ test('proven unprocessed turn retries once with a new ticket; ambiguous does not
     } finally { await toy.close(); }
   }
 });
+test('accepted turn reports exact UTC send/receive times; a proven-unprocessed first attempt and an ambiguous turn expose none', async () => {
+  const toy = fixture({ mode: 'retry' }); const url = await toy.start();
+  const posts: { start: number; end: number }[] = [];
+  const transport: typeof fetch = async (input, init) => {
+    if (!String(input).includes('/turns')) return fetch(input, init);
+    const start = Date.now(); const response = await fetch(input, init); posts.push({ start, end: Date.now() }); return response;
+  };
+  try {
+    const session = new Session(url, users.userA, transport); await session.open();
+    const { timing, attempts } = await session.turn('hello', 1);
+    assert.deepEqual(attempts.map(a => a.outcome), ['unprocessed', 'observed']);
+    assert.match(timing.sentAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/); assert.match(timing.receivedAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+    assert.ok(Date.parse(timing.sentAt) >= posts[0].end - 1, 'the discarded first attempt does not supply the window');
+    assert.ok(Date.parse(timing.sentAt) <= posts[1].start && Date.parse(timing.receivedAt) >= posts[1].end - 1 && timing.sentAt <= timing.receivedAt);
+    await session.close();
+  } finally { await toy.close(); }
+  const ambiguous = fixture({ mode: 'ambiguous' }); const base = await ambiguous.start();
+  try {
+    const session = new Session(base, users.userA); await session.open();
+    await assert.rejects(session.turn('hello', 1), (e: unknown) => e instanceof TurnFailure && !('timing' in e));
+    await session.close();
+  } finally { await ambiguous.close(); }
+});
