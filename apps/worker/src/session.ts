@@ -1,5 +1,63 @@
-import type { Observation } from '../../../packages/contracts/src/index.js';
-import { createHash } from 'node:crypto';
+import { observationV2, type Observation } from '../../../packages/contracts/src/index.js';
+import { createHash, randomUUID } from 'node:crypto';
+
+export const MAX_TURN_RESPONSE_BYTES = 256_000;
+export const MAX_VISIBLE_CHARS = 10_000;
+type SourceField = 'source' | 'sources' | 'citation' | 'citations';
+type SourceEvidence = Extract<Observation, { v: 2 }>['claims'][number]['sources'][number];
+const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
+const boundedString = (value: unknown, max = 120): string | undefined => typeof value === 'string' && value.length > 0 && value.length <= max ? value : undefined;
+function sourceEvidence(value: unknown, field: SourceField, claimKind?: string): SourceEvidence | null {
+  if (!record(value)) return null;
+  const kind = boundedString(value.kind) ?? boundedString(value.type) ?? claimKind;
+  const documentSourceId = boundedString(value.source_id, 500);
+  const documentPage = value.page ?? value.page_number;
+  const locator = kind === 'chart_fact'
+    ? boundedString(value.record_id, 500) ?? boundedString(value.id, 500)
+    : kind === 'document_extract'
+      ? documentSourceId && Number.isSafeInteger(documentPage) && Number(documentPage) > 0 ? `${documentSourceId}#page=${documentPage}` : undefined
+      : kind === 'guideline_reference'
+        ? boundedString(value.publisher, 500) && boundedString(value.title, 500) && boundedString(value.section, 500) ? `${value.publisher}: ${value.title}, ${value.section}` : undefined
+        : undefined;
+  // This is a recognized reference shape, not independent proof of the cited fact.
+  return { field, kind, locator, support: locator ? 'supported' : 'unsupported', metadata: value };
+}
+function claimSources(claim: Record<string, unknown>, kind?: string): SourceEvidence[] {
+  const sources: SourceEvidence[] = [];
+  for (const field of ['source', 'sources', 'citation', 'citations'] as const) {
+    if (!(field in claim)) continue;
+    const values = Array.isArray(claim[field]) ? claim[field] as unknown[] : [claim[field]];
+    for (const value of values) {
+      const normalized = sourceEvidence(value, field, kind);
+      if (normalized) sources.push(normalized);
+      else sources.push({ field, support: 'unsupported', metadata: { unsupportedValue: value } });
+    }
+  }
+  return sources;
+}
+async function boundedTurnJson(response: Response): Promise<Record<string, unknown>> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new TargetFailure('incomplete', 'Missing target turn body');
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_TURN_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => {});
+        throw new TargetFailure('incomplete', 'Target turn body exceeded evidence limit');
+      }
+      chunks.push(value);
+    }
+    const parsed: unknown = JSON.parse(Buffer.concat(chunks, size).toString('utf8'));
+    if (record(parsed)) return parsed;
+  } catch (error) {
+    if (error instanceof TargetFailure) throw error;
+  } finally { reader.releaseLock(); }
+  throw new TargetFailure('incomplete', 'Malformed target turn body');
+}
 
 export type Identity = { username: string; password: string; pubpid: string };
 export class TargetFailure extends Error {
@@ -7,7 +65,7 @@ export class TargetFailure extends Error {
 }
 export type Attempt = { number: number; outcome: 'observed' | 'unprocessed' | 'ambiguous'; status?: number };
 export class TurnFailure extends TargetFailure {
-  constructor(readonly attempts: Attempt[]) { super('incomplete', 'Turn delivery uncertain or rejected'); }
+  constructor(readonly attempts: Attempt[], reason = 'Turn delivery uncertain or rejected') { super('incomplete', reason); }
 }
 
 export class Session {
@@ -132,11 +190,12 @@ export class Session {
     const attempts: Attempt[] = [];
     for (let number = 1; number <= 2; number++) {
       const token = await this.ticket();
+      const requestCorrelationId = randomUUID();
       let response: Response;
       try {
         response = await this.request(`copilot-api/v1/conversations/${this.conversation}/turns`, {
           method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Copilot-Token': token },
-          body: JSON.stringify({ message, ...(sourceId ? { attachment: { source_id: sourceId } } : {}), stream: false })
+          body: JSON.stringify({ message, correlation_id: requestCorrelationId, ...(sourceId ? { attachment: { source_id: sourceId } } : {}), stream: false })
         });
       } catch { attempts.push({ number, outcome: 'ambiguous' }); throw new TurnFailure(attempts); }
       if (!response.ok) {
@@ -146,15 +205,34 @@ export class Session {
         if (proven && number === 1) continue;
         throw new TurnFailure(attempts);
       }
-      const data = await this.json(response);
+      let data: Record<string, unknown>;
+      try { data = await boundedTurnJson(response); }
+      catch (error) { attempts.push({ number, outcome: 'ambiguous', status: response.status }); throw new TurnFailure(attempts, error instanceof TargetFailure ? error.message : 'Target turn body unavailable'); }
       const statuses = ['complete', 'partial', 'fallback', 'denied', 'refused', 'failed'] as const;
       if (typeof data.turn_id !== 'string' || !data.turn_id || data.conversation_id !== this.conversation || !statuses.some(status => status === data.status) || typeof data.summary !== 'string' || !Array.isArray(data.claims) || !data.claims.every(c => c && typeof c === 'object' && typeof c.text === 'string') || !Array.isArray(data.limitations) || !data.limitations.every(l => l && typeof l === 'object' && typeof l.detail === 'string')) {
         attempts.push({ number, outcome: 'ambiguous', status: response.status });
         throw new TurnFailure(attempts);
       }
-      const visible = [data.summary, ...data.claims.map(c => c.text as string), ...data.limitations.map(l => l.detail as string)].filter(Boolean).join('\n');
+      const claims = (data.claims as Record<string, unknown>[]).map(claim => {
+        const kind = boundedString(claim.kind) ?? boundedString(claim.type);
+        return { text: claim.text as string, kind, sources: claimSources(claim, kind) };
+      });
+      const limitations = (data.limitations as Record<string, unknown>[]).map(limitation => ({ detail: limitation.detail as string, code: boundedString(limitation.code) }));
+      const visible = [data.summary as string, ...claims.map(c => c.text), ...limitations.map(l => l.detail)].filter(Boolean).join('\n');
+      const truncated = visible.length > MAX_VISIBLE_CHARS;
+      const partial = data.status === 'partial';
+      let observation: Observation;
+      try {
+        observation = observationV2.parse({
+          v: 2, turn, ref: `turn-${turn}`, status: data.status, response: visible.slice(0, MAX_VISIBLE_CHARS),
+          target: { conversationId: this.conversation, turnId: data.turn_id, requestCorrelationId, responseCorrelationId: boundedString(data.correlation_id) },
+          attachment: sourceId ? { sourceId } : undefined,
+          summary: data.summary, claims, limitations,
+          completeness: { state: truncated ? 'truncated' : partial ? 'partial' : 'complete', reasons: [...(partial ? ['target_partial'] as const : []), ...(truncated ? ['visible_text_limit'] as const : [])], visibleChars: visible.length, retainedChars: Math.min(visible.length, MAX_VISIBLE_CHARS) }
+        });
+      } catch { attempts.push({ number, outcome: 'ambiguous', status: response.status }); throw new TurnFailure(attempts); }
       attempts.push({ number, outcome: 'observed', status: response.status });
-      return { observation: { v: 1, turn, ref: `turn-${turn}`, status: data.status as (typeof statuses)[number], response: visible.slice(0, 10000) }, attempts };
+      return { observation, attempts };
     }
     throw new TurnFailure(attempts);
   }
