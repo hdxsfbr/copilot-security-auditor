@@ -80,7 +80,7 @@ export function parseAgentMessage<S extends z.ZodType<{ header: AgentHeader; sta
       return ref.runId !== context.runId || ref.attemptId !== context.attemptId || !item || ref.observationVersion !== item.v || ref.completeness !== (item.v === 2 ? item.completeness.state : 'unknown') || ref.targetTurnId !== (item.v === 2 ? item.target.turnId : undefined);
     }) || handoff.payload.packet.actions.length !== seen.size || handoff.payload.packet.actions.some(action => {
       const item = seen.get(`turn-${action.turn}`);
-      return !item || item.turn !== action.turn || action.kind === 'attach_pdf' && item.v === 2 && item.attachment?.sourceId !== action.sourceId;
+      return !item || item.turn !== action.turn || action.kind === 'attach_pdf' && (item.v !== 2 || item.attachment?.sourceId !== action.sourceId) || action.kind === 'chat_turn' && item.v === 2 && item.attachment !== undefined;
     }) || handoff.payload.packet.checks.some(check => check.evidenceRefs.some(ref => !seen.has(ref)))) throw new AgentContractError('evidence_mismatch', value.channel);
   }
   if (value.channel === 'judge_to_documentation' && value.status === 'ok') {

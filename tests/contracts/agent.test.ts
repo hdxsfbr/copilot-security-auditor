@@ -66,6 +66,12 @@ test('malformed or cross-run Judge handoff is rejected before provider transport
   const attached = observation.parse({ ...v2, summary: 'Synthetic PDF response', attachment: { sourceId: 'source-1' } });
   const pdf = { ...judgeHandoff(), payload: { ...judgeHandoff().payload, packet: { ...packet, observations: [attached], actions: [{ turn: 1, kind: 'attach_pdf', message: 'Summarize synthetic PDF', artifactId: 'pdf-1', documentType: 'lab_pdf', sourceId: 'other-source' }] }, evidenceRefs: agentRefs([attached], context) } };
   await assert.rejects(callJudgeHandoff(assignment, pdf as never, context, 'http://model.invalid/', transport), (e: unknown) => e instanceof AgentContractError && e.code === 'evidence_mismatch');
+  const legacyPdf = { ...judgeHandoff(), payload: { ...judgeHandoff().payload,
+    packet: { ...packet, actions: [{ turn: 1, kind: 'attach_pdf', message: 'Summarize synthetic PDF', artifactId: 'pdf-1', documentType: 'lab_pdf', sourceId: 'source-1' }] } } };
+  await assert.rejects(callJudgeHandoff(assignment, legacyPdf as never, context, 'http://model.invalid/', transport), (e: unknown) => e instanceof AgentContractError && e.code === 'evidence_mismatch');
+  const chatWithAttachment = { ...judgeHandoff(), payload: { ...judgeHandoff().payload,
+    packet: { ...packet, observations: [attached] }, evidenceRefs: agentRefs([attached], context) } };
+  await assert.rejects(callJudgeHandoff(assignment, chatWithAttachment, context, 'http://model.invalid/', transport), (e: unknown) => e instanceof AgentContractError && e.code === 'evidence_mismatch');
   assert.equal(calls, 0);
 });
 
