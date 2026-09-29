@@ -573,6 +573,7 @@
         "tests/case-draft-authoring.test.ts",
         "tests/integration.test.ts",
         "tests/case-lifecycle-api.test.ts",
+        "tests/ui-shell-navigation.test.ts",
         "tests/e2e.test.ts",
         "tests/integrity-candidate.test.ts"
       ],
