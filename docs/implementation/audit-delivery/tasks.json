@@ -534,19 +534,36 @@
         "U02"
       ],
       "locks": [
-        "web-runs"
+        "web-runs",
+        "web-shell",
+        "web-overview",
+        "web-findings"
       ],
       "files": [
         "apps/web/src/pages/Runs*",
         "apps/web/src/pages/RunDetail*",
         "apps/web/src/components/evidence/",
-        "apps/web/src/hooks/"
+        "apps/web/src/hooks/",
+        "apps/web/src/pages/Workspace.tsx",
+        "apps/web/src/pages/controller.ts",
+        "apps/web/src/pages/context.tsx",
+        "apps/web/src/components/AppShell.tsx",
+        "apps/web/src/components/router.tsx",
+        "apps/web/src/components/RunActivity.tsx",
+        "apps/web/src/pages/OverviewPage.tsx",
+        "apps/web/src/pages/FindingsPage.tsx",
+        "apps/web/src/api/client.ts",
+        "apps/web/src/style.css",
+        "tests/run-ui.test.ts",
+        "tests/e2e.test.ts",
+        "tests/ui-resilience.test.ts",
+        "tests/ui-shell-navigation.test.ts"
       ],
-      "scope": "Show target/version/mode history, active-run recovery, exact adaptive cases, structured action/response/check/verdict evidence, local step numbers, usage and stop. Keep raw JSON expandable and poll terminal runs only on demand.",
+      "scope": "Show target/version/mode history, active-run recovery, exact adaptive cases, structured action/response/check/verdict evidence, local step numbers, usage and stop. Keep raw JSON expandable and poll terminal runs only on demand. Use exact run/case/turn URLs where verified linkage exists; finding-level links remain run-level until F02 supplies stored candidate correlation.",
       "accept": [
         "Direct URL/reload/new tab recovers the same run and case.",
         "Busy target link opens its owner; selected/adaptive stops are visible and accurate.",
-        "Inspect evidence goes to the correct case/turn instead of page top."
+        "Run/case evidence links recover the exact execution and local turn; historical untagged events remain uncorrelated. Finding-specific correlation is F02 scope."
       ],
       "linear": {
         "id": "HDX-17",

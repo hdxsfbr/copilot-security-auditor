@@ -13,6 +13,7 @@ import { LegacyRunLauncher } from "./LegacyRunLauncher.js";
 import { OverviewPage } from "./OverviewPage.js";
 import { RegressionsPage } from "./RegressionsPage.js";
 import { RunDetailPage } from "./RunDetailPage.js";
+import { RunsPage } from "./RunsPage.js";
 import { SchedulesPage } from "./SchedulesPage.js";
 import { TargetsPage } from "./TargetsPage.js";
 
@@ -21,6 +22,7 @@ const pageInfo: Record<string, { title: string; description: string }> = {
   "/targets": { title: "Targets & identities", description: "Configure authorized synthetic target connections and their chart identities." },
   "/cases": { title: "Cases", description: "Save a scoped synthetic test case and optional PDF for later evaluation." },
   "/runs/new": { title: "Launch evaluation", description: "Select a saved target and case, then choose the current launch path." },
+  "/runs": { title: "Runs", description: "Recover saved evaluations and inspect their exact evidence." },
   "/findings": { title: "Findings & review", description: "Inspect reviewable observations and make explicit decisions." },
   "/regressions": { title: "Regressions", description: "Select a confirmed definition for a new replay." },
   "/coverage": { title: "Coverage", description: "See tested outcomes and visible gaps by category." },
@@ -31,10 +33,20 @@ export function Workspace() {
   const { path, navigate } = useRouterPath();
   const state = useWorkspaceController(navigate);
   const caseRouteId = /^\/cases\/([^/]+)$/.exec(path)?.[1];
-  const runRouteId = path === "/runs/new" ? undefined : /^\/runs\/([^/]+)$/.exec(path)?.[1];
+  const runMatch = /^\/runs\/([^/]+)(?:\/cases\/([^/]+))?$/.exec(path);
+  const runRouteId = path === "/runs/new" ? undefined : runMatch?.[1];
+  const executionCaseId = runMatch?.[2];
   useEffect(() => {
-    if (runRouteId && state.run?.id !== runRouteId) state.openRun(runRouteId, "loading", null, false);
+    if (!runRouteId) return;
+    if (state.run?.id !== runRouteId) state.openRun(runRouteId, "loading", null, false);
+    void state.pollRun(runRouteId);
+    return () => state.deactivateRun();
   }, [runRouteId]);
+  useEffect(() => {
+    if (!runRouteId || state.run?.id !== runRouteId || state.run.status === "finished") return;
+    const timer = setInterval(() => { if (!document.hidden) void state.pollRun(runRouteId); }, 1500);
+    return () => clearInterval(timer);
+  }, [runRouteId, state.run?.id, state.run?.status]);
   const info = caseRouteId ? { title: "Case workspace", description: "Edit a draft or inspect the exact published version and its executions." } : runRouteId ? { title: "Run evidence", description: "Inspect the selected run's current status and recorded events." } : pageInfo[path] ?? { title: "Page unavailable", description: "This workspace path is not available yet." };
   return <WorkspaceContext.Provider value={state}>
     <AppShell path={path} navigate={navigate} title={info.title} description={info.description} runId={state.run?.id}>
@@ -49,8 +61,10 @@ export function Workspace() {
         <ErrorBoundary name="Model settings"><ModelDesk targetId={state.targetId} caseId={state.caseId} cases={state.cases}
           onStart={id => state.openRun(id, "assigned per role")} /></ErrorBoundary>
       </div>
-      {runRouteId && <div className="route-panel">{state.run?.id === runRouteId ? <RunDetailPage /> : <p role="status">Loading run evidence…</p>}</div>}
-      <div hidden={path !== "/runs/new" && (!runRouteId || state.run?.id !== runRouteId)} className="route-panel"><RunActivity key={state.run?.id ?? "none"} /></div>
+      {path === "/runs" && <div className="route-panel"><RunsPage /></div>}
+      {runRouteId && runRouteId === state.run?.id && <div className="route-panel"><RunActivity key={state.run.id} /></div>}
+      {runRouteId && <div className="route-panel">{state.run?.id === runRouteId ? <RunDetailPage runId={runRouteId} executionCaseId={executionCaseId} /> : <p role="status">Loading run evidence…</p>}</div>}
+      {path === "/runs/new" && state.run?.id && <div className="route-panel"><RunActivity key={state.run.id} /></div>}
       <div hidden={path !== "/findings"} className="route-panel"><FindingsPage /></div>
       <div hidden={path !== "/regressions"} className="route-panel"><RegressionsPage /></div>
       <div hidden={path !== "/coverage"} className="route-panel"><CoveragePage /></div>
