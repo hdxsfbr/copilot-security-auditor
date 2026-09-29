@@ -2,6 +2,7 @@ import { randomUUID, createCipheriv, createDecipheriv, randomBytes } from 'node:
 import pg from 'pg';
 import type { CaseInput, EvidenceEvent, Outcome, StartInput, TargetInput, TargetUpdateInput, Verdict } from '../../../packages/contracts/src/index.js';
 import type { CheckResult } from '../../worker/src/checks.js';
+import { legacyRoles, nanos, reserveAmount, type Role, type Snapshot, type ModelUsage } from '../../worker/src/models.js';
 
 function key() {
   const value = process.env.CREDENTIAL_KEY;
@@ -86,7 +87,17 @@ export class Repository {
       return { id, ...definition };
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
-  async start(input: StartInput): Promise<{ id: string; status: 'queued' } | { active_run_id: string } | null> {
+  async start(input: StartInput, models?: Snapshot): Promise<{ id: string; status: 'queued' } | { active_run_id: string } | null> {
+    if (!input.roles && !input.model) throw new Error('A Judge model is required');
+    const assigned = input.roles ?? legacyRoles(input.model!);
+    if (Object.values(assigned).some(role => role.provider === 'openrouter') && (!models || !input.openRouterCapUsd)) throw new Error('Verified pricing and paid cap required');
+    const modelSnapshot = models ?? { roles: assigned, pricing: {} };
+    if (JSON.stringify(modelSnapshot.roles) !== JSON.stringify(assigned)) throw new Error('Model snapshot mismatch');
+    for (const [role, selection] of Object.entries(assigned)) if (selection.provider === 'openrouter') {
+      const price = modelSnapshot.pricing[role as Role];
+      if (!price) throw new Error('Verified pricing required');
+      reserveAmount(price, selection.maxOutputTokens);
+    }
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
@@ -97,7 +108,7 @@ export class Repository {
       const definition = selected.definition as CaseInput;
       for (const action of definition.actions) if (action.kind === 'attach_pdf' && !(await db.query('SELECT 1 FROM artifacts WHERE case_id=$1 AND id=$2 AND document_type=$3', [input.caseId, action.artifactId, action.documentType])).rowCount) throw new Error('Artifact not linked to selected case');
       const id = randomUUID();
-      await db.query('INSERT INTO runs(id,target_id,case_id,definition,target_snapshot) VALUES ($1,$2,$3,$4,$5)', [id, target.id, input.caseId, { ...input, case: selected.definition }, { name: target.name, baseUrl: target.base_url, userARef: target.user_a_credential, userBRef: target.user_b_credential }]);
+      await db.query('INSERT INTO runs(id,target_id,case_id,definition,target_snapshot,model_snapshot,paid_cap_nanos) VALUES ($1,$2,$3,$4,$5,$6,$7)', [id, target.id, input.caseId, { ...input, case: selected.definition }, { name: target.name, baseUrl: target.base_url, userARef: target.user_a_credential, userBRef: target.user_b_credential }, modelSnapshot, input.openRouterCapUsd === undefined ? null : nanos(input.openRouterCapUsd).toString()]);
       await db.query('INSERT INTO jobs(run_id) VALUES ($1)', [id]);
       await db.query('UPDATE targets SET active_run_id=$1 WHERE id=$2', [id, target.id]);
       await db.query('COMMIT');
@@ -105,7 +116,43 @@ export class Repository {
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
   async run(id: string) {
-    return (await this.pool.query('SELECT id,target_id AS "targetId",case_id AS "caseId",status,outcome,version,created_at AS "createdAt",finished_at AS "finishedAt",definition->>\'model\' AS model FROM runs WHERE id=$1', [id])).rows[0] ?? null;
+    return (await this.pool.query('SELECT id,target_id AS "targetId",case_id AS "caseId",status,outcome,version,created_at AS "createdAt",finished_at AS "finishedAt",model_snapshot AS "modelSnapshot",model_snapshot->\'roles\'->\'judge\'->>\'model\' AS model,paid_cap_nanos::text AS "paidCapNanos" FROM runs WHERE id=$1', [id])).rows[0] ?? null;
+  }
+  async usage(id: string) {
+    return (await this.pool.query('SELECT id,role,provider,model,status,reserved_nanos::text AS "reservedNanos",charge_nanos::text AS "chargeNanos",input_tokens AS "inputTokens",output_tokens AS "outputTokens",latency_ms AS "latencyMs" FROM model_calls WHERE run_id=$1 ORDER BY created_at,id', [id])).rows;
+  }
+  async reserveCall(id: string, generation: number, role: Role, provider: 'ollama' | 'openrouter', model: string, amount: bigint) {
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const run = (await db.query("SELECT paid_cap_nanos FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() FOR UPDATE", [id, generation])).rows[0];
+      if (!run) throw new Error('Lease lost');
+      if (provider === 'openrouter') {
+        if (run.paid_cap_nanos === null || amount <= 0n) throw new Error('Paid model has no bounded reserve');
+        if ((await db.query("SELECT 1 FROM model_calls WHERE run_id=$1 AND provider='openrouter' AND status='unresolved' LIMIT 1", [id])).rowCount) throw new Error('Paid model billing unresolved');
+        const total = (await db.query("SELECT COALESCE(sum(CASE WHEN status='settled' THEN charge_nanos ELSE reserved_nanos END),0)::text AS amount FROM model_calls WHERE run_id=$1 AND provider='openrouter'", [id])).rows[0].amount;
+        if (BigInt(total) + amount > BigInt(run.paid_cap_nanos)) throw new Error('Paid model budget exhausted');
+      }
+      const callId = randomUUID();
+      await db.query('INSERT INTO model_calls(id,run_id,role,provider,model,status,reserved_nanos) VALUES ($1,$2,$3,$4,$5,$6,$7)', [callId, id, role, provider, model, 'reserved', amount.toString()]);
+      await db.query('COMMIT');
+      return callId;
+    } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
+  }
+  async settleCall(id: string, generation: number, callId: string, usage?: ModelUsage) {
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const run = (await db.query("SELECT id FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() FOR UPDATE", [id, generation])).rows[0];
+      if (!run) throw new Error('Lease lost');
+      const call = (await db.query("SELECT provider,reserved_nanos FROM model_calls WHERE id=$1 AND run_id=$2 AND status='reserved' FOR UPDATE", [callId, id])).rows[0];
+      if (!call) throw new Error('Call not reserved');
+      const measured = usage?.chargeNanos;
+      const resolved = !!usage && (call.provider === 'ollama' || measured !== null && measured !== undefined && BigInt(measured) <= BigInt(call.reserved_nanos));
+      await db.query('UPDATE model_calls SET status=$2,charge_nanos=$3,input_tokens=$4,output_tokens=$5,latency_ms=$6,completed_at=now() WHERE id=$1', [callId, resolved ? 'settled' : 'unresolved', call.provider === 'ollama' ? null : measured ?? null, usage?.inputTokens ?? null, usage?.outputTokens ?? null, usage?.latencyMs ?? null]);
+      await db.query('COMMIT');
+      return resolved;
+    } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
   async events(id: string) { return (await this.pool.query('SELECT id,event,created_at AS "createdAt" FROM events WHERE run_id=$1 ORDER BY id', [id])).rows; }
   async candidates() { return (await this.pool.query("SELECT c.id,c.run_id AS \"runId\",c.state,r.version FROM candidates c JOIN runs r ON r.id=c.run_id WHERE c.state='pending_review' ORDER BY c.created_at DESC")).rows; }
@@ -117,7 +164,7 @@ export class Repository {
       if (!row) { await db.query('COMMIT'); return null; }
       const run = (await db.query("UPDATE runs SET status='running', lease_owner=$2,lease_generation=lease_generation+1,lease_until=now()+interval '60 seconds' WHERE id=$1 RETURNING *", [row.id, owner])).rows[0];
       await db.query('COMMIT');
-      return run as { id: string; target_id: string; case_id: string; lease_generation: number; definition: StartInput & { case: CaseInput }; target_snapshot: { baseUrl: string; userARef: string; userBRef: string } };
+      return run as { id: string; target_id: string; case_id: string; lease_generation: number; definition: StartInput & { case: CaseInput }; model_snapshot: Snapshot; target_snapshot: { baseUrl: string; userARef: string; userBRef: string } };
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
   async credential<T>(ref: string): Promise<T> {
@@ -190,7 +237,10 @@ export class Repository {
     try {
       await db.query('BEGIN');
       const rows = (await db.query("UPDATE runs SET status='finished',outcome='incomplete',finished_at=now(),lease_generation=lease_generation+1,lease_until=NULL WHERE status='running' AND lease_until<now() RETURNING id,target_id")).rows;
-      for (const row of rows) await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [row.target_id, row.id]);
+      for (const row of rows) {
+        await db.query("UPDATE model_calls SET status='unresolved' WHERE run_id=$1 AND status='reserved'", [row.id]);
+        await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [row.target_id, row.id]);
+      }
       await db.query('COMMIT');
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }

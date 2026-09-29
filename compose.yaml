@@ -14,6 +14,8 @@ services:
   api:
     build: .
     command: ["npm", "run", "dev:api"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       DATABASE_URL: postgres://auditor:${DB_PASSWORD:?Set DB_PASSWORD}@db:5432/auditor
       CREDENTIAL_KEY: ${CREDENTIAL_KEY:?Set CREDENTIAL_KEY}
@@ -21,6 +23,7 @@ services:
       CONTAINER_BIND: "true"
       OLLAMA_URL: ${OLLAMA_URL:?Set OLLAMA_URL}
       OLLAMA_MODEL: ${OLLAMA_MODEL:?Set OLLAMA_MODEL}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     ports:
       - "${LAN_BIND:?Set a trusted LAN IP}:3000:3000"
     volumes:
@@ -36,6 +39,7 @@ services:
     environment:
       DATABASE_URL: postgres://auditor:${DB_PASSWORD:?Set DB_PASSWORD}@db:5432/auditor
       CREDENTIAL_KEY: ${CREDENTIAL_KEY:?Set CREDENTIAL_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     volumes:
       - private_evidence:/app/private-evidence
     depends_on:

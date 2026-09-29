@@ -19,7 +19,16 @@ export const checkSpec = z.discriminatedUnion('kind', [
 ]);
 export const category = z.enum(['prompt_injection', 'cross_patient', 'unintended_tool_action']);
 export const caseInput = z.object({ title: z.string().min(1).max(120), category: category.optional(), expectedSafeBehavior: z.string().min(1).max(1000), user: z.enum(['A', 'B']), actions: z.array(action).min(1).max(3), checks: z.array(checkSpec).max(6).optional() }).strict();
-export const startInput = z.object({ targetId: z.uuid(), caseId: z.uuid(), model: z.string().min(1).max(120), ollamaUrl: z.url().refine(s => ['http:', 'https:'].includes(new URL(s).protocol) && !new URL(s).username && !new URL(s).password && !new URL(s).search && !new URL(s).hash) }).strict();
+const endpoint = z.url().refine(s => ['http:', 'https:'].includes(new URL(s).protocol) && !new URL(s).username && !new URL(s).password && !new URL(s).search && !new URL(s).hash);
+export const modelAssignment = z.discriminatedUnion('provider', [
+  z.object({ provider: z.literal('ollama'), model: z.string().min(1).max(120), maxOutputTokens: z.number().int().min(1).max(4096) }).strict(),
+  z.object({ provider: z.literal('openrouter'), model: z.string().min(1).max(200), maxOutputTokens: z.number().int().min(1).max(4096) }).strict()
+]);
+export const modelRoles = z.object({ orchestrator: modelAssignment, redTeam: modelAssignment, judge: modelAssignment, documentation: modelAssignment }).strict();
+export const startInput = z.object({ targetId: z.uuid(), caseId: z.uuid(), model: z.string().min(1).max(120).optional(), ollamaUrl: endpoint, roles: modelRoles.optional(), openRouterCapUsd: z.number().finite().min(0.000000001).max(100).optional() }).strict().superRefine((input, ctx) => {
+  if (!input.roles && !input.model) ctx.addIssue({ code: 'custom', message: 'A Judge model is required' });
+  if (input.roles && Object.values(input.roles).some(role => role.provider === 'openrouter') && input.openRouterCapUsd === undefined) ctx.addIssue({ code: 'custom', message: 'A paid-call cap is required' });
+});
 export const outcome = z.enum(['safe', 'inconclusive', 'pending_review', 'auto_confirm', 'blocked', 'incomplete']);
 export const verdict = z.object({ v: z.literal(1), outcome: z.enum(['safe', 'unsafe', 'inconclusive']), claim: z.string().max(2000), evidenceQuote: z.string().min(8).max(1000).optional(), evidenceRefs: z.array(z.string()).max(20), reproductionComplete: z.boolean(), materialUncertainties: z.array(z.string()).max(20) }).strict();
 export const observation = z.object({ v: z.literal(1), turn: z.number().int().positive(), status: z.enum(['complete', 'partial', 'fallback', 'denied', 'refused', 'failed']), response: z.string().max(10000), ref: z.string() }).strict();
@@ -29,6 +38,8 @@ export type TargetInput = z.infer<typeof targetInput>;
 export type TargetUpdateInput = z.infer<typeof targetUpdateInput>;
 export type CaseInput = z.infer<typeof caseInput>;
 export type StartInput = z.infer<typeof startInput>;
+export type ModelAssignment = z.infer<typeof modelAssignment>;
+export type ModelRoles = z.infer<typeof modelRoles>;
 export type Verdict = z.infer<typeof verdict>;
 export type Observation = z.infer<typeof observation>;
 export type Outcome = z.infer<typeof outcome>;

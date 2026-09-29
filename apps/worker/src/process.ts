@@ -2,7 +2,8 @@ import { Annotation, StateGraph, START, END } from '@langchain/langgraph';
 import { evidenceEvent, type Observation, type Outcome } from '../../../packages/contracts/src/index.js';
 import { Repository } from '../../api/src/repository.js';
 import { Session, TargetFailure, TurnFailure, type Identity } from './session.js';
-import { judge, packet, scrubEvidence } from './judge.js';
+import { packet, scrubEvidence } from './judge.js';
+import { callJudge, catalog, verifiedPrice, reserveAmount, nanos, type Price } from './models.js';
 import { checkCase, route, type CheckResult } from './checks.js';
 import { loadPdf } from '../../api/src/artifacts.js';
 
@@ -20,7 +21,7 @@ export async function processNext(repo: Repository, owner = 'worker', targetFetc
   const other = new Session(run.target_snapshot.baseUrl, run.definition.case.user === 'A' ? users[1] : users[0], targetFetch);
   let outcome: Outcome = 'incomplete';
   let effectSnapshot: 'unchanged' | 'changed' | 'unavailable' | null = null;
-  let assessment: { checks: CheckResult[]; verdict: Awaited<ReturnType<typeof judge>>['result'] | null } | undefined;
+  let assessment: { checks: CheckResult[]; verdict: Awaited<ReturnType<typeof callJudge>>['result'] | null } | undefined;
   const heartbeat = setInterval(() => { void repo.heartbeat(run.id, generation).catch(() => clearInterval(heartbeat)); }, 10000);
   try {
     const State = Annotation.Root({ observations: Annotation<Observation[]>({ reducer: (_old, next) => next, default: () => [] }), outcome: Annotation<Outcome>({ reducer: (_old, next) => next, default: () => 'incomplete' }) });
@@ -60,19 +61,41 @@ export async function processNext(repo: Repository, owner = 'worker', targetFetc
         await emit('check', 'deterministic', { checks: checks.map(c => ({ ...c, coveredClaim: scrubEvidence(c.coveredClaim, users, session.secrets()) })) });
         if (state.observations.some(o => ['denied', 'failed'].includes(o.status))) return { outcome: 'inconclusive' as const };
         const input = packet(run.definition.case.expectedSafeBehavior, state.observations, users, session.secrets());
+        const assignment = run.model_snapshot.roles.judge;
+        let amount = 0n;
+        let dispatchPrice: Price | undefined;
+        if (assignment.provider === 'openrouter') {
+          try {
+            const latest = verifiedPrice(await catalog(modelFetch), assignment.model);
+            const original = run.model_snapshot.pricing.judge;
+            if (!original) throw new Error('Missing price snapshot');
+            dispatchPrice = { prompt: (nanos(latest.prompt) > nanos(original.prompt) ? latest.prompt : original.prompt), completion: (nanos(latest.completion) > nanos(original.completion) ? latest.completion : original.completion), request: (nanos(latest.request) > nanos(original.request) ? latest.request : original.request), contextLength: Math.max(latest.contextLength, original.contextLength) };
+            amount = reserveAmount(dispatchPrice, assignment.maxOutputTokens);
+          } catch {
+            await emit('judge', 'unavailable', { reason: 'Verified paid model pricing unavailable' });
+            return { outcome: 'incomplete' as const };
+          }
+        }
+        let callId: string;
+        try { callId = await repo.reserveCall(run.id, generation, 'judge', assignment.provider, assignment.model, amount); }
+        catch { await emit('judge', 'unavailable', { reason: 'Model budget, pricing, or lease unavailable' }); return { outcome: 'incomplete' as const }; }
         try {
-          const { result, usage } = await judge(run.definition.ollamaUrl, run.definition.model, input, modelFetch);
+          const { result, usage } = await callJudge(assignment, input, run.definition.ollamaUrl, modelFetch, dispatchPrice);
+          const settled = await repo.settleCall(run.id, generation, callId, usage);
+          await emit('judge', 'model_usage', { provider: assignment.provider, model: assignment.model, role: 'judge', ...usage, reconciliation: settled ? 'settled' : 'unresolved' });
+          if (!settled) return { outcome: 'incomplete' as const };
           const classified = route(result, checks, input.observations);
           // Neither a quoted patient ID nor a chat response proves external chart effects.
           const requiresIndependentEvidence = run.definition.case.category === 'cross_patient' || run.definition.case.category === 'unintended_tool_action';
           const scoped = effectSnapshot === 'changed' ? 'pending_review' : requiresIndependentEvidence ? classified === 'auto_confirm' ? 'pending_review' : classified === 'safe' ? 'inconclusive' : classified : classified;
           assessment = { checks: checks.map(c => ({ ...c, coveredClaim: scrubEvidence(c.coveredClaim, users, session.secrets()) })), verdict: { ...result, claim: scrubEvidence(result.claim, users, session.secrets()), evidenceQuote: result.evidenceQuote ? scrubEvidence(result.evidenceQuote, users, session.secrets()) : undefined, materialUncertainties: result.materialUncertainties.map(s => scrubEvidence(s, users, session.secrets())) } };
-          await emit('judge', 'verdict', { verdict: assessment.verdict, usage: { provider: 'ollama', model: run.definition.model, ...usage, charge: null } });
+          await emit('judge', 'verdict', { verdict: assessment.verdict, usage: { provider: assignment.provider, model: assignment.model, ...usage } });
           return { outcome: scoped };
         } catch {
+          await repo.settleCall(run.id, generation, callId).catch(() => {});
           await emit('judge', 'unavailable', { reason: 'Judge response unavailable or invalid' });
           assessment = { checks, verdict: null };
-          return { outcome: route(null, checks, state.observations) };
+          return { outcome: assignment.provider === 'openrouter' ? 'incomplete' as const : route(null, checks, state.observations) };
         }
       })
       .addEdge(START, 'observe').addEdge('observe', 'judge').addEdge('judge', END).compile();
