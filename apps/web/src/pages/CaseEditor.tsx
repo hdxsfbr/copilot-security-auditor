@@ -19,6 +19,7 @@ export function CaseEditor({ id, active, onMutate }: { id?: string; active: bool
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const errorRef = useRef<HTMLParagraphElement>(null);
   const [notice, setNotice] = useState("");
   const [preview, setPreview] = useState(false);
   const [archiveArmed, setArchiveArmed] = useState(false);
@@ -37,6 +38,8 @@ export function CaseEditor({ id, active, onMutate }: { id?: string; active: bool
   const operationRef = useRef(0);
   const busyRef = useRef(false);
   if (routeRef.current !== editorRoute) { routeRef.current = editorRoute; routeEpoch.current += 1; }
+
+  useEffect(() => { if (active && error) errorRef.current?.focus(); }, [active, error]);
 
   useEffect(() => {
     revisionRef.current += 1;
@@ -177,7 +180,7 @@ export function CaseEditor({ id, active, onMutate }: { id?: string; active: bool
       {visibleRecord?.metadataStatus === "unknown_legacy" && <p className="hint">Legacy metadata is unknown. Cloning this version lets you add a current rubric without changing its historical definition.</p>}
       <p className="hint">Drafts are not selectable for runs or schedules. Published versions are immutable; clone one to revise it.</p>
       {loading && <p role="status">Loading this case and its history…</p>}
-      {error && <p className="alert" role="alert">{error} {id && !record && <><button type="button" onClick={() => setReload(value => value + 1)}>Retry case</button><button type="button" onClick={() => navigate(`/cases`)}>Return to cases</button></>}</p>}
+      {error && <p ref={errorRef} tabIndex={-1} className="alert" role="alert">{error} {id && !record && <><button type="button" onClick={() => setReload(value => value + 1)}>Retry case</button><button type="button" onClick={() => navigate(`/cases`)}>Return to cases</button></>}</p>}
       {notice && <p role="status" className="case-notice">{notice}</p>}
       {!loading && (editable ? <fieldset className="case-inputs" disabled={busy}>
         <div className="case-fields">

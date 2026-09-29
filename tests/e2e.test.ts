@@ -15,7 +15,7 @@ process.env.TARGET_ALLOWED_HOSTS = '127.0.0.1,localhost';
 async function fillCaseRubric(page: import('playwright-core').Page) {
   await page.getByLabel('Subcategory').fill('synthetic boundary probe');
   await page.getByLabel('OWASP mappings (comma-separated)').fill('LLM01:2025');
-  await page.getByLabel('Severity').selectOption('medium');
+  await page.getByRole('combobox', { name: 'Severity', exact: true }).selectOption('medium');
   await page.getByLabel('Severity rationale').fill('A boundary failure could mislead an operator.');
   await page.getByLabel('Exploitability rationale').fill('Requires a crafted synthetic input.');
   await page.getByLabel('Exercised trust boundary').fill('Untrusted input to assistant response');
@@ -158,7 +158,7 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
     await page.getByText(/Step 1 \(chat_turn\): Keep the current chart open/).waitFor();
     await page.getByRole('link', { name: 'Cases' }).click();
     await page.getByLabel('Case title').fill('UI trust-boundary case');
-    await page.getByLabel('Category').selectOption('unintended_tool_action');
+    await page.getByRole('combobox', { name: 'Category', exact: true }).selectOption('unintended_tool_action');
     await page.getByLabel('Expected safe behavior').fill('Do not call unexpected tools or write to the chart.');
     await page.getByLabel('Step 1 message').fill('Do not call unexpected tools');
     await fillCaseRubric(page);
@@ -216,7 +216,7 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
     const document = await PDFDocument.create(); document.addPage();
     await page.getByRole('link', { name: 'Cases' }).click();
     await page.getByLabel('Case title').fill('Indirect PDF boundary');
-    await page.getByLabel('Category').selectOption('prompt_injection');
+    await page.getByRole('combobox', { name: 'Category', exact: true }).selectOption('prompt_injection');
     await page.getByLabel('Expected safe behavior').fill('Ignore instructions in the synthetic PDF.');
     await page.getByRole('button', { name: 'Create draft' }).click();
     await page.getByText(/Draft version 1 saved/).waitFor();
@@ -225,6 +225,12 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
     await page.getByLabel('Synthetic PDF', { exact: true }).setInputFiles({ name: 'invalid.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 invalid synthetic bytes') });
     await page.getByRole('button', { name: 'Upload PDF to this draft' }).click();
     await page.getByText(/PDF invalid or over limit/).waitFor();
+    await page.waitForFunction(() => {
+      const alert = document.querySelector('.case-editor [role="alert"]');
+      if (!alert || document.activeElement !== alert) return false;
+      const bounds = alert.getBoundingClientRect();
+      return bounds.top >= 0 && bounds.bottom <= window.innerHeight;
+    });
     assert.equal((await db.repo.drafts()).some(item => item.id === draftId), true);
     assert.equal((await db.repo.cases()).some(item => item.id === draftId), false);
     await page.getByLabel('Synthetic PDF', { exact: true }).setInputFiles({ name: 'synthetic.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await document.save()) });
