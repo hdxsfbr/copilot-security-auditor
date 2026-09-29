@@ -9,6 +9,9 @@ import { copyPdf, verifyArtifactFile, type ArtifactFileStatus } from './artifact
 import { scopedCoverage } from './coverage.js';
 import type { CoverageQuery } from '../../../packages/contracts/src/coverage.js';
 import { enqueueReportJob, releaseAllowance, ReportJobStore, snapshotReportPolicy } from './report-jobs.js';
+import { recordAutomaticDecision, recordDecision } from './findings.js';
+import { ReportRevisions } from './report-revisions.js';
+import type { ReviewRationale } from '../../../packages/contracts/src/report.js';
 
 export type CandidateIntegrity = {
   status: 'complete' | 'missing' | 'corrupt' | 'unlinked' | 'invalid_definition' | 'unavailable';
@@ -81,7 +84,8 @@ export function decrypt<T>(value: string): T {
 
 export class Repository {
   readonly reports: ReportJobStore;
-  constructor(readonly pool: pg.Pool) { this.reports = new ReportJobStore(pool); }
+  readonly reportRevisions: ReportRevisions;
+  constructor(readonly pool: pg.Pool) { this.reports = new ReportJobStore(pool); this.reportRevisions = new ReportRevisions(this); }
   async runHistory(limit = 25, cursor?: string) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid run history limit');
     const after = decodeRunCursor(cursor);
@@ -671,6 +675,7 @@ export class Repository {
   private async insertRegression(db: pg.PoolClient, candidate: string, run: string, adaptiveCaseId?: string | null) {
     await db.query('INSERT INTO regressions(id,candidate_id,source_run_id,definition) SELECT $1,$2,r.id,COALESCE(ac.definition,r.definition->\'case\') FROM runs r LEFT JOIN adaptive_cases ac ON ac.id=$4 WHERE r.id=$3 ON CONFLICT (candidate_id) DO NOTHING', [randomUUID(), candidate, run, adaptiveCaseId ?? null]);
     // Every confirmation site (review, auto-confirm, adaptive auto-confirm) passes here, so each also records its idempotent report job.
+    await recordAutomaticDecision(db, candidate);
     await enqueueReportJob(db, candidate);
   }
   async findings() { return (await this.pool.query("SELECT c.id,c.run_id AS \"runId\",c.state,c.decision_route AS \"decisionRoute\",c.export_approved_at AS \"exportApprovedAt\",c.evidence_integrity AS \"evidenceIntegrity\",r.version,COALESCE(ac.state,r.outcome) AS outcome,COALESCE(ac.definition,r.definition->'case')->>'title' AS title FROM candidates c JOIN runs r ON r.id=c.run_id LEFT JOIN adaptive_cases ac ON ac.id=c.adaptive_case_id ORDER BY c.created_at DESC")).rows; }
@@ -745,7 +750,7 @@ export class Repository {
       return integrity;
     } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
   }
-  async review(id: string, decision: 'confirm' | 'reject') {
+  async review(id: string, decision: 'confirm' | 'reject', rationale?: ReviewRationale) {
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
@@ -757,6 +762,7 @@ export class Repository {
           if (integrity.status !== 'complete') { await db.query('COMMIT'); return { integrityFailure: integrity }; }
         }
         await db.query('UPDATE candidates SET state=$2,decision_route=$3,decided_at=now() WHERE id=$1', [id, decision === 'confirm' ? 'confirmed' : 'rejected', 'operator']);
+        await recordDecision(db, id, decision, rationale);
         if (decision === 'confirm') await this.insertRegression(db, id, row.run_id, row.adaptive_case_id);
       } else if (row.state !== (decision === 'confirm' ? 'confirmed' : 'rejected')) { await db.query('ROLLBACK'); return { conflict: true }; }
       await db.query('COMMIT');
@@ -774,6 +780,20 @@ export class Repository {
       const approved = (await db.query('UPDATE candidates SET export_approved_at=COALESCE(export_approved_at,now()) WHERE id=$1 RETURNING run_id,export_approved_at', [id])).rows[0];
       await db.query('COMMIT');
       return approved;
+    } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
+  }
+  // Runs `work` in the same integrity-gated transaction as export approval: the finding must be confirmed and its exact attachments intact.
+  async gatedConfirmed<T>(id: string, work: (db: pg.PoolClient) => Promise<T>): Promise<T | { integrityFailure: CandidateIntegrity } | null> {
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const row = await this.candidateEvidenceRow(db, id);
+      if (!row || row.state !== 'confirmed') { await db.query('ROLLBACK'); return null; }
+      const integrity = await this.checkCandidateEvidence(db, row);
+      if (integrity.status !== 'complete') { await db.query('COMMIT'); return { integrityFailure: integrity }; }
+      const value = await work(db);
+      await db.query('COMMIT');
+      return value;
     } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
   }
   async exportData(id: string) {

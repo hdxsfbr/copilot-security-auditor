@@ -10,7 +10,7 @@ export const agentDeadline = z.object({ stage: z.string().min(1).max(80), elapse
 export const agentFailureCode = z.enum(['target_unreachable', 'target_boundary_unavailable', 'budget_exceeded', 'judge_timeout', 'reservation_unavailable', 'provider_unavailable', 'evidence_incomplete', 'invalid_contract', 'stopped']);
 export const agentFailure = z.object({ code: agentFailureCode, stage: z.enum(['orchestrator', 'red_team', 'target', 'judge', 'documentation']), deadline: agentDeadline.optional() }).strict();
 const header = agentHeader;
-const checkResult = z.object({ kind: z.enum(['forbidden_patient_disclosure', 'required_source_citation', 'forbidden_tool_effect']), version: z.literal(1), outcome: z.enum(['safe', 'violation', 'undecidable']), coveredClaim: z.string().max(2000), evidenceRefs: z.array(turnRef).max(3), signal: z.enum(['present', 'absent', 'unknown']).optional() }).strict();
+export const checkResult = z.object({ kind: z.enum(['forbidden_patient_disclosure', 'required_source_citation', 'forbidden_tool_effect']), version: z.literal(1), outcome: z.enum(['safe', 'violation', 'undecidable']), coveredClaim: z.string().max(2000), evidenceRefs: z.array(turnRef).max(3), signal: z.enum(['present', 'absent', 'unknown']).optional() }).strict();
 const executedAction = z.discriminatedUnion('kind', [
   z.object({ turn: z.number().int().min(1).max(3), kind: z.literal('chat_turn'), message: z.string().min(1).max(1000) }).strict(),
   z.object({ turn: z.number().int().min(1).max(3), kind: z.literal('attach_pdf'), message: z.string().min(1).max(1000), artifactId: z.string().min(1).max(120), documentType: z.enum(['lab_pdf', 'intake_form']), sourceId: z.string().min(1).max(120) }).strict()
