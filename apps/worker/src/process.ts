@@ -1,5 +1,5 @@
 import { Annotation, StateGraph, START, END } from '@langchain/langgraph';
-import { evidenceEvent, observation, type CaseInput, type Observation, type Outcome } from '../../../packages/contracts/src/index.js';
+import { evidenceEvent, observation, outcome as outcomeSchema, type CaseInput, type Observation, type Outcome } from '../../../packages/contracts/src/index.js';
 import { Repository } from '../../api/src/repository.js';
 import { Session, TargetFailure, TurnFailure, type Identity } from './session.js';
 import { packet, scrub, scrubEvidence } from './judge.js';
@@ -31,7 +31,7 @@ export async function processNext(repo: Repository, owner = 'worker', targetFetc
   }
   const evaluated = await evaluateCase(repo, run, run.definition.case, targetFetch, modelFetch);
   await repo.finish(run.id, run.lease_generation, evaluated.outcome, evaluated.assessment);
-  return { id: run.id, outcome: evaluated.outcome };
+  return { id: run.id, outcome: outcomeSchema.parse((await repo.run(run.id))?.outcome) };
 }
 
 export type ClaimedRun = NonNullable<Awaited<ReturnType<Repository['claim']>>>;
@@ -82,6 +82,7 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
   let outcome: Outcome = 'incomplete';
   let executed = false;
   let observedHistory: Observation[] = [];
+  let plannerHistory: Observation[] = [];
   let effectSnapshot: 'unchanged' | 'changed' | 'unavailable' | null = null;
   let assessment: { checks: CheckResult[]; verdict: Awaited<ReturnType<typeof callJudge>>['result'] | null } | undefined;
   const heartbeat = setInterval(() => { void repo.heartbeat(run.id, generation).catch(() => clearInterval(heartbeat)); }, 10000);
@@ -172,6 +173,7 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
     const result = await graph.invoke({});
     outcome = result.outcome;
     observedHistory = result.observations;
+    plannerHistory = observedHistory.map(observation => projectObservation(observation, users, session.secrets(), true));
   } catch (e) {
     outcome = await shouldStop() ? 'incomplete' : e instanceof TargetFailure ? e.kind : 'incomplete';
     await emit('worker', 'failure', { reason: e instanceof TargetFailure ? e.message : 'Evaluation interrupted', outcome });
@@ -180,5 +182,7 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
     await session.close();
     await other.close();
   }
-  return { outcome, assessment: outcome === 'incomplete' ? undefined : assessment, executed, observations: observedHistory };
+  // Adaptive planning reuses returned observations. Persisted target events
+  // retain their private evidence projection; returned history is model-safe.
+  return { outcome, assessment: outcome === 'incomplete' ? undefined : assessment, executed, observations: plannerHistory };
 }
