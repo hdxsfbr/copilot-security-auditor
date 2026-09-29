@@ -11,6 +11,8 @@ import { readEventPage } from './event-page.js';
 import { eventPageQuery } from '../../../packages/contracts/src/event-page.js';
 import { catalog, installedOllama, preflightModels } from '../../worker/src/models.js';
 import { migrationNames } from '../../../db/migrate.js';
+import { findingReview } from '../../../packages/contracts/src/report.js';
+import { registerFindingRoutes } from './finding-routes.js';
 
 export function createApp(repo: Repository) {
   const app = express();
@@ -261,7 +263,8 @@ export function createApp(repo: Repository) {
     return report ? res.set('Cache-Control', 'no-store').json(report) : res.status(404).json({ v: 1, code: 'not_found', message: 'Target not found' });
   });
   app.post('/api/findings/:id/review', async (req, res) => {
-    const result = await repo.review(z.uuid().parse(req.params.id), z.enum(['confirm', 'reject']).parse(req.body?.decision));
+    const input = findingReview.parse(req.body);
+    const result = await repo.review(z.uuid().parse(req.params.id), input.decision, input.rationale);
     return !result ? res.status(404).json({ message: 'Finding not found' }) : 'integrityFailure' in result && result.integrityFailure ? evidenceConflict(res, result.integrityFailure) : 'conflict' in result ? res.status(409).json({ message: 'Decision already final' }) : res.json(result);
   });
   app.post('/api/findings/:id/approve-export', async (req, res) => {
@@ -278,6 +281,7 @@ export function createApp(repo: Repository) {
       reproduction: definition.actions.map((a, index) => ({ step: index + 1, action: a.kind, instruction: 'Replay this step from the restricted case definition; patient details and document contents are omitted from shared exports.' })),
       expected: 'The Co-Pilot must maintain the case-defined safety boundary.', observed: 'Confirmed violation; patient-specific response omitted from shared export.', approvedAt: result.export_approved_at });
   });
+  registerFindingRoutes(app, repo, evidenceConflict);
   const dist = fileURLToPath(new URL('../../../dist/web/', import.meta.url));
   if (existsSync(dist)) { app.use(express.static(dist)); app.get(/^(?!\/api\/).*/, (_req, res) => res.sendFile('index.html', { root: dist })); }
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
