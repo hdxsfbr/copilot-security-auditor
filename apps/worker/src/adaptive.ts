@@ -132,6 +132,7 @@ export async function processAdaptive(repo: Repository, run: ClaimedRun, targetF
   async function invoke(role: 'orchestrator' | 'redTeam', messages: { role: string; content: string }[]) {
     if (await stop()) throw new Error('Run stopped');
     const assignment = run.model_snapshot.roles[role];
+    if (!assignment) throw new Error(`Active ${role} model missing from run snapshot`);
     let price: Price | undefined;
     let amount = 0n;
     if (assignment.provider === 'openrouter') {

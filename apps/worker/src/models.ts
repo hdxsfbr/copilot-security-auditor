@@ -1,4 +1,4 @@
-import { verdict, type ModelAssignment, type ModelRoles, type Verdict } from '../../../packages/contracts/src/index.js';
+import { verdict, type AdaptiveRoles, type ModelAssignment, type ModelRoles, type RunDefinition, type SelectedRoles, type Verdict } from '../../../packages/contracts/src/index.js';
 import { packet } from './judge.js';
 import { AgentContractError, parseAgentMessage, redTeamToJudge, type AgentContext, type AgentJudgePacket, type RedTeamToJudge } from '../../../packages/contracts/src/agent.js';
 import { boundedLimit, DEADLINE_MS, discardResponse, readJsonBody, withinDeadline } from './deadlines.js';
@@ -7,10 +7,68 @@ export type Price = { prompt: string; completion: string; request: string; conte
 export type ModelUsage = { inputTokens?: number; outputTokens?: number; latencyMs: number; chargeNanos: string | null };
 export const roles = ['orchestrator', 'redTeam', 'judge', 'documentation'] as const;
 export type Role = typeof roles[number];
-export type Snapshot = { roles: ModelRoles; pricing: Partial<Record<Role, Price>> };
+export type ActiveRoles = Partial<ModelRoles> & Pick<ModelRoles, 'judge'>;
+export type RunMode = 'selected' | 'adaptive';
+export type Snapshot = { roles: ActiveRoles; pricing: Partial<Record<Role, Price>> };
+export const activeRoleNames = (mode: RunMode): readonly Role[] => mode === 'selected' ? ['judge'] : ['orchestrator', 'redTeam', 'judge'];
+export function projectRoles(mode: 'selected', assigned: ActiveRoles): SelectedRoles;
+export function projectRoles(mode: 'adaptive', assigned: ActiveRoles): AdaptiveRoles;
+export function projectRoles(mode: RunMode, assigned: ActiveRoles): ActiveRoles;
+export function projectRoles(mode: RunMode, assigned: ActiveRoles): ActiveRoles {
+  if (!assigned.judge || mode === 'adaptive' && (!assigned.orchestrator || !assigned.redTeam)) throw new Error('Active model role unavailable');
+  return mode === 'selected' ? { judge: assigned.judge } : { orchestrator: assigned.orchestrator!, redTeam: assigned.redTeam!, judge: assigned.judge };
+}
+export function reservationPreview(models: Snapshot, mode: RunMode, maxCases = 1): bigint {
+  if (!Number.isSafeInteger(maxCases) || maxCases < 1 || maxCases > 9) throw new Error('Invalid attempt bound');
+  let perAttempt = 0n;
+  for (const role of activeRoleNames(mode)) {
+    const assigned = models.roles[role];
+    if (!assigned) throw new Error('Active model role unavailable');
+    if (assigned.provider === 'openrouter') {
+      const price = models.pricing[role];
+      if (!price) throw new Error('Verified pricing required');
+      perAttempt += reserveAmount(price, assigned.maxOutputTokens);
+    }
+  }
+  // Adaptive index advances even when an admitted proposal is rejected; there
+  // are no model retries. Each attempt has at most one call per active role.
+  return perAttempt * BigInt(mode === 'adaptive' ? maxCases : 1);
+}
 export function legacyRoles(model: string): ModelRoles {
   const assignment: ModelAssignment = { provider: 'ollama', model, maxOutputTokens: 1024 };
   return { orchestrator: assignment, redTeam: assignment, judge: assignment, documentation: assignment };
+}
+export function runRoles(run: RunDefinition): ActiveRoles {
+  return run.kind === 'selected' ? projectRoles('selected', run.input.roles ?? legacyRoles(run.input.model!)) : projectRoles('adaptive', run.input.roles);
+}
+export type ModelPreflight = {
+  status: 'available' | 'unavailable';
+  inferenceHealth: 'unverified';
+  issues: { code: 'local_catalog_unavailable' | 'local_model_missing' | 'paid_catalog_or_pricing_unavailable'; role?: Role }[];
+  local: { status: 'not_required' | 'available' | 'unavailable'; installed: string[] };
+  paid: { status: 'not_required' | 'available' | 'unavailable'; configured: boolean };
+  preview: { reservationNanos: string; capNanos: string | null; attempts: number; basis: 'one_call_per_active_role_per_attempt' } | null;
+  models?: Snapshot;
+};
+export async function preflightModels(run: RunDefinition, transport: typeof fetch = fetch): Promise<ModelPreflight> {
+  const assigned = runRoles(run), mode = run.kind;
+  const active = activeRoleNames(mode);
+  const localRoles = active.filter(role => assigned[role]?.provider === 'ollama');
+  const paidRoles = active.filter(role => assigned[role]?.provider === 'openrouter');
+  const issues: ModelPreflight['issues'] = [];
+  const local: ModelPreflight['local'] = { status: localRoles.length ? 'available' : 'not_required', installed: [] };
+  const paid: ModelPreflight['paid'] = { status: paidRoles.length ? 'available' : 'not_required', configured: !!process.env.OPENROUTER_API_KEY };
+  if (localRoles.length) {
+    try { local.installed = await installedOllama(run.input.ollamaUrl!, transport); }
+    catch { local.status = 'unavailable'; issues.push({ code: 'local_catalog_unavailable' }); }
+    if (local.status === 'available') for (const role of localRoles) if (!local.installed.includes(assigned[role]!.model)) issues.push({ code: 'local_model_missing', role });
+  }
+  let models: Snapshot | undefined;
+  try { models = await snapshot(assigned, transport); }
+  catch { paid.status = 'unavailable'; issues.push({ code: 'paid_catalog_or_pricing_unavailable' }); }
+  const attempts = mode === 'adaptive' ? run.input.maxCases : 1;
+  const preview = models ? { reservationNanos: reservationPreview(models, mode, attempts).toString(), capNanos: run.input.openRouterCapUsd === undefined ? null : nanos(run.input.openRouterCapUsd).toString(), attempts, basis: 'one_call_per_active_role_per_attempt' as const } : null;
+  return { status: issues.length ? 'unavailable' : 'available', inferenceHealth: 'unverified', issues, local, paid, preview, ...(models ? { models } : {}) };
 }
 
 // Convert a decimal dollar amount to integer billionths of a dollar, rounding up.
@@ -61,13 +119,13 @@ export function verifiedPrice(models: unknown[], model: string): Price {
   reserveAmount(price, 1);
   return price;
 }
-export async function snapshot(assigned: ModelRoles, transport: typeof fetch = fetch): Promise<Snapshot> {
+export async function snapshot(assigned: ActiveRoles, transport: typeof fetch = fetch): Promise<Snapshot> {
   const pricing: Snapshot['pricing'] = {};
   if (Object.values(assigned).some(role => role.provider === 'openrouter')) {
     const models = await catalog(transport);
-    for (const role of roles) if (assigned[role].provider === 'openrouter') {
-      pricing[role] = verifiedPrice(models, assigned[role].model);
-      reserveAmount(pricing[role], assigned[role].maxOutputTokens);
+    for (const role of roles) if (assigned[role]?.provider === 'openrouter') {
+      pricing[role] = verifiedPrice(models, assigned[role]!.model);
+      reserveAmount(pricing[role], assigned[role]!.maxOutputTokens);
     }
   }
   return { roles: assigned, pricing };
@@ -79,16 +137,17 @@ export function judgeMessages(input: AgentJudgePacket | ReturnType<typeof packet
   ];
 }
 export type RoleCallOptions = { runUntil?: number; callMs?: number; role?: Role };
-export async function callRoleJson(assignment: ModelAssignment, messages: { role: string; content: string }[], ollamaUrl: string, transport: typeof fetch = fetch, price?: Price, options: RoleCallOptions = {}): Promise<{ result: unknown; usage: ModelUsage }> {
+export async function callRoleJson(assignment: ModelAssignment, messages: { role: string; content: string }[], ollamaUrl: string | undefined, transport: typeof fetch = fetch, price?: Price, options: RoleCallOptions = {}): Promise<{ result: unknown; usage: ModelUsage }> {
   const paid = assignment.provider === 'openrouter';
   const key = process.env.OPENROUTER_API_KEY;
   if (paid && (!key || !price)) throw new Error('Verified paid dispatch unavailable');
+  if (!paid && !ollamaUrl) throw new Error('Local model endpoint unavailable');
   const started = Date.now();
   // Local inference can legitimately outlast 30 seconds; paid delivery keeps
   // the shorter default because an interrupted charge remains unresolved.
   const maximum = paid ? DEADLINE_MS.paidRole : DEADLINE_MS.localRole;
   const data = await withinDeadline(`model.${options.role ?? 'role'}`, boundedLimit(options.callMs, maximum), options.runUntil, async signal => {
-    const response = await transport(new URL(paid ? 'chat/completions' : 'api/chat', paid ? openRouterEndpoint() : ollamaUrl.endsWith('/') ? ollamaUrl : `${ollamaUrl}/`), {
+    const response = await transport(new URL(paid ? 'chat/completions' : 'api/chat', paid ? openRouterEndpoint() : ollamaUrl!.endsWith('/') ? ollamaUrl : `${ollamaUrl}/`), {
       method: 'POST', redirect: 'manual', signal, headers: { 'Content-Type': 'application/json', ...(paid ? { Authorization: `Bearer ${key}` } : {}) },
       body: JSON.stringify(paid ? { model: assignment.model, max_tokens: assignment.maxOutputTokens, response_format: { type: 'json_object' }, provider: { sort: 'price', allow_fallbacks: false, require_parameters: true, max_price: { prompt: Number((Number(price!.prompt) * 1_000_000).toPrecision(12)), completion: Number((Number(price!.completion) * 1_000_000).toPrecision(12)), request: Number(price!.request) } }, messages } : { model: assignment.model, options: { num_predict: assignment.maxOutputTokens }, stream: false, format: 'json', messages })
     });
@@ -105,13 +164,13 @@ export async function callRoleJson(assignment: ModelAssignment, messages: { role
   const charge = paid ? usage?.cost : null;
   return { result, usage: { inputTokens: validToken(paid ? usage?.prompt_tokens : usage?.prompt_eval_count), outputTokens: validToken(paid ? usage?.completion_tokens : usage?.eval_count), latencyMs: Date.now() - started, chargeNanos: paid && (typeof charge === 'number' || typeof charge === 'string') ? nanos(charge).toString() : null } };
 }
-export async function callJudge(assignment: ModelAssignment, input: AgentJudgePacket | ReturnType<typeof packet>, ollamaUrl: string, transport: typeof fetch = fetch, price?: Price, options: RoleCallOptions = {}): Promise<{ result: Verdict; usage: ModelUsage }> {
+export async function callJudge(assignment: ModelAssignment, input: AgentJudgePacket | ReturnType<typeof packet>, ollamaUrl: string | undefined, transport: typeof fetch = fetch, price?: Price, options: RoleCallOptions = {}): Promise<{ result: Verdict; usage: ModelUsage }> {
   const call = await callRoleJson(assignment, judgeMessages(input), ollamaUrl, transport, price, { ...options, role: 'judge' });
   const result = verdict.parse(call.result);
   return { result: result.evidenceRefs.some(ref => !input.observations.some(o => o.ref === ref)) ? { ...result, outcome: 'inconclusive', materialUncertainties: [...result.materialUncertainties, 'Invalid evidence reference'] } : result, usage: call.usage };
 }
 
-export async function callJudgeHandoff(assignment: ModelAssignment, handoff: RedTeamToJudge, context: AgentContext, ollamaUrl: string, transport: typeof fetch = fetch, price?: Price, options: RoleCallOptions = {}) {
+export async function callJudgeHandoff(assignment: ModelAssignment, handoff: RedTeamToJudge, context: AgentContext, ollamaUrl: string | undefined, transport: typeof fetch = fetch, price?: Price, options: RoleCallOptions = {}) {
   const valid = parseAgentMessage(redTeamToJudge, handoff, context);
   if (valid.status !== 'ok') throw new AgentContractError('invalid_shape', 'red_team_to_judge');
   return callJudge(assignment, valid.payload.packet, ollamaUrl, transport, price, options);

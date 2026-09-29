@@ -217,7 +217,7 @@ test('paid holds serialize under one cap; ambiguous billing blocks new paid call
     const start = await db.repo.start({ targetId: input.targetId, caseId: input.caseId, ollamaUrl: input.ollamaUrl, roles, openRouterCapUsd: 0.002 }, snapshot);
     assert.ok(start && 'id' in start);
     const claimed = await db.repo.claim('paid-test'); assert.ok(claimed);
-    assert.deepEqual((await db.repo.run(start.id)).modelSnapshot, snapshot);
+    assert.deepEqual((await db.repo.run(start.id)).modelSnapshot, { roles: { judge: roles.judge }, pricing: snapshot.pricing });
     const attempts = await Promise.allSettled(Array.from({ length: 4 }, () => db.repo.reserveCall(start.id, claimed.lease_generation, 'judge', 'openrouter', 'test/paid', nanos('0.0012'))));
     const allowed = attempts.filter(a => a.status === 'fulfilled');
     assert.equal(allowed.length, 1);

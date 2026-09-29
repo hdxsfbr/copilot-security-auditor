@@ -2,10 +2,10 @@ import express from 'express';
 import { z, ZodError } from 'zod';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { targetInput, targetUpdateInput, caseInput, caseDraftInput, startInput, adaptiveStart, scheduleInput, scheduleState } from '../../../packages/contracts/src/index.js';
-import { Repository, type CandidateIntegrity } from './repository.js';
+import { targetInput, targetUpdateInput, caseInput, caseDraftInput, startInput, adaptiveStart, runDefinition, runDefinitionInput, runDefinitionEdit, runDefinitionRef, scheduleInput, scheduleDefinitionRef, scheduleState, type RunDefinition } from '../../../packages/contracts/src/index.js';
+import { DefinitionRevisionConflict, Repository, type CandidateIntegrity, type RunDefinitionReference } from './repository.js';
 import { auditArtifactVolume, storePdf, loadPdf } from './artifacts.js';
-import { catalog, installedOllama, legacyRoles, snapshot } from '../../worker/src/models.js';
+import { catalog, installedOllama, preflightModels } from '../../worker/src/models.js';
 
 export function createApp(repo: Repository) {
   const app = express();
@@ -25,7 +25,7 @@ export function createApp(repo: Repository) {
     try {
       await repo.pool.query('SELECT 1');
       const migrations = await repo.pool.query('SELECT count(*)::int AS count FROM schema_migrations');
-      if (migrations.rows[0].count !== 11) return res.status(503).json({ status: 'unavailable', database: 'migration_incomplete' });
+      if (migrations.rows[0].count !== 12) return res.status(503).json({ status: 'unavailable', database: 'migration_incomplete' });
       return res.json({ status: 'ok', database: 'ready', migrations: migrations.rows[0].count });
     } catch {
       return res.status(503).json({ status: 'unavailable', database: 'unavailable' });
@@ -34,27 +34,32 @@ export function createApp(repo: Repository) {
   app.get('/api/integrity', async (_req, res) => res.json(await auditArtifactVolume(repo)));
   app.get('/api/schedules', async (_req, res) => res.json(await repo.schedules()));
   app.get('/api/schedules/:id/occurrences', async (req, res) => res.json(await repo.occurrences(z.uuid().parse(req.params.id))));
+  const preflight = (run: RunDefinition) => preflightModels(run);
+  class DefinitionSelectionError extends Error { constructor(readonly code: 'not_found' | 'conflict') { super(code); } }
+  const resolveDefinition = async (id: string, revision: number) => {
+    const result = await repo.resolveRunDefinition(id, revision);
+    if (result.status !== 'ok') throw new DefinitionSelectionError(result.status);
+    return result.run;
+  };
+  const definitionSelectionResponse = (res: express.Response, error: DefinitionSelectionError) => res.status(error.code === 'not_found' ? 404 : 409).json({ v: 1, code: error.code, message: error.code === 'not_found' ? 'Run definition not found' : 'Run definition changed or archived; reload before continuing' });
   const saveSchedule = async (body: unknown, id?: string) => {
-    const definition = scheduleInput.parse(body);
-    const run = definition.run.input;
-    const roles = definition.run.kind === 'selected' ? definition.run.input.roles ?? legacyRoles(definition.run.input.model!) : definition.run.input.roles;
-    if (!roles) throw new Error('Invalid role selection');
-    if (Object.values(roles).some(role => role.provider === 'ollama')) {
-      const installed = await installedOllama(run.ollamaUrl);
-      if (Object.values(roles).some(role => role.provider === 'ollama' && !installed.includes(role.model))) throw new Error('Ollama model unavailable');
-    }
-    const models = await snapshot(roles);
-    return repo.saveSchedule(definition, models, new Date(), id);
+    const reference = scheduleDefinitionRef.safeParse(body);
+    const definition = reference.success ? scheduleInput.parse({ name: reference.data.name, cadence: reference.data.cadence, weekday: reference.data.weekday,
+      hour: reference.data.hour, minute: reference.data.minute, zone: reference.data.zone,
+      run: await resolveDefinition(reference.data.runDefinitionId, reference.data.revision) }) : scheduleInput.parse(body);
+    const checked = await preflight(definition.run);
+    if (checked.status !== 'available' || !checked.models) throw new Error('Selected model unavailable');
+    return repo.saveSchedule(definition, checked.models, new Date(), id, reference.success ? { id: reference.data.runDefinitionId, revision: reference.data.revision } : undefined);
   };
   app.post('/api/schedules', async (req, res) => {
     try { return res.status(201).json(await saveSchedule(req.body)); }
-    catch (error) { if (error instanceof ZodError) throw error; return res.status(400).json({ message: 'Target, case, model or pricing unavailable' }); }
+    catch (error) { if (error instanceof DefinitionSelectionError) return definitionSelectionResponse(res, error); if (error instanceof DefinitionRevisionConflict) return definitionSelectionResponse(res, new DefinitionSelectionError('conflict')); if (error instanceof ZodError) throw error; return res.status(400).json({ message: 'Target, case, model or pricing unavailable' }); }
   });
   app.put('/api/schedules/:id', async (req, res) => {
     try {
       const result = await saveSchedule(req.body, z.uuid().parse(req.params.id));
       return result ? res.json(result) : res.status(404).json({ message: 'Schedule not found' });
-    } catch (error) { if (error instanceof ZodError) throw error; return res.status(400).json({ message: 'Target, case, model or pricing unavailable' }); }
+    } catch (error) { if (error instanceof DefinitionSelectionError) return definitionSelectionResponse(res, error); if (error instanceof DefinitionRevisionConflict) return definitionSelectionResponse(res, new DefinitionSelectionError('conflict')); if (error instanceof ZodError) throw error; return res.status(400).json({ message: 'Target, case, model or pricing unavailable' }); }
   });
   app.patch('/api/schedules/:id', async (req, res) => {
     const result = await repo.scheduleState(z.uuid().parse(req.params.id), scheduleState.parse(req.body).paused);
@@ -63,9 +68,55 @@ export function createApp(repo: Repository) {
   app.delete('/api/schedules/:id', async (req, res) => (await repo.deleteSchedule(z.uuid().parse(req.params.id))) ? res.status(204).end() : res.status(404).json({ message: 'Schedule not found' }));
   app.get('/api/config', (_req, res) => res.json({ ollamaUrl: process.env.OLLAMA_URL ?? '', model: process.env.OLLAMA_MODEL ?? '' }));
   app.get('/api/models', async (_req, res) => {
-    const models = process.env.OPENROUTER_API_KEY ? await catalog() : [];
-    const ollama = process.env.OLLAMA_URL ? await installedOllama(process.env.OLLAMA_URL).catch(() => []) : [];
-    return res.json({ openrouter: models.filter(m => !!m && typeof m === 'object' && 'id' in m && typeof m.id === 'string').map(m => (m as { id: string }).id), ollama, configured: !!process.env.OPENROUTER_API_KEY });
+    const paidConfigured = !!process.env.OPENROUTER_API_KEY, localConfigured = !!process.env.OLLAMA_URL;
+    const [paid, local] = await Promise.allSettled([paidConfigured ? catalog() : Promise.resolve([]), localConfigured ? installedOllama(process.env.OLLAMA_URL!) : Promise.resolve([])]);
+    const models = paid.status === 'fulfilled' ? paid.value : [];
+    return res.json({ openrouter: models.filter(m => !!m && typeof m === 'object' && 'id' in m && typeof m.id === 'string').map(m => (m as { id: string }).id), ollama: local.status === 'fulfilled' ? local.value : [], configured: paidConfigured, inferenceHealth: 'unverified',
+      availability: { openrouter: !paidConfigured ? 'not_configured' : paid.status === 'fulfilled' ? 'available' : 'unavailable', ollama: !localConfigured ? 'not_configured' : local.status === 'fulfilled' ? 'available' : 'unavailable' } });
+  });
+  app.post('/api/model-preflight', async (req, res) => {
+    const checked = await preflight(runDefinition.parse(req.body));
+    const { models: _models, ...result } = checked;
+    return res.json(result);
+  });
+  const dispatchRun = async (run: RunDefinition, res: express.Response, reference?: RunDefinitionReference) => {
+    const checked = await preflight(run);
+    if (checked.status !== 'available' || !checked.models) {
+      const offline = checked.issues.some(issue => issue.code.endsWith('unavailable'));
+      const message = checked.issues.some(issue => issue.code === 'local_catalog_unavailable') ? 'Ollama model catalog unavailable' :
+        checked.issues.some(issue => issue.code === 'paid_catalog_or_pricing_unavailable') ? 'OpenRouter catalog or verified pricing unavailable' :
+        'Selected Ollama model is not installed';
+      return res.status(offline ? 503 : 400).json({ v: 1, code: offline ? 'unavailable' : 'invalid', message, issues: checked.issues });
+    }
+    try {
+      const result = run.kind === 'selected' ? await repo.start(run.input, checked.models, reference) : await repo.startAdaptive(run.input, checked.models, reference);
+      if (!result) return res.status(404).json({ v: 1, code: 'not_found', message: 'Target or case not found' });
+      if ('active_run_id' in result) return res.status(409).json({ v: 1, code: 'conflict', message: 'Target already reserved', active_run_id: result.active_run_id });
+      return res.status(202).json(result);
+    } catch (error) { if (error instanceof DefinitionRevisionConflict) return definitionSelectionResponse(res, new DefinitionSelectionError('conflict')); return res.status(400).json({ v: 1, code: 'invalid', message: 'Selected cases, categories, artifacts or budget invalid' }); }
+  };
+  app.get('/api/run-definitions', async (_req, res) => res.set('Cache-Control', 'no-store').json(await repo.runDefinitions()));
+  app.get('/api/run-definitions/:id', async (req, res) => {
+    const found = await repo.runDefinition(z.uuid().parse(req.params.id));
+    return found ? res.set('Cache-Control', 'no-store').json(found) : res.status(404).json({ v: 1, code: 'not_found', message: 'Run definition not found' });
+  });
+  app.post('/api/run-definitions', async (req, res) => res.status(201).json(await repo.createRunDefinition(runDefinitionInput.parse(req.body))));
+  app.put('/api/run-definitions/:id', async (req, res) => {
+    const { revision, ...input } = runDefinitionEdit.parse(req.body);
+    const result = await repo.editRunDefinition(z.uuid().parse(req.params.id), revision, input);
+    return result.status === 'ok' ? res.json(result.value) : definitionSelectionResponse(res, new DefinitionSelectionError(result.status));
+  });
+  app.delete('/api/run-definitions/:id', async (req, res) => {
+    const { revision } = runDefinitionRef.parse(req.body);
+    const result = await repo.archiveRunDefinition(z.uuid().parse(req.params.id), revision);
+    return result.status === 'ok' ? res.json(result.value) : definitionSelectionResponse(res, new DefinitionSelectionError(result.status));
+  });
+  app.post('/api/run-definitions/:id/launch', async (req, res) => {
+    try {
+      const reference = { id: z.uuid().parse(req.params.id), revision: runDefinitionRef.parse(req.body).revision };
+      return dispatchRun(await resolveDefinition(reference.id, reference.revision), res, reference);
+    }
+    catch (error) { if (error instanceof DefinitionSelectionError) return definitionSelectionResponse(res, error); throw error; }
   });
   app.get('/api/targets', async (_req, res) => res.json(await repo.targets()));
   app.post('/api/targets', async (req, res) => {
@@ -144,33 +195,10 @@ export function createApp(repo: Repository) {
     catch { return res.status(404).json({ message: 'Artifact unavailable or integrity failed' }); }
   });
   app.post('/api/runs', async (req, res) => {
-    const input = startInput.parse(req.body);
-    if (input.roles && Object.values(input.roles).some(role => role.provider === 'ollama')) {
-      const installed = await installedOllama(input.ollamaUrl).catch(() => null);
-      if (!installed) return res.status(503).json({ v: 1, code: 'unavailable', message: 'Ollama model catalog unavailable' });
-      if (Object.values(input.roles).some(role => role.provider === 'ollama' && !installed.includes(role.model))) return res.status(400).json({ v: 1, code: 'invalid', message: 'Selected Ollama model is not installed' });
-    }
-    let models;
-    try { models = input.roles ? await snapshot(input.roles) : undefined; }
-    catch { return res.status(400).json({ v: 1, code: 'invalid', message: 'OpenRouter model or verified pricing unavailable; check output bounds and provider configuration' }); }
-    const result = await repo.start(input, models);
-    if (!result) return res.status(404).json({ v: 1, code: 'not_found', message: 'Target or case not found' });
-    if ('active_run_id' in result) return res.status(409).json({ v: 1, code: 'conflict', message: 'Target already reserved', active_run_id: result.active_run_id });
-    return res.status(202).json(result);
+    return dispatchRun({ kind: 'selected', input: startInput.parse(req.body) }, res);
   });
   app.post('/api/adaptive-runs', async (req, res) => {
-    const input = adaptiveStart.parse(req.body);
-    const installed = Object.values(input.roles).some(role => role.provider === 'ollama') ? await installedOllama(input.ollamaUrl).catch(() => null) : [];
-    if (!installed || Object.values(input.roles).some(role => role.provider === 'ollama' && !installed.includes(role.model))) return res.status(400).json({ v: 1, code: 'invalid', message: 'Selected Ollama model unavailable' });
-    let models;
-    try { models = await snapshot(input.roles); }
-    catch { return res.status(400).json({ v: 1, code: 'invalid', message: 'OpenRouter pricing or model unavailable' }); }
-    try {
-      const result = await repo.startAdaptive(input, models);
-      if (!result) return res.status(404).json({ message: 'Target not found' });
-      if ('active_run_id' in result) return res.status(409).json({ message: 'Target reserved', active_run_id: result.active_run_id });
-      return res.status(202).json(result);
-    } catch { return res.status(400).json({ message: 'Selected cases, categories, artifacts or budget invalid' }); }
+    return dispatchRun({ kind: 'adaptive', input: adaptiveStart.parse(req.body) }, res);
   });
   app.post('/api/runs/:id/stop', async (req, res) => {
     return (await repo.stop(z.uuid().parse(req.params.id))) ? res.status(202).json({ stopRequested: true }) : res.status(409).json({ message: 'No active adaptive run' });

@@ -1,9 +1,9 @@
 import { randomUUID, createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import pg from 'pg';
-import { caseInput, caseRubric, category, publishableCase } from '../../../packages/contracts/src/index.js';
-import type { AdaptiveStart, CaseDraftInput, CaseInput, EvidenceEvent, Outcome, ScheduleInput, StartInput, TargetInput, TargetUpdateInput, Verdict } from '../../../packages/contracts/src/index.js';
+import { adaptiveStart, caseInput, caseRubric, category, publishableCase, runDefinition, runDefinitionInput, scheduleInput, startInput } from '../../../packages/contracts/src/index.js';
+import type { AdaptiveStart, CaseDraftInput, CaseInput, EvidenceEvent, Outcome, RunDefinition, RunDefinitionInput, ScheduleInput, StartInput, TargetInput, TargetUpdateInput, Verdict } from '../../../packages/contracts/src/index.js';
 import type { CheckResult } from '../../worker/src/checks.js';
-import { legacyRoles, nanos, reserveAmount, type Role, type Snapshot, type ModelUsage } from '../../worker/src/models.js';
+import { legacyRoles, nanos, projectRoles, reserveAmount, type Role, type Snapshot, type ModelUsage } from '../../worker/src/models.js';
 import { nextFire } from './schedule-time.js';
 import { copyPdf, verifyArtifactFile, type ArtifactFileStatus } from './artifacts.js';
 
@@ -23,6 +23,8 @@ type CandidateEvidenceRow = {
   definition: unknown;
   source_case_id: string | null;
 };
+export type RunDefinitionReference = { id: string; revision: number };
+export class DefinitionRevisionConflict extends Error { constructor() { super('Run definition changed or archived during preflight'); } }
 
 function caseMetadataStatus(definition: unknown, state: string) {
   const fields = definition && typeof definition === 'object' && !Array.isArray(definition) ? definition as Record<string, unknown> : {};
@@ -50,21 +52,63 @@ export function decrypt<T>(value: string): T {
 
 export class Repository {
   constructor(readonly pool: pg.Pool) {}
+  private async fenceDefinition(db: pg.PoolClient, reference?: RunDefinitionReference) {
+    if (!reference) return;
+    const row = (await db.query('SELECT revision,archived FROM run_definitions WHERE id=$1 FOR SHARE', [reference.id])).rows[0];
+    if (!row || row.archived || row.revision !== reference.revision) throw new DefinitionRevisionConflict();
+  }
+  private definitionRow(row: Record<string, unknown>) {
+    return { id: row.id as string, name: row.name as string, run: runDefinition.parse(row.definition), revision: row.revision as number,
+      archived: row.archived as boolean, createdAt: (row.created_at as Date).toISOString(), updatedAt: (row.updated_at as Date).toISOString() };
+  }
+  async runDefinitions() {
+    const rows = (await this.pool.query('SELECT * FROM run_definitions WHERE NOT archived ORDER BY updated_at DESC,id')).rows;
+    return rows.map(row => this.definitionRow(row));
+  }
+  async runDefinition(id: string) {
+    const row = (await this.pool.query('SELECT * FROM run_definitions WHERE id=$1', [id])).rows[0];
+    return row ? this.definitionRow(row) : null;
+  }
+  async createRunDefinition(input: RunDefinitionInput) {
+    const valid = runDefinitionInput.parse(input), id = randomUUID();
+    const row = (await this.pool.query('INSERT INTO run_definitions(id,name,definition) VALUES ($1,$2,$3) RETURNING *', [id, valid.name, valid.run])).rows[0];
+    return this.definitionRow(row);
+  }
+  async editRunDefinition(id: string, revision: number, input: RunDefinitionInput) {
+    const valid = runDefinitionInput.parse(input);
+    const row = (await this.pool.query('UPDATE run_definitions SET name=$3,definition=$4,revision=revision+1,updated_at=now() WHERE id=$1 AND revision=$2 AND NOT archived RETURNING *', [id, revision, valid.name, valid.run])).rows[0];
+    if (row) return { status: 'ok' as const, value: this.definitionRow(row) };
+    return { status: (await this.runDefinition(id)) ? 'conflict' as const : 'not_found' as const };
+  }
+  async archiveRunDefinition(id: string, revision: number) {
+    const row = (await this.pool.query('UPDATE run_definitions SET archived=true,revision=revision+1,updated_at=now() WHERE id=$1 AND revision=$2 AND NOT archived RETURNING *', [id, revision])).rows[0];
+    if (row) return { status: 'ok' as const, value: this.definitionRow(row) };
+    return { status: (await this.runDefinition(id)) ? 'conflict' as const : 'not_found' as const };
+  }
+  async resolveRunDefinition(id: string, revision: number): Promise<{ status: 'ok'; run: RunDefinition } | { status: 'not_found' | 'conflict' }> {
+    const value = await this.runDefinition(id);
+    if (!value) return { status: 'not_found' };
+    if (value.archived || value.revision !== revision) return { status: 'conflict' };
+    return { status: 'ok', run: value.run };
+  }
   async schedules() { return (await this.pool.query('SELECT id,definition,next_fire_at AS "nextFireAt",paused,created_at AS "createdAt" FROM schedules WHERE NOT deleted ORDER BY created_at DESC')).rows; }
   async occurrences(scheduleId: string) { return (await this.pool.query('SELECT id,scheduled_for AS "scheduledFor",run_id AS "runId",state,reason FROM schedule_occurrences WHERE schedule_id=$1 ORDER BY scheduled_for DESC LIMIT 100', [scheduleId])).rows; }
   async isScheduled(runId: string) { return !!(await this.pool.query('SELECT 1 FROM schedule_occurrences WHERE run_id=$1', [runId])).rowCount; }
-  async saveSchedule(input: ScheduleInput, models: Snapshot, now = new Date(), id?: string) {
+  async saveSchedule(input: ScheduleInput, models: Snapshot, now = new Date(), id?: string, reference?: RunDefinitionReference) {
+    input = scheduleInput.parse(input);
     const run = input.run.input;
-    const assigned = input.run.kind === 'selected' ? input.run.input.roles ?? legacyRoles(input.run.input.model!) : input.run.input.roles;
-    if (!assigned || JSON.stringify(models.roles) !== JSON.stringify(assigned)) throw new Error('Model snapshot mismatch');
+    const assigned = input.run.kind === 'selected' ? projectRoles('selected', input.run.input.roles ?? legacyRoles(input.run.input.model!)) : projectRoles('adaptive', input.run.input.roles);
+    const modelSnapshot: Snapshot = { roles: input.run.kind === 'selected' ? projectRoles('selected', models.roles) : projectRoles('adaptive', models.roles), pricing: Object.fromEntries(Object.entries(models.pricing).filter(([role]) => role in assigned)) };
+    if (JSON.stringify(modelSnapshot.roles) !== JSON.stringify(assigned)) throw new Error('Model snapshot mismatch');
     for (const [role, selection] of Object.entries(assigned)) if (selection.provider === 'openrouter') {
-      const price = models.pricing[role as Role];
+      const price = modelSnapshot.pricing[role as Role];
       if (!price || !run.openRouterCapUsd) throw new Error('Verified pricing and paid cap required');
       reserveAmount(price, selection.maxOutputTokens);
     }
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
+      await this.fenceDefinition(db, reference);
       if (id && !(await db.query('SELECT 1 FROM schedules WHERE id=$1 AND NOT deleted FOR UPDATE', [id])).rowCount) { await db.query('ROLLBACK'); return null; }
       if (!(await db.query('SELECT 1 FROM targets WHERE id=$1', [run.targetId])).rowCount) throw new Error('Target unavailable');
       const ids = input.run.kind === 'selected' ? [input.run.input.caseId] : input.run.input.caseIds;
@@ -75,8 +119,8 @@ export class Repository {
       const prepared = input.run.kind === 'selected' ? { ...input.run.input, case: saved.rows[0].definition } : { ollamaUrl: run.ollamaUrl, adaptive: { categories: input.run.input.categories, maxCases: input.run.input.maxCases, maxMinutes: input.run.input.maxMinutes, seeds: ids.map(caseId => ({ id: caseId, definition: saved.rows.find(row => row.id === caseId)!.definition })) } };
       const next = nextFire(input, now);
       const scheduleId = id ?? randomUUID();
-      if (id) await db.query('UPDATE schedules SET definition=$2,run_snapshot=$3,model_snapshot=$4,next_fire_at=$5 WHERE id=$1', [id, input, prepared, models, next]);
-      else await db.query('INSERT INTO schedules(id,definition,run_snapshot,model_snapshot,next_fire_at) VALUES ($1,$2,$3,$4,$5)', [scheduleId, input, prepared, models, next]);
+      if (id) await db.query('UPDATE schedules SET definition=$2,run_snapshot=$3,model_snapshot=$4,next_fire_at=$5 WHERE id=$1', [id, input, prepared, modelSnapshot, next]);
+      else await db.query('INSERT INTO schedules(id,definition,run_snapshot,model_snapshot,next_fire_at) VALUES ($1,$2,$3,$4,$5)', [scheduleId, input, prepared, modelSnapshot, next]);
       await db.query('COMMIT');
       return { id: scheduleId, nextFireAt: next.toISOString() };
     } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
@@ -303,11 +347,12 @@ export class Repository {
       return { id, ...definition };
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
-  async start(input: StartInput, models?: Snapshot): Promise<{ id: string; status: 'queued' } | { active_run_id: string } | null> {
+  async start(input: StartInput, models?: Snapshot, reference?: RunDefinitionReference): Promise<{ id: string; status: 'queued' } | { active_run_id: string } | null> {
+    input = startInput.parse(input);
     if (!input.roles && !input.model) throw new Error('A Judge model is required');
-    const assigned = input.roles ?? legacyRoles(input.model!);
+    const assigned = projectRoles('selected', input.roles ?? legacyRoles(input.model!));
     if (Object.values(assigned).some(role => role.provider === 'openrouter') && (!models || !input.openRouterCapUsd)) throw new Error('Verified pricing and paid cap required');
-    const modelSnapshot = models ?? { roles: assigned, pricing: {} };
+    const modelSnapshot: Snapshot = models ? { roles: projectRoles('selected', models.roles), pricing: { judge: models.pricing.judge } } : { roles: assigned, pricing: {} };
     if (JSON.stringify(modelSnapshot.roles) !== JSON.stringify(assigned)) throw new Error('Model snapshot mismatch');
     for (const [role, selection] of Object.entries(assigned)) if (selection.provider === 'openrouter') {
       const price = modelSnapshot.pricing[role as Role];
@@ -317,6 +362,7 @@ export class Repository {
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
+      await this.fenceDefinition(db, reference);
       const target = (await db.query('SELECT id,name,base_url,active_run_id,user_a_credential,user_b_credential FROM targets WHERE id=$1 FOR UPDATE', [input.targetId])).rows[0];
       const selected = (await db.query("SELECT definition FROM cases WHERE id=$1 AND state='published' FOR SHARE", [input.caseId])).rows[0];
       if (!target || !selected) { await db.query('ROLLBACK'); return null; }
@@ -331,16 +377,20 @@ export class Repository {
       return { id, status: 'queued' };
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
-  async startAdaptive(input: AdaptiveStart, models: Snapshot): Promise<{ id: string; status: 'queued' } | { active_run_id: string } | null> {
-    if (JSON.stringify(models.roles) !== JSON.stringify(input.roles)) throw new Error('Model snapshot mismatch');
-    for (const [role, selection] of Object.entries(input.roles)) if (selection.provider === 'openrouter') {
-      const price = models.pricing[role as Role];
+  async startAdaptive(input: AdaptiveStart, models: Snapshot, reference?: RunDefinitionReference): Promise<{ id: string; status: 'queued' } | { active_run_id: string } | null> {
+    input = adaptiveStart.parse(input);
+    const assigned = projectRoles('adaptive', input.roles);
+    const modelSnapshot: Snapshot = { roles: projectRoles('adaptive', models.roles), pricing: { orchestrator: models.pricing.orchestrator, redTeam: models.pricing.redTeam, judge: models.pricing.judge } };
+    if (JSON.stringify(modelSnapshot.roles) !== JSON.stringify(assigned)) throw new Error('Model snapshot mismatch');
+    for (const [role, selection] of Object.entries(assigned)) if (selection.provider === 'openrouter') {
+      const price = modelSnapshot.pricing[role as Role];
       if (!price || !input.openRouterCapUsd) throw new Error('Verified pricing and paid cap required');
       reserveAmount(price, selection.maxOutputTokens);
     }
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
+      await this.fenceDefinition(db, reference);
       const target = (await db.query('SELECT id,name,base_url,active_run_id,user_a_credential,user_b_credential FROM targets WHERE id=$1 FOR UPDATE', [input.targetId])).rows[0];
       if (!target) { await db.query('ROLLBACK'); return null; }
       if (target.active_run_id) { await db.query('ROLLBACK'); return { active_run_id: target.active_run_id }; }
@@ -349,7 +399,7 @@ export class Repository {
       for (const row of saved.rows) for (const action of (row.definition as CaseInput).actions) if (action.kind === 'attach_pdf' && !(await db.query('SELECT 1 FROM artifacts WHERE case_id=$1 AND id=$2 AND document_type=$3', [row.id, action.artifactId, action.documentType])).rowCount) throw new Error('Artifact not linked to selected case');
       const id = randomUUID();
       const seeds = input.caseIds.map(caseId => { const row = saved.rows.find(r => r.id === caseId)!; return { id: caseId, definition: row.definition as CaseInput }; });
-      await db.query('INSERT INTO runs(id,target_id,definition,target_snapshot,model_snapshot,paid_cap_nanos,adaptive) VALUES ($1,$2,$3,$4,$5,$6,$7)', [id, target.id, { ollamaUrl: input.ollamaUrl }, { name: target.name, baseUrl: target.base_url, userARef: target.user_a_credential, userBRef: target.user_b_credential }, models, input.openRouterCapUsd === undefined ? null : nanos(input.openRouterCapUsd).toString(), { categories: input.categories, maxCases: input.maxCases, maxMinutes: input.maxMinutes, seeds }]);
+      await db.query('INSERT INTO runs(id,target_id,definition,target_snapshot,model_snapshot,paid_cap_nanos,adaptive) VALUES ($1,$2,$3,$4,$5,$6,$7)', [id, target.id, { ollamaUrl: input.ollamaUrl }, { name: target.name, baseUrl: target.base_url, userARef: target.user_a_credential, userBRef: target.user_b_credential }, modelSnapshot, input.openRouterCapUsd === undefined ? null : nanos(input.openRouterCapUsd).toString(), { categories: input.categories, maxCases: input.maxCases, maxMinutes: input.maxMinutes, seeds }]);
       await db.query('INSERT INTO jobs(run_id) VALUES ($1)', [id]);
       await db.query('UPDATE targets SET active_run_id=$1 WHERE id=$2', [id, target.id]);
       await db.query('COMMIT');
