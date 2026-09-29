@@ -8,6 +8,7 @@ import { nextFire } from './schedule-time.js';
 import { copyPdf, verifyArtifactFile, type ArtifactFileStatus } from './artifacts.js';
 import { scopedCoverage } from './coverage.js';
 import type { CoverageQuery } from '../../../packages/contracts/src/coverage.js';
+import { enqueueReportJob, releaseAllowance, ReportJobStore, snapshotReportPolicy } from './report-jobs.js';
 
 export type CandidateIntegrity = {
   status: 'complete' | 'missing' | 'corrupt' | 'unlinked' | 'invalid_definition' | 'unavailable';
@@ -79,7 +80,8 @@ export function decrypt<T>(value: string): T {
 }
 
 export class Repository {
-  constructor(readonly pool: pg.Pool) {}
+  readonly reports: ReportJobStore;
+  constructor(readonly pool: pg.Pool) { this.reports = new ReportJobStore(pool); }
   async runHistory(limit = 25, cursor?: string) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid run history limit');
     const after = decodeRunCursor(cursor);
@@ -147,7 +149,8 @@ export class Repository {
     input = scheduleInput.parse(input);
     const run = input.run.input;
     const assigned = input.run.kind === 'selected' ? projectRoles('selected', input.run.input.roles ?? legacyRoles(input.run.input.model!)) : projectRoles('adaptive', input.run.input.roles);
-    const modelSnapshot: Snapshot = { roles: input.run.kind === 'selected' ? projectRoles('selected', models.roles) : projectRoles('adaptive', models.roles), pricing: Object.fromEntries(Object.entries(models.pricing).filter(([role]) => role in assigned)) };
+    const modelSnapshot: Snapshot = { roles: input.run.kind === 'selected' ? projectRoles('selected', models.roles) : projectRoles('adaptive', models.roles), pricing: Object.fromEntries(Object.entries(models.pricing).filter(([role]) => role in assigned || role === 'documentation' && run.reportPolicy)) };
+    if (run.reportPolicy?.model.provider === 'openrouter' && !modelSnapshot.pricing.documentation) throw new Error('Verified pricing and paid cap required');
     if (JSON.stringify(modelSnapshot.roles) !== JSON.stringify(assigned)) throw new Error('Model snapshot mismatch');
     for (const [role, selection] of Object.entries(assigned)) if (selection.provider === 'openrouter') {
       const price = modelSnapshot.pricing[role as Role];
@@ -211,6 +214,7 @@ export class Repository {
           runId = randomUUID();
           const selected = (schedule.run_snapshot as { case?: CaseInput; adaptive?: unknown; ollamaUrl: string });
           await db.query('INSERT INTO runs(id,target_id,case_id,definition,target_snapshot,model_snapshot,paid_cap_nanos,adaptive) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [runId, target.id, selected.case ? (input as StartInput).caseId : null, selected.case ? selected : { ollamaUrl: selected.ollamaUrl }, { name: target.name, baseUrl: target.base_url, userARef: target.user_a_credential, userBRef: target.user_b_credential }, schedule.model_snapshot, input.openRouterCapUsd === undefined ? null : nanos(input.openRouterCapUsd).toString(), selected.adaptive ?? null]);
+          if (input.reportPolicy) await snapshotReportPolicy(db, runId, input.reportPolicy, schedule.model_snapshot, input.openRouterCapUsd);
           await db.query('INSERT INTO jobs(run_id) VALUES ($1)', [runId]);
           await db.query('UPDATE targets SET active_run_id=$1 WHERE id=$2', [runId, target.id]);
         }
@@ -420,6 +424,7 @@ export class Repository {
       for (const action of definition.actions) if (action.kind === 'attach_pdf' && !(await db.query('SELECT 1 FROM artifacts WHERE id=$2 AND document_type=$3 AND (case_id=$1 OR EXISTS (SELECT 1 FROM case_artifact_links WHERE case_id=$1 AND artifact_id=$2))', [input.caseId, action.artifactId, action.documentType])).rowCount) throw new Error('Artifact not linked to selected case');
       const id = randomUUID();
       await db.query('INSERT INTO runs(id,target_id,case_id,definition,target_snapshot,model_snapshot,paid_cap_nanos) VALUES ($1,$2,$3,$4,$5,$6,$7)', [id, target.id, input.caseId, { ...input, case: selected.definition }, { name: target.name, baseUrl: target.base_url, userARef: target.user_a_credential, userBRef: target.user_b_credential }, modelSnapshot, input.openRouterCapUsd === undefined ? null : nanos(input.openRouterCapUsd).toString()]);
+      if (input.reportPolicy) await snapshotReportPolicy(db, id, input.reportPolicy, models, input.openRouterCapUsd);
       await db.query('INSERT INTO jobs(run_id) VALUES ($1)', [id]);
       await db.query('UPDATE targets SET active_run_id=$1 WHERE id=$2', [id, target.id]);
       await db.query('COMMIT');
@@ -449,6 +454,7 @@ export class Repository {
       const id = randomUUID();
       const seeds = input.caseIds.map(caseId => { const row = saved.rows.find(r => r.id === caseId)!; return { id: caseId, definition: row.definition as CaseInput }; });
       await db.query('INSERT INTO runs(id,target_id,definition,target_snapshot,model_snapshot,paid_cap_nanos,adaptive) VALUES ($1,$2,$3,$4,$5,$6,$7)', [id, target.id, { ollamaUrl: input.ollamaUrl }, { name: target.name, baseUrl: target.base_url, userARef: target.user_a_credential, userBRef: target.user_b_credential }, modelSnapshot, input.openRouterCapUsd === undefined ? null : nanos(input.openRouterCapUsd).toString(), { categories: input.categories, maxCases: input.maxCases, maxMinutes: input.maxMinutes, seeds }]);
+      if (input.reportPolicy) await snapshotReportPolicy(db, id, input.reportPolicy, models, input.openRouterCapUsd);
       await db.query('INSERT INTO jobs(run_id) VALUES ($1)', [id]);
       await db.query('UPDATE targets SET active_run_id=$1 WHERE id=$2', [id, target.id]);
       await db.query('COMMIT');
@@ -465,6 +471,7 @@ export class Repository {
         await db.query("UPDATE runs SET stop_requested=true,status='finished',outcome='incomplete',finished_at=now(),lease_until=NULL WHERE id=$1", [id]);
         await db.query("UPDATE schedule_occurrences SET state='finished',reason='Stopped before dispatch' WHERE run_id=$1 AND state='queued'", [id]);
         await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [run.target_id, id]);
+        await releaseAllowance(db, id, 'run_cancelled');
         await db.query('COMMIT');
         return { stopRequested: true, status: 'finished' as const, outcome: 'incomplete' as const };
       }
@@ -572,12 +579,12 @@ export class Repository {
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
-      const run = (await db.query("SELECT paid_cap_nanos FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() AND stop_requested=false AND (adaptive IS NULL OR started_at+((adaptive->>'maxMinutes')::integer * interval '1 minute')>now()) FOR UPDATE", [id, generation])).rows[0];
+      const run = (await db.query("SELECT paid_cap_nanos-COALESCE((SELECT allowance_nanos FROM run_report_policies WHERE run_id=runs.id),0) AS paid_cap_nanos FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() AND stop_requested=false AND (adaptive IS NULL OR started_at+((adaptive->>'maxMinutes')::integer * interval '1 minute')>now()) FOR UPDATE", [id, generation])).rows[0];
       if (!run) throw new Error('Lease lost');
       if (provider === 'openrouter') {
         if (run.paid_cap_nanos === null || amount <= 0n) throw new Error('Paid model has no bounded reserve');
         if ((await db.query("SELECT 1 FROM model_calls WHERE run_id=$1 AND provider='openrouter' AND status='unresolved' LIMIT 1", [id])).rowCount) throw new Error('Paid model billing unresolved');
-        const total = (await db.query("SELECT COALESCE(sum(CASE WHEN status='settled' THEN charge_nanos ELSE reserved_nanos END),0)::text AS amount FROM model_calls WHERE run_id=$1 AND provider='openrouter'", [id])).rows[0].amount;
+        const total = (await db.query("SELECT COALESCE(sum(CASE WHEN status='settled' THEN charge_nanos ELSE reserved_nanos END),0)::text AS amount FROM model_calls WHERE run_id=$1 AND provider='openrouter' AND report_job_id IS NULL", [id])).rows[0].amount;
         if (BigInt(total) + amount > BigInt(run.paid_cap_nanos)) throw new Error('Paid model budget exhausted');
       }
       const callId = randomUUID();
@@ -663,6 +670,8 @@ export class Repository {
   }
   private async insertRegression(db: pg.PoolClient, candidate: string, run: string, adaptiveCaseId?: string | null) {
     await db.query('INSERT INTO regressions(id,candidate_id,source_run_id,definition) SELECT $1,$2,r.id,COALESCE(ac.definition,r.definition->\'case\') FROM runs r LEFT JOIN adaptive_cases ac ON ac.id=$4 WHERE r.id=$3 ON CONFLICT (candidate_id) DO NOTHING', [randomUUID(), candidate, run, adaptiveCaseId ?? null]);
+    // Every confirmation site (review, auto-confirm, adaptive auto-confirm) passes here, so each also records its idempotent report job.
+    await enqueueReportJob(db, candidate);
   }
   async findings() { return (await this.pool.query("SELECT c.id,c.run_id AS \"runId\",c.state,c.decision_route AS \"decisionRoute\",c.export_approved_at AS \"exportApprovedAt\",c.evidence_integrity AS \"evidenceIntegrity\",r.version,COALESCE(ac.state,r.outcome) AS outcome,COALESCE(ac.definition,r.definition->'case')->>'title' AS title FROM candidates c JOIN runs r ON r.id=c.run_id LEFT JOIN adaptive_cases ac ON ac.id=c.adaptive_case_id ORDER BY c.created_at DESC")).rows; }
   async selectRegression(id: string) {

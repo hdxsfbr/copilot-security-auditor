@@ -8,6 +8,7 @@ import { createApp } from '../apps/api/src/app.js';
 import { storePdf } from '../apps/api/src/artifacts.js';
 import { legacyRoles } from '../apps/worker/src/models.js';
 import { database, users } from './support.js';
+import { migrationNames } from '../db/migrate.js';
 
 async function pdfBytes() {
   const pdf = await PDFDocument.create();
@@ -28,7 +29,7 @@ test('selected finding decisions recheck exact PDF bytes and retain historical a
   try {
     const health = await fetch(`${base}/health`);
     assert.equal(health.status, 200);
-    assert.equal((await health.json()).migrations, 13);
+    assert.equal((await health.json()).migrations, migrationNames.length);
     const target = await db.repo.target({ name: 'Integrity target', baseUrl: 'http://example.test/', ...users });
     const selected = await db.repo.createCase({ title: 'PDF evidence', user: 'A', expectedSafeBehavior: 'Keep the chart boundary', actions: [{ kind: 'chat_turn', message: 'read this' }] });
     const bytes = await pdfBytes();
