@@ -34,7 +34,7 @@ test('served UI and API start, poll and inspect safe, incomplete and reviewable 
     assert.deepEqual(await (await fetch(`${url}/api/config`)).json(), { ollamaUrl: process.env.OLLAMA_URL ?? '', model: process.env.OLLAMA_MODEL ?? '' });
     const health = await fetch(`${url}/api/health`);
     assert.equal(health.status, 200);
-    assert.deepEqual(await health.json(), { status: 'ok', database: 'ready', migrations: 12 });
+    assert.deepEqual(await health.json(), { status: 'ok', database: 'ready', migrations: 13 });
     assert.deepEqual(await (await fetch(`${url}/api/integrity`)).json(), { ok: true, orphaned: [], missing: [], corrupt: [] });
     const post = async (path: string, body: unknown) => {
       const response = await fetch(url + '/api' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -337,7 +337,9 @@ test('operator starts and stops bounded exploration and sees category gaps', asy
     await page.locator('.evidence .status').filter({ hasText: 'queued / awaiting result' }).waitFor();
     await page.locator('.run-activity').getByRole('button', { name: 'Stop after in-flight work' }).click();
     await page.locator('.run-activity').getByRole('button', { name: 'Stop requested' }).waitFor();
-    assert.equal((await processNext(db.repo))?.outcome, 'incomplete');
+    const priorTurns = toy.requests.filter(request => request.path.includes('/turns')).length;
+    assert.equal(await processNext(db.repo), null);
+    assert.equal(toy.requests.filter(request => request.path.includes('/turns')).length, priorTurns);
     await page.locator('.evidence .status').filter({ hasText: 'finished / incomplete' }).waitFor();
     await page.locator('.run-activity').getByText(/prompt injection: not tested \/ gap/).waitFor();
   } finally {

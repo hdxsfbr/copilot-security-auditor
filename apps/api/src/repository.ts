@@ -25,6 +25,32 @@ type CandidateEvidenceRow = {
 };
 export type RunDefinitionReference = { id: string; revision: number };
 export class DefinitionRevisionConflict extends Error { constructor() { super('Run definition changed or archived during preflight'); } }
+export class InvalidRunCursor extends Error { constructor() { super('Invalid run history cursor'); } }
+const cursorTime = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{6})Z$/;
+const cursorId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function validCursorTime(value: string) {
+  const fields = cursorTime.exec(value);
+  if (!fields) return false;
+  const [year, month, day, hour, minute, second] = fields.slice(1, 7).map(Number);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1] && hour <= 23 && minute <= 59 && second <= 59;
+}
+function decodeRunCursor(cursor?: string): { t: string; id: string } | null {
+  if (!cursor) return null;
+  try {
+    if (cursor.length > 512 || !/^[A-Za-z0-9_-]+$/.test(cursor)) throw new InvalidRunCursor();
+    const value: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new InvalidRunCursor();
+    const row = value as Record<string, unknown>;
+    if (row.v !== 1 || typeof row.t !== 'string' || !validCursorTime(row.t) || typeof row.id !== 'string' || !cursorId.test(row.id) ||
+      Object.keys(row).sort().join(',') !== 'id,t,v') throw new InvalidRunCursor();
+    return { t: row.t, id: row.id };
+  } catch { throw new InvalidRunCursor(); }
+}
+function encodeRunCursor(row: { cursorCreatedAt: string; id: string }) {
+  return Buffer.from(JSON.stringify({ v: 1, t: row.cursorCreatedAt, id: row.id })).toString('base64url');
+}
 
 function caseMetadataStatus(definition: unknown, state: string) {
   const fields = definition && typeof definition === 'object' && !Array.isArray(definition) ? definition as Record<string, unknown> : {};
@@ -52,6 +78,27 @@ export function decrypt<T>(value: string): T {
 
 export class Repository {
   constructor(readonly pool: pg.Pool) {}
+  async runHistory(limit = 25, cursor?: string) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid run history limit');
+    const after = decodeRunCursor(cursor);
+    const rows = (await this.pool.query(`SELECT r.id,r.status,r.outcome,r.stop_requested AS "stopRequested",
+      r.created_at AS "createdAt",r.started_at AS "startedAt",r.finished_at AS "finishedAt",
+      to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "cursorCreatedAt",
+      r.target_id AS "targetId",r.target_snapshot->>'name' AS "targetName",r.version AS "targetVersion",
+      r.case_id AS "caseId",c.family_id AS "familyId",c.version AS "caseVersion",r.definition->'case'->>'title' AS "caseTitle",
+      r.adaptive IS NOT NULL AS "isAdaptive",r.adaptive->'categories' AS "adaptiveCategories",so.id AS "scheduleOccurrenceId"
+      FROM runs r LEFT JOIN cases c ON c.id=r.case_id LEFT JOIN schedule_occurrences so ON so.run_id=r.id
+      WHERE ($2::timestamptz IS NULL OR (r.created_at,r.id)<($2::timestamptz,$3::uuid))
+      ORDER BY r.created_at DESC,r.id DESC LIMIT $1`, [limit + 1, after?.t ?? null, after?.id ?? null])).rows;
+    const page = rows.slice(0, limit);
+    return { items: page.map(row => ({ id: row.id, mode: row.isAdaptive ? 'adaptive' as const : 'selected' as const,
+      status: row.status, outcome: row.outcome, stopRequested: row.stopRequested,
+      createdAt: row.createdAt, startedAt: row.startedAt, finishedAt: row.finishedAt,
+      target: { id: row.targetId, name: row.targetName, version: row.targetVersion },
+      caseSnapshot: row.caseId ? { id: row.caseId, familyId: row.familyId, version: row.caseVersion, title: row.caseTitle } : null,
+      adaptiveCategories: row.adaptiveCategories ?? null, scheduleOccurrenceId: row.scheduleOccurrenceId ?? null })),
+      nextCursor: rows.length > limit ? encodeRunCursor(page.at(-1)) : null };
+  }
   private async fenceDefinition(db: pg.PoolClient, reference?: RunDefinitionReference) {
     if (!reference) return;
     const row = (await db.query('SELECT revision,archived FROM run_definitions WHERE id=$1 FOR SHARE', [reference.id])).rows[0];
@@ -407,12 +454,27 @@ export class Repository {
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
   async stop(id: string) {
-    return (await this.pool.query("UPDATE runs SET stop_requested=true WHERE id=$1 AND adaptive IS NOT NULL AND status IN ('queued','running') RETURNING id", [id])).rowCount !== 0;
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const run = (await db.query('SELECT status,target_id FROM runs WHERE id=$1 FOR UPDATE', [id])).rows[0];
+      if (!run || run.status === 'finished') { await db.query('ROLLBACK'); return null; }
+      if (run.status === 'queued') {
+        await db.query("UPDATE runs SET stop_requested=true,status='finished',outcome='incomplete',finished_at=now(),lease_until=NULL WHERE id=$1", [id]);
+        await db.query("UPDATE schedule_occurrences SET state='finished',reason='Stopped before dispatch' WHERE run_id=$1 AND state='queued'", [id]);
+        await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [run.target_id, id]);
+        await db.query('COMMIT');
+        return { stopRequested: true, status: 'finished' as const, outcome: 'incomplete' as const };
+      }
+      await db.query('UPDATE runs SET stop_requested=true WHERE id=$1', [id]);
+      await db.query('COMMIT');
+      return { stopRequested: true, status: 'running' as const };
+    } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
   }
   async stopped(id: string, generation: number) {
     const row = (await this.pool.query("SELECT stop_requested,started_at,adaptive FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now()", [id, generation])).rows[0];
-    if (!row || !row.adaptive) throw new Error('Lease lost');
-    return row.stop_requested || Date.now() >= new Date(row.started_at).getTime() + row.adaptive.maxMinutes * 60000;
+    if (!row) throw new Error('Lease lost');
+    return row.stop_requested || !!row.adaptive && Date.now() >= new Date(row.started_at).getTime() + row.adaptive.maxMinutes * 60000;
   }
   async adaptiveCases(id: string) { return (await this.pool.query('SELECT id,ordinal,category,source_case_id AS "sourceCaseId",definition,state,executed,reason FROM adaptive_cases WHERE run_id=$1 ORDER BY ordinal', [id])).rows; }
   async beginAdaptiveCase(id: string, generation: number, ordinal: number, category: string, sourceCaseId: string) {
@@ -470,7 +532,36 @@ export class Repository {
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
   async run(id: string) {
-    return (await this.pool.query('SELECT id,target_id AS "targetId",case_id AS "caseId",status,outcome,version,created_at AS "createdAt",finished_at AS "finishedAt",model_snapshot AS "modelSnapshot",model_snapshot->\'roles\'->\'judge\'->>\'model\' AS model,paid_cap_nanos::text AS "paidCapNanos",adaptive->\'categories\' AS categories,stop_requested AS "stopRequested" FROM runs WHERE id=$1', [id])).rows[0] ?? null;
+    const row = (await this.pool.query(`SELECT r.id,r.target_id AS "targetId",r.case_id AS "caseId",r.status,r.outcome,r.version,
+      r.created_at AS "createdAt",r.started_at AS "startedAt",r.finished_at AS "finishedAt",
+      r.model_snapshot AS "modelSnapshot",r.model_snapshot->'roles'->'judge'->>'model' AS model,
+      r.paid_cap_nanos::text AS "paidCapNanos",r.adaptive->'categories' AS categories,r.stop_requested AS "stopRequested",
+      r.target_snapshot->>'name' AS "targetName",r.definition->'case' AS "caseDefinition",r.adaptive,
+      c.family_id AS "familyId",c.version AS "caseVersion" FROM runs r LEFT JOIN cases c ON c.id=r.case_id WHERE r.id=$1`, [id])).rows[0];
+    if (!row) return null;
+    const { targetName, caseDefinition, adaptive, familyId, caseVersion, ...existing } = row;
+    const seedRows = adaptive?.seeds?.length ? (await this.pool.query('SELECT id,family_id,version FROM cases WHERE id=ANY($1::uuid[])', [adaptive.seeds.map((seed: { id: string }) => seed.id)])).rows : [];
+    const seedMeta = new Map(seedRows.map(seed => [seed.id, seed]));
+    return { ...existing, mode: adaptive ? 'adaptive' as const : 'selected' as const,
+      target: { id: row.targetId, name: targetName, version: row.version },
+      caseSnapshot: row.caseId ? { id: row.caseId, familyId, version: caseVersion, definition: caseDefinition } : null,
+      adaptiveSeeds: adaptive ? adaptive.seeds.map((seed: { id: string; definition: CaseInput }) => ({ id: seed.id,
+        familyId: seedMeta.get(seed.id)?.family_id ?? null, version: seedMeta.get(seed.id)?.version ?? null, definition: seed.definition })) : null };
+  }
+  async adaptiveCaseDetail(runId: string, executionCaseId: string) {
+    const row = (await this.pool.query(`SELECT ac.id,ac.ordinal,ac.category,ac.source_case_id AS "sourceCaseId",ac.definition AS "admittedDefinition",
+      ac.state,ac.executed,ac.reason,ac.created_at AS "createdAt",ac.finished_at AS "finishedAt",
+      c.family_id AS "familyId",c.version AS "caseVersion",r.adaptive,r.version AS "targetVersion",
+      aa.checks,aa.verdict,aa.route FROM adaptive_cases ac JOIN runs r ON r.id=ac.run_id
+      JOIN cases c ON c.id=ac.source_case_id LEFT JOIN adaptive_assessments aa ON aa.case_id=ac.id
+      WHERE ac.run_id=$1 AND ac.id=$2`, [runId, executionCaseId])).rows[0];
+    if (!row) return null;
+    const source = row.adaptive?.seeds?.find((seed: { id: string }) => seed.id === row.sourceCaseId);
+    const events = (await this.pool.query("SELECT e.id::text AS id FROM events e WHERE e.run_id=$1 AND e.event->'detail'->>'executionCaseId'=$2 ORDER BY e.id", [runId, executionCaseId])).rows;
+    const { adaptive: _adaptive, sourceCaseId, familyId, caseVersion, checks, verdict, route, ...detail } = row;
+    return { ...detail, runId, sourceSeed: { id: sourceCaseId, familyId, version: caseVersion, definition: source?.definition ?? null },
+      admittedDefinition: row.admittedDefinition ?? null, assessment: checks === null ? null : { checks, verdict, route },
+      eventIds: events.map(event => event.id as string), eventLinkage: events.length ? 'tagged' as const : 'unknown' as const };
   }
   async usage(id: string) {
     return (await this.pool.query('SELECT id,role,provider,model,status,reserved_nanos::text AS "reservedNanos",charge_nanos::text AS "chargeNanos",input_tokens AS "inputTokens",output_tokens AS "outputTokens",latency_ms AS "latencyMs" FROM model_calls WHERE run_id=$1 ORDER BY created_at,id', [id])).rows;
@@ -479,7 +570,7 @@ export class Repository {
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
-      const run = (await db.query("SELECT paid_cap_nanos FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() AND (adaptive IS NULL OR (stop_requested=false AND started_at+((adaptive->>'maxMinutes')::integer * interval '1 minute')>now())) FOR UPDATE", [id, generation])).rows[0];
+      const run = (await db.query("SELECT paid_cap_nanos FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() AND stop_requested=false AND (adaptive IS NULL OR started_at+((adaptive->>'maxMinutes')::integer * interval '1 minute')>now()) FOR UPDATE", [id, generation])).rows[0];
       if (!run) throw new Error('Lease lost');
       if (provider === 'openrouter') {
         if (run.paid_cap_nanos === null || amount <= 0n) throw new Error('Paid model has no bounded reserve');
@@ -514,7 +605,7 @@ export class Repository {
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
-      const row = (await db.query("SELECT id FROM runs WHERE status='queued' ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1")).rows[0];
+      const row = (await db.query("SELECT id FROM runs WHERE status='queued' AND stop_requested=false ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1")).rows[0];
       if (!row) { await db.query('COMMIT'); return null; }
       const run = (await db.query("UPDATE runs SET status='running',started_at=now(), lease_owner=$2,lease_generation=lease_generation+1,lease_until=now()+interval '60 seconds' WHERE id=$1 RETURNING *", [row.id, owner])).rows[0];
       await db.query("UPDATE schedule_occurrences SET state='running' WHERE run_id=$1 AND state='queued'", [row.id]);
@@ -545,13 +636,13 @@ export class Repository {
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
-      const row = (await db.query("UPDATE runs SET status='finished',outcome=CASE WHEN adaptive IS NOT NULL AND (stop_requested OR started_at+((adaptive->>'maxMinutes')::integer * interval '1 minute')<=now()) THEN 'incomplete' ELSE $3 END,finished_at=now(),lease_until=NULL WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() RETURNING target_id,adaptive,outcome", [id, generation, result])).rows[0];
+      const row = (await db.query("UPDATE runs SET status='finished',outcome=CASE WHEN stop_requested OR (adaptive IS NOT NULL AND started_at+((adaptive->>'maxMinutes')::integer * interval '1 minute')<=now()) THEN 'incomplete' ELSE $3 END,finished_at=now(),lease_until=NULL WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() RETURNING target_id,adaptive,outcome,stop_requested,(adaptive IS NOT NULL AND started_at+((adaptive->>'maxMinutes')::integer * interval '1 minute')<=now()) AS time_expired", [id, generation, result])).rows[0];
       if (!row) throw new Error('Lease lost');
-      if (assessment) await db.query('INSERT INTO assessments(run_id,checks,verdict,route) VALUES ($1,$2,$3,$4)', [id, JSON.stringify(assessment.checks), assessment.verdict, result]);
-      if (!row.adaptive && (result === 'pending_review' || result === 'auto_confirm')) {
+      if (assessment && !row.stop_requested && !row.time_expired) await db.query('INSERT INTO assessments(run_id,checks,verdict,route) VALUES ($1,$2,$3,$4)', [id, JSON.stringify(assessment.checks), assessment.verdict, row.outcome]);
+      if (!row.adaptive && (row.outcome === 'pending_review' || row.outcome === 'auto_confirm')) {
         const candidate = randomUUID();
         await db.query("INSERT INTO candidates(id,run_id,state) VALUES ($1,$2,'pending_review')", [candidate, id]);
-        if (result === 'auto_confirm') {
+        if (row.outcome === 'auto_confirm') {
           const candidateRow = await this.candidateEvidenceRow(db, candidate);
           const integrity = await this.checkCandidateEvidence(db, candidateRow!);
           if (integrity.status === 'complete') {
@@ -563,7 +654,7 @@ export class Repository {
           }
         }
       }
-      await db.query("UPDATE schedule_occurrences SET state=CASE WHEN $2='blocked' THEN 'blocked' ELSE 'finished' END,reason=CASE WHEN $2='blocked' THEN 'Target/login/chart preflight unavailable' ELSE NULL END WHERE run_id=$1", [id, row.outcome]);
+      await db.query("UPDATE schedule_occurrences SET state=CASE WHEN $2='blocked' THEN 'blocked' ELSE 'finished' END,reason=CASE WHEN $3 THEN 'Stopped after in-flight work' WHEN $2='blocked' THEN 'Target/login/chart preflight unavailable' ELSE NULL END WHERE run_id=$1", [id, row.outcome, row.stop_requested]);
       await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [row.target_id, id]);
       await db.query('COMMIT');
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }

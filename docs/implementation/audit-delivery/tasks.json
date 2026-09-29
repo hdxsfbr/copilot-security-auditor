@@ -403,14 +403,24 @@
       "locks": [
         "api-data",
         "contracts",
-        "worker-pipeline"
+        "worker-pipeline",
+        "migrations"
       ],
       "files": [
         "apps/api/src/app.ts",
         "apps/api/src/repository.ts",
         "packages/contracts/src/",
         "apps/worker/src/process.ts",
-        "apps/worker/src/adaptive.ts"
+        "apps/worker/src/adaptive.ts",
+        "db/migrations/013_run_history_index.sql",
+        "db/migrate.ts",
+        "tests/e2e.test.ts",
+        "tests/evidence-observation.test.ts",
+        "tests/integration.test.ts",
+        "tests/integrity-candidate.test.ts",
+        "tests/run-history.test.ts",
+        "tests/run-stop.test.ts",
+        "docs/implementation/run-history-stop.md"
       ],
       "scope": "Add cursor-paginated run history and run/case detail with immutable target/version metadata. Generalize queued and running cancellation to selected and adaptive runs while preserving reservations and lease fencing.",
       "accept": [

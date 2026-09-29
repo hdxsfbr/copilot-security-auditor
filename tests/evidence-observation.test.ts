@@ -142,6 +142,7 @@ test('selected worker return reflects a persisted downgrade after finish', async
     expire: async () => {}, claim: async () => run,
     credential: async (ref: string) => ref === 'A' ? users.userA : users.userB,
     append: async () => {}, heartbeat: async () => {},
+    stopped: async () => false,
     reserveCall: async () => 'call-1', settleCall: async () => true,
     finish: async (_id: string, _generation: number, result: string) => { evaluated = result; persisted = result === 'auto_confirm' ? 'pending_review' : result; },
     run: async () => ({ outcome: persisted })

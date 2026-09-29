@@ -44,7 +44,8 @@ export async function processAdaptive(repo: Repository, run: ClaimedRun, targetF
   const runUntil = adaptiveRunUntil(run);
   const users = await Promise.all([repo.credential<Identity>(run.target_snapshot.userARef), repo.credential<Identity>(run.target_snapshot.userBRef)]);
   const stop = () => repo.stopped(run.id, generation);
-  const emit = async (kind: string, detail: Record<string, unknown>) => repo.append(run.id, generation, evidenceEvent.parse({ v: 1, agent: 'worker', kind, detail }));
+  let currentCaseId: string | null = null;
+  const emit = async (kind: string, detail: Record<string, unknown>) => repo.append(run.id, generation, evidenceEvent.parse({ v: 1, agent: 'worker', kind, detail: { ...detail, ...(currentCaseId ? { executionCaseId: currentCaseId } : {}) } }));
   const emitTimeout = async (error: unknown) => { if (error instanceof DeadlineExceeded) await emit('timeout', error.info); };
   const admissionError = (error: unknown, stage: 'orchestrator' | 'red_team') => agentFailure.parse({
     code: error instanceof AgentContractError ? 'invalid_contract' : error instanceof DeadlineExceeded || error instanceof Error && error.message === 'Paid model budget exhausted' ? 'budget_exceeded' : 'provider_unavailable',
@@ -53,7 +54,6 @@ export async function processAdaptive(repo: Repository, run: ClaimedRun, targetF
   const heartbeat = setInterval(() => { void repo.heartbeat(run.id, generation).catch(() => clearInterval(heartbeat)); }, 10000);
   let limited = false;
   let history: Observation[] = [];
-  let currentCaseId: string | null = null;
   try {
     for (let index = 0; index < plan.maxCases; index++) {
       const attemptId = `${run.id}-${generation}-${index + 1}`;
@@ -107,13 +107,13 @@ export async function processAdaptive(repo: Repository, run: ClaimedRun, targetF
       const definition = caseInput.parse({ ...seed.definition, actions: proposed });
       await repo.executeAdaptiveCase(run.id, generation, currentCaseId, definition);
       await emit('proposal_admitted', { ordinal: index + 1, category: gap, sourceCaseId: seed.id, actions: proposed.map(a => ({ kind: a.kind, message: scrubEvidence(a.message, users), ...(a.kind === 'attach_pdf' ? { artifactId: a.artifactId, documentType: a.documentType } : {}) })) });
-      const result = await evaluateCase(repo, run, definition, targetFetch, modelFetch, stop, seed.id, { attemptId, parentMessageId: admittedSelection.header.messageId });
+      const result = await evaluateCase(repo, run, definition, targetFetch, modelFetch, stop, seed.id, { attemptId, parentMessageId: admittedSelection.header.messageId, executionCaseId: currentCaseId });
       const ended = await stop();
       const outcome = ended ? 'incomplete' : result.outcome;
       const final = await repo.completeAdaptiveCase(run.id, generation, currentCaseId, outcome, result.executed, ended ? 'Stopped or timed out' : undefined, ended ? undefined : result.assessment);
-      currentCaseId = null;
       history = result.observations;
       await emit('case_outcome', { ordinal: index + 1, category: gap, outcome: final, executed: result.executed });
+      currentCaseId = null;
       if (ended || final === 'incomplete' || (await repo.usage(run.id)).some(c => c.status === 'unresolved')) { limited = true; break; }
     }
   } catch {
@@ -143,6 +143,10 @@ export async function processAdaptive(repo: Repository, run: ClaimedRun, targetF
       amount = reserveAmount(price, assignment.maxOutputTokens);
     }
     const callId = await repo.reserveCall(run.id, generation, role as Role, assignment.provider, assignment.model, amount);
+    if (await stop()) {
+      await repo.settleCall(run.id, generation, callId, { latencyMs: 0, chargeNanos: '0' });
+      throw new Error('Run stopped before model dispatch');
+    }
     try {
       const result = await callRoleJson(assignment, messages, run.definition.ollamaUrl, modelFetch, price, { runUntil, role });
       const settled = await repo.settleCall(run.id, generation, callId, result.usage);

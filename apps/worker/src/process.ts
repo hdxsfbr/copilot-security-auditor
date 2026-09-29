@@ -49,7 +49,7 @@ export async function processNext(repo: Repository, owner = 'worker', targetFetc
     }
     return processAdaptive(repo, run, targetFetch, modelFetch);
   }
-  const evaluated = await evaluateCase(repo, run, run.definition.case, targetFetch, modelFetch);
+  const evaluated = await evaluateCase(repo, run, run.definition.case, targetFetch, modelFetch, () => repo.stopped(run.id, run.lease_generation));
   await repo.finish(run.id, run.lease_generation, evaluated.outcome, evaluated.assessment);
   return { id: run.id, outcome: outcomeSchema.parse((await repo.run(run.id))?.outcome) };
 }
@@ -90,12 +90,12 @@ export function scopeOutcome(category: CaseInput['category'], classified: Outcom
   return classified;
 }
 
-export async function evaluateCase(repo: Repository, run: ClaimedRun, definition: CaseInput, targetFetch: typeof fetch, modelFetch: typeof fetch, shouldStop: () => Promise<boolean> = async () => false, sourceCaseId = run.case_id!, lineage?: Pick<AgentContext, 'attemptId' | 'parentMessageId'>) {
+export async function evaluateCase(repo: Repository, run: ClaimedRun, definition: CaseInput, targetFetch: typeof fetch, modelFetch: typeof fetch, shouldStop: () => Promise<boolean> = async () => false, sourceCaseId = run.case_id!, lineage?: Pick<AgentContext, 'attemptId' | 'parentMessageId'> & { executionCaseId?: string }) {
   const generation = run.lease_generation;
   const contractContext: AgentContext = { runId: run.id, caseId: sourceCaseId, attemptId: lineage?.attemptId ?? `${run.id}-${generation}`, parentMessageId: lineage?.parentMessageId ?? null };
   const runUntil = adaptiveRunUntil(run);
   const emit = async (agent: 'worker' | 'target' | 'check' | 'judge', kind: string, detail: Record<string, unknown>, version?: string) => {
-    await repo.append(run.id, generation, evidenceEvent.parse({ v: 1, agent, kind, detail }), version);
+    await repo.append(run.id, generation, evidenceEvent.parse({ v: 1, agent, kind, detail: { ...detail, ...(lineage?.executionCaseId ? { executionCaseId: lineage.executionCaseId } : {}) } }), version);
   };
   const users = await Promise.all([repo.credential<Identity>(run.target_snapshot.userARef), repo.credential<Identity>(run.target_snapshot.userBRef)]);
   const selected = definition.user === 'A' ? users[0] : users[1];
@@ -220,6 +220,11 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
         let callId: string;
         try { callId = await repo.reserveCall(run.id, generation, 'judge', assignment.provider, assignment.model, amount); }
         catch (error) { await emit('judge', 'unavailable', { reason: 'Model budget, pricing, or lease unavailable', contract: handoffError(contractContext, error instanceof Error && error.message === 'Paid model budget exhausted' ? 'budget_exceeded' : 'reservation_unavailable', 'judge') }); await earlyPolicy('incomplete', 'model_reservation_unavailable'); return { outcome: 'incomplete' as const }; }
+        if (await shouldStop()) {
+          await repo.settleCall(run.id, generation, callId, { latencyMs: 0, chargeNanos: '0' });
+          await earlyPolicy('incomplete', 'run_stopped_before_judge_dispatch');
+          return { outcome: 'incomplete' as const };
+        }
         try {
           const { result, usage } = await callJudgeHandoff(assignment, handoff, contractContext, run.definition.ollamaUrl, modelFetch, dispatchPrice, { runUntil });
           const settled = await repo.settleCall(run.id, generation, callId, usage);

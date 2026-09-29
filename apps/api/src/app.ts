@@ -2,8 +2,8 @@ import express from 'express';
 import { z, ZodError } from 'zod';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { targetInput, targetUpdateInput, caseInput, caseDraftInput, startInput, adaptiveStart, runDefinition, runDefinitionInput, runDefinitionEdit, runDefinitionRef, scheduleInput, scheduleDefinitionRef, scheduleState, type RunDefinition } from '../../../packages/contracts/src/index.js';
-import { DefinitionRevisionConflict, Repository, type CandidateIntegrity, type RunDefinitionReference } from './repository.js';
+import { targetInput, targetUpdateInput, caseInput, caseDraftInput, startInput, adaptiveStart, runDefinition, runDefinitionInput, runDefinitionEdit, runDefinitionRef, scheduleInput, scheduleDefinitionRef, scheduleState, runHistoryQuery, type RunDefinition } from '../../../packages/contracts/src/index.js';
+import { DefinitionRevisionConflict, InvalidRunCursor, Repository, type CandidateIntegrity, type RunDefinitionReference } from './repository.js';
 import { auditArtifactVolume, storePdf, loadPdf } from './artifacts.js';
 import { catalog, installedOllama, preflightModels } from '../../worker/src/models.js';
 
@@ -25,7 +25,7 @@ export function createApp(repo: Repository) {
     try {
       await repo.pool.query('SELECT 1');
       const migrations = await repo.pool.query('SELECT count(*)::int AS count FROM schema_migrations');
-      if (migrations.rows[0].count !== 12) return res.status(503).json({ status: 'unavailable', database: 'migration_incomplete' });
+      if (migrations.rows[0].count !== 13) return res.status(503).json({ status: 'unavailable', database: 'migration_incomplete' });
       return res.json({ status: 'ok', database: 'ready', migrations: migrations.rows[0].count });
     } catch {
       return res.status(503).json({ status: 'unavailable', database: 'unavailable' });
@@ -201,9 +201,19 @@ export function createApp(repo: Repository) {
     return dispatchRun({ kind: 'adaptive', input: adaptiveStart.parse(req.body) }, res);
   });
   app.post('/api/runs/:id/stop', async (req, res) => {
-    return (await repo.stop(z.uuid().parse(req.params.id))) ? res.status(202).json({ stopRequested: true }) : res.status(409).json({ message: 'No active adaptive run' });
+    const stopped = await repo.stop(z.uuid().parse(req.params.id));
+    return stopped ? res.status(202).json(stopped) : res.status(409).json({ message: 'No active run to stop' });
+  });
+  app.get('/api/runs', async (req, res) => {
+    const query = runHistoryQuery.parse(req.query);
+    try { return res.set('Cache-Control', 'no-store').json(await repo.runHistory(query.limit, query.cursor)); }
+    catch (error) { if (error instanceof InvalidRunCursor) return res.status(400).json({ v: 1, code: 'invalid', message: 'Invalid run history cursor' }); throw error; }
   });
   app.get('/api/runs/:id/cases', async (req, res) => res.json(await repo.adaptiveCases(z.uuid().parse(req.params.id))));
+  app.get('/api/runs/:id/cases/:executionCaseId', async (req, res) => {
+    const detail = await repo.adaptiveCaseDetail(z.uuid().parse(req.params.id), z.uuid().parse(req.params.executionCaseId));
+    return detail ? res.set('Cache-Control', 'no-store').json(detail) : res.status(404).json({ v: 1, code: 'not_found', message: 'Adaptive execution case not found in this run' });
+  });
   app.get('/api/runs/:id', async (req, res) => {
     const run = await repo.run(z.uuid().parse(req.params.id));
     return run ? res.json(run) : res.status(404).json({ v: 1, code: 'not_found', message: 'Run not found' });
