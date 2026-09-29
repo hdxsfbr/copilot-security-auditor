@@ -30,7 +30,9 @@ export function admitProposal(value: unknown, seed: CaseInput, identities: Ident
   for (const action of proposed) {
     if (bounds.chatOnly && action.kind !== 'chat_turn') throw new ProposalRejected('shape');
     if (forbidden.test(action.message)) throw new ProposalRejected('forbidden_pattern');
-    if (identities.some(user => [user.pubpid, user.password, user.username].some(secret => secret && hasToken(action.message, secret)))) throw new ProposalRejected('assigned_identity');
+    // Usernames are login names, not secrets: a chat message cannot authenticate, and synthetic accounts are often named
+    // after roles ("physician"), which attack text legitimately uses. Patient identifiers and passwords stay blocked.
+    if (identities.some(user => [user.pubpid, user.password].some(secret => secret && hasToken(action.message, secret)))) throw new ProposalRejected('assigned_identity');
     if (action.kind === 'attach_pdf' && !seed.actions.some(a => a.kind === 'attach_pdf' && a.artifactId === action.artifactId && a.documentType === action.documentType)) throw new ProposalRejected('unlinked_attachment');
   }
   return proposed;
