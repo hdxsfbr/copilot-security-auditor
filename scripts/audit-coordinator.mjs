@@ -151,11 +151,13 @@ export function computeSnapshot(manifest, state, mergeRequests, isAncestor) {
       const head = linked.sha ?? linked.diff_refs?.head_sha;
       const mergeSha = linked.merge_commit_sha ?? linked.squash_commit_sha;
       // GitLab merged-results pipelines may run on the final merge/squash SHA.
+      // An authoritative null means no remote pipeline exists for this MR;
+      // it still requires exact-head local validation and verified ancestry.
       const pipeline = linked.head_pipeline;
       const pipelineHeadMatches = pipeline && shaPattern.test(pipeline.sha ?? '') &&
         [head, linked.merge_commit_sha, linked.squash_commit_sha].includes(pipeline.sha);
       const pipelineValid = Object.hasOwn(linked, 'head_pipeline') &&
-        pipelineHeadMatches && pipeline.status === 'success';
+        (pipeline === null || pipelineHeadMatches && pipeline.status === 'success');
       const valid = linked.target_branch === 'main' && mergedAt(linked.merged_at) &&
         shaPattern.test(head ?? '') && shaPattern.test(mergeSha ?? '') &&
         pipelineValid &&

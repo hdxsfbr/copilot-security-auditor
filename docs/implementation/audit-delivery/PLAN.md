@@ -187,7 +187,7 @@ MR evidence should identify the tested commit and scenario, give the relevant ch
 A prerequisite unlock requires all of:
 - GitLab reports the issue's linked MR merged into main with a merge timestamp.
 - The merge/squash commit is an ancestor of freshly fetched `origin/main`.
-- Required local checks were recorded as passed for the exact MR head, and the GitLab pipeline succeeded for that head or its merge/squash revision.
+- Required local checks were recorded as passed for the exact MR head. A present GitLab pipeline succeeded for that head or its merge/squash revision; authoritative `head_pipeline: null` means no remote pipeline exists for that MR and still requires the exact-head local checks.
 - No duplicate/open competing MR or contradictory state prevents reconciliation.
 
 An open MR with no journal entry blocks duplicate dispatch. A closed unmerged MR does not satisfy its issue. A Done label or forged journal `merged` flag is insufficient. New pushes invalidate old head-specific validation. Rebases/merges that change the tested revision need relevant checks again. Before launch, the root also checks Linear for cancellation/scope changes and reviews intervening main changes, including reverts; ancestry alone cannot prove a feature was not subsequently reverted.
@@ -219,7 +219,7 @@ During this active agent session, poll at 30-second intervals, report meaningful
 
 On September 29, the user temporarily authorized verified local checks while GitLab had no usable runner. D01 / HDX-41 recorded an explicit pending-pipeline exception. That decision remains part of the historical record; it is no longer a policy for subsequent work. [Q03 / HDX-40](https://linear.app/hdxsfbr/issue/HDX-40) identified online runner 282 with `run_untagged` disabled for this untagged job. After the setting was enabled, [pipeline 32849](https://labs.gauntletai.com/andrebatista/copilot-security-auditor/-/pipelines/32849), job 137071, passed typecheck, build and 68 fixture tests on revision `14883c7`. See [validation.md](../validation.md) for runner diagnostics.
 
-The resolver now requires a successful, revision-matched GitLab pipeline as well as verified merge/main ancestry and exact-head local validation. Pending, running, failed, canceled, skipped, absent and stale pipelines block dependency unlocks, even if a historical journal entry still contains `ciException`. Retire obsolete exception records when reconciling the journal; do not relabel the historical local-check decision as remote CI success.
+The resolver still requires verified merge/main ancestry and exact-head local validation. A present pipeline must be successful and revision-matched. An authoritative `head_pipeline: null` means no pipeline exists for that MR; it can rely on the same exact-head local validation but is never described as green remote CI. Missing or undefined pipeline data and pending, running, failed, canceled, skipped or stale pipelines block dependency unlocks, even if a historical journal entry still contains `ciException`. Retire obsolete exception records when reconciling the journal; do not relabel the historical local-check decision as remote CI success.
 
 ## Validation and completion
 
