@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 import { ModelDesk } from "./ModelDesk.js";
 import { ScheduleDesk } from "./ScheduleDesk.js";
+import { ErrorBoundary } from "./api/ErrorBoundary.js";
+import { isRecord, isRecordArray, requestJson } from "./api/client.js";
 
 type Target = {
   id: string;
@@ -39,7 +41,7 @@ type Run = {
   stopRequested?: boolean;
 };
 type Event = {
-  id: number;
+  id: number | string;
   event: { agent: string; kind: string; detail: Record<string, unknown> };
   createdAt: string;
 };
@@ -48,32 +50,35 @@ type Finding = {
   runId: string;
   state: string;
   title: string;
-  version: string;
+  version: string | null;
   decisionRoute: string | null;
   exportApprovedAt: string | null;
 };
 type Regression = {
   id: string;
   sourceRunId: string;
-  version: string;
+  version: string | null;
   definition: { title: string };
   replays: { runId: string; version: string | null; outcome: string }[];
 };
 type Coverage = { category: string; outcome: string; count: number };
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
-  });
-  const result = await res.json();
-  if (!res.ok)
-    throw new Error(
-      result.active_run_id
-        ? `Target reserved by run ${result.active_run_id}`
-        : (result.message ?? "Request failed"),
-    );
-  return result as T;
-}
+const isString = (value: unknown): value is string => typeof value === "string";
+const isNullableString = (value: unknown): value is string | null => value === null || isString(value);
+const isTarget = (value: unknown): value is Target => isRecord(value) && isString(value.id) && isString(value.name) && isString(value.baseUrl) && isNullableString(value.activeRunId);
+const isEditableTarget = (value: unknown): value is EditableTarget => isRecord(value) && isString(value.id) && isString(value.name) && isString(value.baseUrl) && isRecord(value.userA) && isString(value.userA.username) && isString(value.userA.pubpid) && isRecord(value.userB) && isString(value.userB.username) && isString(value.userB.pubpid);
+const isCase = (value: unknown): value is Case => isRecord(value) && isString(value.id) && isString(value.title) && isString(value.user) && isString(value.expectedSafeBehavior) && Array.isArray(value.actions) && value.actions.every(action => isRecord(action) && isString(action.kind) && isString(action.message));
+const isFinding = (value: unknown): value is Finding => isRecord(value) && isString(value.id) && isString(value.runId) && isString(value.state) && isString(value.title) && isNullableString(value.version) && isNullableString(value.decisionRoute) && isNullableString(value.exportApprovedAt);
+const isRegression = (value: unknown): value is Regression => isRecord(value) && isString(value.id) && isString(value.sourceRunId) && isNullableString(value.version) && isRecord(value.definition) && isString(value.definition.title) && Array.isArray(value.replays) && value.replays.every(replay => isRecord(replay) && isString(replay.runId) && isNullableString(replay.version) && isString(replay.outcome));
+const isCoverage = (value: unknown): value is Coverage => isRecord(value) && isString(value.category) && isString(value.outcome) && typeof value.count === "number";
+const isRun = (value: unknown): value is Run => isRecord(value) && isString(value.id) && isString(value.status) && isNullableString(value.outcome) && isNullableString(value.version) && isString(value.model) && (value.caseId === undefined || isNullableString(value.caseId)) && (value.categories === undefined || value.categories === null || (Array.isArray(value.categories) && value.categories.every(isString))) && (value.modelSnapshot === undefined || value.modelSnapshot === null || (isRecord(value.modelSnapshot) && isRecord(value.modelSnapshot.roles) && isRecord(value.modelSnapshot.roles.judge) && isString(value.modelSnapshot.roles.judge.provider)));
+const isEvent = (value: unknown): value is Event => isRecord(value) && (typeof value.id === "number" || (typeof value.id === "string" && /^\d+$/.test(value.id))) && isRecord(value.event) && isString(value.event.agent) && isString(value.event.kind) && isRecord(value.event.detail) && isString(value.createdAt);
+const isConfig = (value: unknown): value is { ollamaUrl: string; model: string } => isRecord(value) && isString(value.ollamaUrl) && isString(value.model);
+const isId = (value: unknown): value is { id: string } => isRecord(value) && isString(value.id);
+const isSavedTarget = (value: unknown): value is Pick<Target, "id" | "name" | "baseUrl"> => isRecord(value) && isString(value.id) && isString(value.name) && isString(value.baseUrl);
+const isCaseSelection = (value: unknown): value is { caseId: string | null } => isRecord(value) && isNullableString(value.caseId);
+const isSelectedCase = (value: unknown): value is { caseId: string } => isRecord(value) && isString(value.caseId);
+const targetsGuard = isRecordArray(isTarget), casesGuard = isRecordArray(isCase), findingsGuard = isRecordArray(isFinding), regressionsGuard = isRecordArray(isRegression), coverageGuard = isRecordArray(isCoverage), eventsGuard = isRecordArray(isEvent);
+const api = requestJson;
 function App() {
   const [targets, setTargets] = useState<Target[]>([]),
     [cases, setCases] = useState<Case[]>([]);
@@ -86,6 +91,10 @@ function App() {
     [caseId, setCaseId] = useState("");
   const [noticeKind, setNoticeKind] = useState<"error" | "success">("error"),
     [editingTargetId, setEditingTargetId] = useState("");
+  const [refreshError, setRefreshError] = useState("");
+  const [configError, setConfigError] = useState("");
+  const [runError, setRunError] = useState("");
+  const configEdited = useRef({ ollamaUrl: false, model: false });
   const [loadedTargetId, setLoadedTargetId] = useState("");
   const [targetLoadFailed, setTargetLoadFailed] = useState(false);
   const [findings, setFindings] = useState<Finding[]>([]),
@@ -122,7 +131,7 @@ function App() {
   useEffect(() => {
     if (!editingTargetId) return;
     let active = true;
-    void api<EditableTarget>(`/targets/${editingTargetId}/edit`)
+    void api(`/targets/${editingTargetId}/edit`, isEditableTarget)
       .then((saved) => {
         if (active) {
           setTarget({
@@ -152,26 +161,49 @@ function App() {
   const refresh = async () => {
     try {
       const [t, c, f, r, gaps] = await Promise.all([
-        api<Target[]>("/targets"),
-        api<Case[]>("/cases"),
-        api<Finding[]>("/findings"),
-        api<Regression[]>("/regressions"),
-        api<Coverage[]>("/coverage"),
+        api("/targets", targetsGuard),
+        api("/cases", casesGuard),
+        api("/findings", findingsGuard),
+        api("/regressions", regressionsGuard),
+        api("/coverage", coverageGuard),
       ]);
       setTargets(t);
       setCases(c);
       setFindings(f);
       setRegressions(r);
       setCoverage(gaps);
+      setRefreshError("");
       setTargetId((v) => (t.some((target) => target.id === v) ? v : ""));
       setCaseId((v) =>
         c.some((testCase) => testCase.id === v) ? v : c[0]?.id || "",
       );
     } catch (e) {
-      setNoticeKind("error");
-      setNotice(
+      setRefreshError(
         e instanceof Error ? e.message : "Could not load saved targets",
       );
+    }
+  };
+  const loadConfig = async () => {
+    try {
+      const config = await api("/config", isConfig);
+      if (!configEdited.current.ollamaUrl) setOllamaUrl(config.ollamaUrl);
+      if (!configEdited.current.model) setModel(config.model);
+      setConfigError("");
+    } catch (cause) {
+      setConfigError(cause instanceof Error ? cause.message : "Model defaults unavailable");
+    }
+  };
+  const pollRun = async (id = run?.id) => {
+    if (!id) return;
+    try {
+      const [nextRun, nextEvents] = await Promise.all([
+        api(`/runs/${id}`, isRun), api(`/runs/${id}/events`, eventsGuard),
+      ]);
+      setRun(nextRun);
+      setEvents(nextEvents);
+      setRunError("");
+    } catch (cause) {
+      setRunError(cause instanceof Error ? cause.message : "Run progress unavailable");
     }
   };
   useEffect(() => {
@@ -180,28 +212,12 @@ function App() {
   }, [targetId]);
   useEffect(() => {
     refresh();
-    void api<{ ollamaUrl: string; model: string }>("/config")
-      .then((config) => {
-        setOllamaUrl(config.ollamaUrl);
-        setModel(config.model);
-      })
-      .catch((e) => setNotice(String(e)));
+    void loadConfig();
   }, []);
   useEffect(() => {
     if (!run?.id) return;
-    const poll = () => {
-      void Promise.all([
-        api<Run>(`/runs/${run.id}`),
-        api<Event[]>(`/runs/${run.id}/events`),
-      ])
-        .then(([r, ev]) => {
-          setRun(r);
-          setEvents(ev);
-        })
-        .catch((e) => setNotice(String(e)));
-    };
-    poll();
-    const timer = setInterval(poll, 1500);
+    void pollRun(run.id);
+    const timer = setInterval(() => void pollRun(run.id), 1500);
     return () => clearInterval(timer);
   }, [run?.id]);
   useEffect(() => {
@@ -240,25 +256,20 @@ function App() {
       checks,
       actions: [{ kind: "chat_turn", message: testCase.message }],
     };
-    const created = await api<{ id: string }>("/cases", {
+    const created = await api("/cases", isId, {
       method: "POST",
       body: JSON.stringify(definition),
     });
     if (pdf) {
-      const response = await fetch(
-        `/api/cases/${created.id}/artifacts?documentType=${documentType}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/pdf" },
-          body: pdf,
-        },
-      );
-      if (!response.ok)
-        throw new Error(
-          "Case saved, but PDF upload failed. Create a fresh case after checking PDF limits.",
-        );
-      const artifact = (await response.json()) as { id: string };
-      await api(`/cases/${created.id}`, {
+      let artifact: { id: string };
+      try {
+        artifact = await api(`/cases/${created.id}/artifacts?documentType=${documentType}`, isId, {
+          method: "POST", headers: { "Content-Type": "application/pdf" }, body: pdf,
+        });
+      } catch (cause) {
+        throw new Error(`Case saved, but PDF upload failed: ${cause instanceof Error ? cause.message : "request failed"}`);
+      }
+      await api(`/cases/${created.id}`, isRecord, {
         method: "PUT",
         body: JSON.stringify({
           ...definition,
@@ -283,12 +294,12 @@ function App() {
   ) => {
     await submit(async () => {
       if (action === "approve") {
-        await api(`/findings/${id}/approve-export`, { method: "POST" });
+        await api(`/findings/${id}/approve-export`, isRecord, { method: "POST" });
         setExported(
-          JSON.stringify(await api(`/findings/${id}/export`), null, 2),
+          JSON.stringify(await api(`/findings/${id}/export`, isRecord), null, 2),
         );
       } else
-        await api(`/findings/${id}/review`, {
+        await api(`/findings/${id}/review`, isRecord, {
           method: "POST",
           body: JSON.stringify({ decision: action }),
         });
@@ -311,8 +322,9 @@ function App() {
       },
     };
     try {
-      const saved = await api<Target>(
+      const saved = await api(
         editingTargetId ? `/targets/${editingTargetId}` : "/targets",
+        isSavedTarget,
         {
           method: editingTargetId ? "PUT" : "POST",
           body: JSON.stringify(input),
@@ -376,6 +388,8 @@ function App() {
             {notice}
           </div>
         )}
+        {refreshError && <div className="alert" role="alert">Saved targets, cases, and evidence could not be refreshed: {refreshError} <button type="button" onClick={() => void refresh()}>Retry data refresh</button></div>}
+        {configError && <div className="alert" role="alert">Model defaults unavailable: {configError} <button type="button" onClick={() => void loadConfig()}>Retry model defaults</button></div>}
         <div className="grid">
           <section className="panel setup">
             <h2>
@@ -671,7 +685,7 @@ function App() {
               onSubmit={(e) => {
                 e.preventDefault();
                 void submit(async () => {
-                  const result = await api<{ id: string }>("/runs", {
+                  const result = await api("/runs", isId, {
                     method: "POST",
                     body: JSON.stringify({
                       targetId,
@@ -751,7 +765,7 @@ function App() {
                   type="url"
                   required
                   value={ollamaUrl}
-                  onChange={(e) => setOllamaUrl(e.target.value)}
+                  onChange={(e) => { configEdited.current.ollamaUrl = true; setOllamaUrl(e.target.value); }}
                 />
               </label>
               <label>
@@ -760,13 +774,14 @@ function App() {
                   required
                   placeholder="e.g. llama3.2"
                   value={model}
-                  onChange={(e) => setModel(e.target.value)}
+                  onChange={(e) => { configEdited.current.model = true; setModel(e.target.value); }}
                 />
               </label>
               <button className="primary">Start selected run →</button>
             </form>
           </section>
         </div>
+        <ErrorBoundary name="Model settings">
         <ModelDesk
           targetId={targetId}
           caseId={caseId}
@@ -779,7 +794,10 @@ function App() {
             setEvents([]);
           }}
         />
+        </ErrorBoundary>
+        <ErrorBoundary name="Scheduled evaluations">
         <ScheduleDesk targets={targets} cases={cases} onInspect={id => { setRun({ id, status: "queued", outcome: null, version: null, model: "scheduled" }); setEvents([]); }} />
+        </ErrorBoundary>
         <section className="evidence">
           <div className="evidence-top">
             <div>
@@ -799,6 +817,7 @@ function App() {
               {run.modelSnapshot?.roles.judge.provider ?? "ollama"} / {run.model}
             </div>
           )}
+          {runError && <p role="alert">Run progress could not refresh; the last saved evidence is still shown. {runError} <button type="button" onClick={() => void pollRun()}>Retry progress</button></p>}
           {cases
             .find((c) => c.id === run?.caseId)
             ?.actions.map((action, i) =>
@@ -936,10 +955,8 @@ function App() {
                       (f) => f.runId === r.sourceRunId,
                     );
                     if (source) {
-                      void api<{ caseId: string | null }>(
-                        `/runs/${source.runId}`,
-                      ).then(async (record) => {
-                        const selected = record.caseId ? record.caseId : (await api<{ caseId: string }>(`/regressions/${r.id}/select`, { method: "POST" })).caseId;
+                      void api(`/runs/${source.runId}`, isCaseSelection).then(async (record) => {
+                        const selected = record.caseId ? record.caseId : (await api(`/regressions/${r.id}/select`, isSelectedCase, { method: "POST" })).caseId;
                         await refresh();
                         setCaseId(selected);
                         setNoticeKind("success");
@@ -962,4 +979,4 @@ function App() {
     </div>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(<ErrorBoundary name="Application" reloadOnRetry><App /></ErrorBoundary>);
