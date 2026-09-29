@@ -94,10 +94,25 @@ test('OpenRouter Judge packet contains aliases, not raw assigned identities or s
       assert.equal(body.max_tokens, 32);
       assert.equal(body.provider.allow_fallbacks, false);
       assert.equal(body.provider.max_price.prompt, 1);
+      assert.equal(body.provider.max_price.completion, 2);
       return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ v: 1, outcome: 'inconclusive', claim: '', evidenceRefs: ['turn-1'], reproductionComplete: false, materialUncertainties: ['insufficient evidence'] }) } }], usage: { prompt_tokens: 45, completion_tokens: 20, cost: 7e-8 } }), { status: 200 });
     };
     const call = await callJudge({ provider: 'openrouter', model: 'test/paid', maxOutputTokens: 32 }, input, 'http://ollama.test/', transport, { prompt: '0.000001', completion: '0.000002', request: '0', contextLength: 1000 });
     assert.equal(call.usage.chargeNanos, '70');
     assert.equal(call.usage.inputTokens, 45);
   } finally { if (previous === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = previous; if (previousBase === undefined) delete process.env.OPENROUTER_BASE_URL; else process.env.OPENROUTER_BASE_URL = previousBase; }
+});
+
+test('provider price ceilings use dollars per million tokens, not rounded nano-units', async () => {
+  const previous = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = 'fixture-secret';
+  try {
+    const transport: typeof fetch = async (_url, init) => {
+      const body = JSON.parse(init?.body as string);
+      assert.equal(body.provider.max_price.prompt, 0.05);
+      assert.equal(body.provider.max_price.completion, 0.08);
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ v: 1, outcome: 'inconclusive', claim: '', evidenceRefs: [], reproductionComplete: false, materialUncertainties: ['no evidence'] }) } }], usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0.00000013 } }), { status: 200 });
+    };
+    await callJudge({ provider: 'openrouter', model: 'fixture/paid', maxOutputTokens: 32 }, packet('synthetic', [], [users.userA, users.userB]), 'http://ollama.test/', transport, { prompt: '0.00000005', completion: '0.00000008', request: '0', contextLength: 8192 });
+  } finally { if (previous === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = previous; }
 });

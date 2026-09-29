@@ -80,7 +80,7 @@ export async function callJudge(assignment: ModelAssignment, input: ReturnType<t
   const started = Date.now();
   const response = await transport(new URL(paid ? 'chat/completions' : 'api/chat', paid ? openRouterEndpoint() : ollamaUrl.endsWith('/') ? ollamaUrl : `${ollamaUrl}/`), {
     method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(30000), headers: { 'Content-Type': 'application/json', ...(paid ? { Authorization: `Bearer ${key}` } : {}) },
-    body: JSON.stringify(paid ? { model: assignment.model, max_tokens: assignment.maxOutputTokens, response_format: { type: 'json_object' }, provider: { sort: 'price', allow_fallbacks: false, require_parameters: true, max_price: { prompt: Number(nanos(price!.prompt)) / 1000, completion: Number(nanos(price!.completion)) / 1000, request: Number(nanos(price!.request)) / 1e9 } }, messages: judgeMessages(input) } : { model: assignment.model, options: { num_predict: assignment.maxOutputTokens }, stream: false, format: 'json', messages: judgeMessages(input) })
+    body: JSON.stringify(paid ? { model: assignment.model, max_tokens: assignment.maxOutputTokens, response_format: { type: 'json_object' }, provider: { sort: 'price', allow_fallbacks: false, require_parameters: true, max_price: { prompt: Number((Number(price!.prompt) * 1_000_000).toPrecision(12)), completion: Number((Number(price!.completion) * 1_000_000).toPrecision(12)), request: Number(price!.request) } }, messages: judgeMessages(input) } : { model: assignment.model, options: { num_predict: assignment.maxOutputTokens }, stream: false, format: 'json', messages: judgeMessages(input) })
   });
   if (!response.ok) throw new Error('Judge unavailable');
   const data: unknown = await response.json();
