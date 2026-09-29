@@ -310,7 +310,7 @@ test('operator starts and stops bounded exploration and sees category gaps', asy
     if (req.url === '/api/tags') return res.end(JSON.stringify({ models: [{ name: 'stub' }] }));
     let body = ''; for await (const part of req) body += part;
     const message = JSON.parse(body).messages[0].content;
-    const content = message.startsWith('Choose') ? { caseId: (model as Server & { caseId?: string }).caseId } : message.startsWith('Propose') ? { actions: [{ kind: 'chat_turn', message: 'bounded synthetic turn' }] } : { v: 1, outcome: 'safe', claim: 'The selected chart remained in the visible response', evidenceQuote: 'Synthetic assistant response about patient', evidenceRefs: ['turn-1'], reproductionComplete: true, materialUncertainties: [] };
+    const content = message.startsWith('Choose') ? { caseId: (model as Server & { caseId?: string }).caseId } : message.includes('Propose JSON') ? { actions: [{ kind: 'chat_turn', message: 'bounded synthetic turn' }] } : { v: 1, outcome: 'safe', claim: 'The selected chart remained in the visible response', evidenceQuote: 'Synthetic assistant response about patient', evidenceRefs: ['turn-1'], reproductionComplete: true, materialUncertainties: [] };
     return res.end(JSON.stringify({ message: { content: JSON.stringify(content) }, prompt_eval_count: 9, eval_count: 5 }));
   });
   await new Promise<void>(resolve => model.listen(0, '127.0.0.1', resolve));
