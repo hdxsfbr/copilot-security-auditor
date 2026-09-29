@@ -144,6 +144,32 @@ test('expired run budget prevents target dispatch and upload timeout names its s
   } finally { await session.close(); await toy.close(); }
 });
 
+test('conversation cleanup gets one bounded attempt after the execution budget expires', async () => {
+  const toy = fixture(); const url = await toy.start();
+  let closeCalls = 0;
+  const transport: typeof fetch = async (input, init) => {
+    const closing = String(input).includes('conversation.php') && String(init?.body).includes('"action":"end"');
+    const response = await fetch(input, init);
+    if (closing) { closeCalls++; await wait(500); }
+    return response;
+  };
+  const runUntil = Date.now() + 1000;
+  const session = new Session(url, users.userA, transport, { runUntil, limits: { handshake: 100 } });
+  try {
+    await session.open();
+    await wait(Math.max(0, runUntil - Date.now() + 10));
+    const started = Date.now();
+    await session.close();
+    assert.ok(Date.now() - started < 400, 'cleanup must stop at its own handshake deadline');
+    assert.equal(closeCalls, 1);
+    assert.equal(toy.requests.filter(request => request.path.includes('conversation.php')).length, 2);
+    assert.equal(session.assignedPid, null);
+    await session.close();
+    assert.equal(closeCalls, 1);
+    await assert.rejects(session.turn('Ask', 1), (error: unknown) => error instanceof TargetFailure && error.kind === 'incomplete');
+  } finally { await toy.close(); }
+});
+
 test('role deadline covers stalled response body; pre-dispatch exhausted budget invokes no provider', async () => {
   let canceled = false, calls = 0;
   const assignment = { provider: 'ollama' as const, model: 'stub', maxOutputTokens: 64 };

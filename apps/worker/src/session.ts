@@ -291,7 +291,9 @@ export class Session {
   }
   async close() {
     if (this.conversation) {
-      try { await this.timed('target.close', 'handshake', signal => this.requestHeaders('interface/modules/custom_modules/oe-module-copilot/public/api/conversation.php', this.jsonBody({ action: 'end', csrf_token: this.csrf, conversation_id: this.conversation }), signal)); }
+      // Cleanup is best effort after execution stops, including when its run
+      // budget expired. Give it a separate bounded handshake allowance.
+      try { await withinDeadline('target.close', this.limits.handshake, undefined, signal => this.requestHeaders('interface/modules/custom_modules/oe-module-copilot/public/api/conversation.php', this.jsonBody({ action: 'end', csrf_token: this.csrf, conversation_id: this.conversation }), signal)); }
       catch { /* best-effort cleanup; caller records case outcome separately */ }
     }
     this.cookies.clear(); this.csrf = ''; this.conversation = ''; this.assignedPid = null; this.issuedTickets = [];
