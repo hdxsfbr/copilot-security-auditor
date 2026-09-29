@@ -13,6 +13,8 @@
     "test:integration": "node --import tsx --test tests/integration.test.ts",
     "test:e2e": "node --import tsx --test tests/e2e.test.ts",
     "test:failure": "node --import tsx --test tests/failure.test.ts",
+    "test:coordinator": "node --test tests/coordinator.test.mjs",
+    "test:fixtures": "find tests -type f \\( -name '*.test.ts' -o -name '*.test.mjs' \\) -print0 | xargs -0 -r node --import tsx --test --test-concurrency=1",
     "test:live": "tsx tests/live-smoke.ts",
     "migrate": "tsx db/migrate.ts",
     "dev:api": "tsx apps/api/src/main.ts",
