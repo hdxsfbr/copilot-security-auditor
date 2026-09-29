@@ -1,12 +1,14 @@
 # Demo video script (target 4:40, limit 5:00)
 
-Shot list for the PRD demo: work completed, key decisions, and the platform running live attacks against the deployed target (`https://openemr-137-184-4-22.sslip.io`, `docs/COPILOT_FEATURE.md` section 2). Bracketed items are operator placeholders; never fill a finding from memory or from fixtures.
+Shot list for the PRD demo: work completed, key decisions, and the platform running live attacks against the **local (LAN) Co-Pilot deployment** at `http://10.0.0.32:8300`, target "Local Co-Pilot" with the synthetic physician and receptionist accounts. The public deployment (`https://openemr-137-184-4-22.sslip.io`) has no auditor target or credentials configured, so it is not used; say so on camera. Bracketed items are operator placeholders; never fill a finding from memory or from fixtures.
 
 ## Before recording
 
 - Synthetic data only. Keep `.env`, passwords and cookies off screen.
 - Pre-launch the live run; a case can take over a minute (turn deadline 90 s). Record the launch, cut to the finished run, and caption it "time-compressed".
-- Suggested live run: one selected current-chart isolation case with a local Judge, then one adaptive run (`maxCases` 3, three categories).
+- The demo database was reset to one target ("Local Co-Pilot") and seeded with one run of each of the 10 starter-matrix cases on local models, so Overview, Runs and Coverage have current data. Auditor UI: `http://10.0.0.32:3000`.
+- Suggested live run on camera: one selected current-chart isolation case with a local Judge, then one adaptive run (`maxCases` 3, three categories).
+- Adaptive caveat: the synthetic usernames are ordinary words ("physician", "receptionist"), and the admission gate still rejects Red Team text that uses them as words ("As the attending physician…"). Expect some `proposal_rejected` events with rule `assigned_identity`; narrate them as the boundary working, not as a crash.
 - A paid Judge must pass preflight and the cap must exceed one reservation. The UI default cap of 0.25 USD is below a `mistral-medium-3-5` reservation (about 0.40 USD); see `cost-and-scale.md` section 3.
 
 ## What is on `main` for the recording
@@ -29,7 +31,7 @@ The first live pass found **no confirmed vulnerability** ([evidence](../../evals
 
 **On screen:** the `ARCHITECTURE.md` diagram, then the role table.
 
-- Four roles, separate authority: Orchestrator selects bounded work; Red Team proposes one to three typed actions; Judge proposes a cited verdict; Documentation drafts only from confirmed evidence. [F00-F01: say "landing" if absent.]
+- Four roles, separate authority: Orchestrator selects bounded work; Red Team proposes one to three typed actions; Judge proposes a cited verdict; Documentation drafts only from confirmed evidence.
 - A proposal is data until schema and policy admit it. The worker, not a model, owns credentials, chart selection, tickets and replay.
 - The Judge only proposes. A deterministic gate requires complete observations, resolvable evidence references, a quote from the cited response that is not a prompt echo, and no material uncertainty.
 
@@ -47,7 +49,7 @@ The first live pass found **no confirmed vulnerability** ([evidence](../../evals
 - Pick target and case; assign a model per role: local `qwen3-coder:30b` for Orchestrator and Red Team, local or paid Judge.
 - Bounds: cases, minutes, per-run paid cap. Nothing dispatches until Start, and one run is active per target.
 
-### 5. 1:45-2:30 Live run against the deployed target
+### 5. 1:45-2:30 Live run against the local target
 
 **On screen:** Runs, then run detail during execution (time-compressed).
 
@@ -86,6 +88,6 @@ The first live pass found **no confirmed vulnerability** ([evidence](../../evals
 
 **On screen:** `KEY_METRICS.md` or the open-items list.
 
-- LAN-only, no app login; auto-confirm is uncalibrated until Judge calibration lands; fixture passes are not live findings.
+- Auditor is LAN-only with no app login; live testing so far used the LAN target, not the public deployment; auto-confirm is uncalibrated; fixture passes are not live findings.
 - Open: 100-case live baseline, independent peer integration, `[number]` confirmed live findings.
-- Close on the repository and deployed-target links.
+- Close on the repository link and the submission index (`docs/submission/README.md`).
