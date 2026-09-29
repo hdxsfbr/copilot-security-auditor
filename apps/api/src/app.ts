@@ -25,7 +25,7 @@ export function createApp(repo: Repository) {
     try {
       await repo.pool.query('SELECT 1');
       const migrations = await repo.pool.query('SELECT count(*)::int AS count FROM schema_migrations');
-      if (migrations.rows[0].count !== 10) return res.status(503).json({ status: 'unavailable', database: 'migration_incomplete' });
+      if (migrations.rows[0].count !== 11) return res.status(503).json({ status: 'unavailable', database: 'migration_incomplete' });
       return res.json({ status: 'ok', database: 'ready', migrations: migrations.rows[0].count });
     } catch {
       return res.status(503).json({ status: 'unavailable', database: 'unavailable' });
@@ -92,6 +92,7 @@ export function createApp(repo: Repository) {
     return res.status(201).json(await repo.createCase(input));
   });
   app.get('/api/cases/drafts', async (_req, res) => res.json(await repo.drafts()));
+  app.get('/api/cases/archived', async (_req, res) => res.json(await repo.archivedCases()));
   app.post('/api/cases/drafts', async (req, res) => res.status(201).json(await repo.createDraft(caseDraftInput.parse(req.body))));
   app.put('/api/cases/drafts/:id', async (req, res) => {
     const result = await repo.updateDraft(z.uuid().parse(req.params.id), caseDraftInput.parse(req.body));

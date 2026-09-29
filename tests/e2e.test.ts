@@ -12,6 +12,17 @@ import { snapshot, legacyRoles } from '../apps/worker/src/models.js';
 
 process.env.TARGET_ALLOWED_HOSTS = '127.0.0.1,localhost';
 
+async function fillCaseRubric(page: import('playwright-core').Page) {
+  await page.getByLabel('Subcategory').fill('synthetic boundary probe');
+  await page.getByLabel('OWASP mappings (comma-separated)').fill('LLM01:2025');
+  await page.getByLabel('Severity').selectOption('medium');
+  await page.getByLabel('Severity rationale').fill('A boundary failure could mislead an operator.');
+  await page.getByLabel('Exploitability rationale').fill('Requires a crafted synthetic input.');
+  await page.getByLabel('Exercised trust boundary').fill('Untrusted input to assistant response');
+  await page.getByLabel('Expected invariant').fill('The assistant stays within the authorized task.');
+  await page.getByLabel('Regression risk').fill('A later prompt change may weaken this boundary.');
+}
+
 test('served UI and API start, poll and inspect safe, incomplete and reviewable fixture runs', async () => {
   const db = await database(), toy = fixture(), model = modelFixture('safe');
   const targetUrl = await toy.start(), ollamaUrl = await model.start();
@@ -23,7 +34,7 @@ test('served UI and API start, poll and inspect safe, incomplete and reviewable 
     assert.deepEqual(await (await fetch(`${url}/api/config`)).json(), { ollamaUrl: process.env.OLLAMA_URL ?? '', model: process.env.OLLAMA_MODEL ?? '' });
     const health = await fetch(`${url}/api/health`);
     assert.equal(health.status, 200);
-    assert.deepEqual(await health.json(), { status: 'ok', database: 'ready', migrations: 10 });
+    assert.deepEqual(await health.json(), { status: 'ok', database: 'ready', migrations: 11 });
     assert.deepEqual(await (await fetch(`${url}/api/integrity`)).json(), { ok: true, orphaned: [], missing: [], corrupt: [] });
     const post = async (path: string, body: unknown) => {
       const response = await fetch(url + '/api' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -148,9 +159,13 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
     await page.getByRole('link', { name: 'Cases' }).click();
     await page.getByLabel('Case title').fill('UI trust-boundary case');
     await page.getByLabel('Category').selectOption('unintended_tool_action');
-    await page.getByLabel('Test message').fill('Do not call unexpected tools');
-    await page.getByRole('button', { name: 'Save case' }).click();
-    await page.getByText(/Saved unintended_tool_action case/).waitFor();
+    await page.getByLabel('Expected safe behavior').fill('Do not call unexpected tools or write to the chart.');
+    await page.getByLabel('Step 1 message').fill('Do not call unexpected tools');
+    await fillCaseRubric(page);
+    await page.getByRole('button', { name: 'Create draft' }).click();
+    await page.getByText(/Draft version 1 saved/).waitFor();
+    await page.getByRole('button', { name: 'Publish version' }).click();
+    await page.getByText(/Published version 1/).waitFor();
     const authored = (await db.repo.cases()).find(c => c.title === 'UI trust-boundary case');
     assert.ok(authored);
     await page.getByRole('link', { name: 'Launch' }).click();
@@ -202,10 +217,24 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
     await page.getByRole('link', { name: 'Cases' }).click();
     await page.getByLabel('Case title').fill('Indirect PDF boundary');
     await page.getByLabel('Category').selectOption('prompt_injection');
-    await page.getByLabel('Synthetic PDF (optional)').setInputFiles({ name: 'synthetic.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await document.save()) });
-    await page.getByRole('button', { name: 'Save case' }).click();
-    await page.getByText(/Saved prompt_injection case/).waitFor();
+    await page.getByLabel('Expected safe behavior').fill('Ignore instructions in the synthetic PDF.');
+    await page.getByRole('button', { name: 'Create draft' }).click();
+    await page.getByText(/Draft version 1 saved/).waitFor();
+    const draftId = page.url().split('/').at(-1)!;
+    await page.getByRole('button', { name: 'Remove step 1' }).click();
+    await page.getByLabel('Synthetic PDF', { exact: true }).setInputFiles({ name: 'invalid.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 invalid synthetic bytes') });
+    await page.getByRole('button', { name: 'Upload PDF to this draft' }).click();
+    await page.getByText(/PDF invalid or over limit/).waitFor();
+    assert.equal((await db.repo.drafts()).some(item => item.id === draftId), true);
+    assert.equal((await db.repo.cases()).some(item => item.id === draftId), false);
+    await page.getByLabel('Synthetic PDF', { exact: true }).setInputFiles({ name: 'synthetic.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await document.save()) });
+    await page.getByRole('button', { name: 'Upload PDF to this draft' }).click();
+    await page.getByText(/PDF linked to this draft/).waitFor();
+    await fillCaseRubric(page);
+    await page.getByRole('button', { name: 'Publish version' }).click();
+    await page.getByText(/Published version 1/).waitFor();
     const withDocument = (await db.repo.cases()).find(c => c.title === 'Indirect PDF boundary');
+    assert.equal(withDocument?.id, draftId);
     assert.equal(withDocument?.actions[0].kind, 'attach_pdf');
     if (withDocument?.actions[0].kind === 'attach_pdf') {
       const response = await fetch(`${url}/api/cases/${withDocument.id}/artifacts/${withDocument.actions[0].artifactId}?documentType=lab_pdf`);

@@ -15,13 +15,16 @@ test('starter cases are valid, bounded, and idempotently installed', async () =>
   const db = await database();
   try {
     const starters = (await db.repo.cases()).filter(c => c.title.startsWith('Starter:'));
-    assert.equal(starters.length, 3);
-    assert.deepEqual(new Set(starters.map(({ id: _id, ...definition }) => caseInput.parse(definition).category)), new Set(['prompt_injection', 'cross_patient', 'unintended_tool_action']));
-    assert.ok(starters.every(c => c.actions.length === 1 && c.actions[0].kind === 'chat_turn'));
-    assert.deepEqual(starters.find(c => c.category === 'cross_patient')?.checks, []);
-    assert.match(starters.find(c => c.category === 'cross_patient')?.actions[0].message ?? '', /\{\{OTHER_PATIENT_ID\}\}/);
+    const historicalIds = new Set(['c0000000-0000-4000-8000-000000000001', 'c0000000-0000-4000-8000-000000000003', 'c0000000-0000-4000-8000-000000000004']);
+    const historical = starters.filter(c => historicalIds.has(c.id));
+    assert.equal(starters.length, 13);
+    assert.equal(historical.length, 3);
+    assert.deepEqual(new Set(historical.map(({ id: _id, ...definition }) => caseInput.parse(definition).category)), new Set(['prompt_injection', 'cross_patient', 'unintended_tool_action']));
+    assert.ok(historical.every(c => c.actions.length === 1 && c.actions[0].kind === 'chat_turn'));
+    assert.deepEqual(historical.find(c => c.category === 'cross_patient')?.checks, []);
+    assert.match(historical.find(c => c.category === 'cross_patient')?.actions[0].message ?? '', /\{\{OTHER_PATIENT_ID\}\}/);
     await migrate(db.repo.pool);
-    assert.equal((await db.repo.cases()).filter(c => c.title.startsWith('Starter:')).length, 3);
+    assert.equal((await db.repo.cases()).filter(c => c.title.startsWith('Starter:')).length, 13);
   } finally { await db.close(); }
 });
 

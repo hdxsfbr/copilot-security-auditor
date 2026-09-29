@@ -552,14 +552,28 @@
       ],
       "locks": [
         "web-cases",
-        "migrations"
+        "migrations",
+        "contracts",
+        "web-root",
+        "api-data"
       ],
       "files": [
         "apps/web/src/pages/Cases*",
         "apps/web/src/pages/CaseEditor*",
         "apps/web/src/components/cases/",
+        "apps/web/src/pages/Workspace.tsx",
+        "apps/web/src/pages/controller.ts",
+        "packages/contracts/src/index.ts",
+        "apps/api/src/app.ts",
+        "apps/api/src/repository.ts",
+        "db/migrate.ts",
         "db/migrations/",
-        "evals/seeds/"
+        "evals/seeds/",
+        "tests/ui-case-workspace.test.ts",
+        "tests/case-draft-authoring.test.ts",
+        "tests/integration.test.ts",
+        "tests/e2e.test.ts",
+        "tests/integrity-candidate.test.ts"
       ],
       "scope": "Author/edit draft sequences and multiple checks; retry PDFs in place; preview/publish/clone/archive cases. Version new starters around no advice, no unsolicited writes and chart-context isolation; include direct/indirect/multi-turn seeds without overwriting historical definitions.",
       "accept": [

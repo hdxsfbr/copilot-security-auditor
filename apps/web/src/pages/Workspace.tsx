@@ -30,11 +30,12 @@ const pageInfo: Record<string, { title: string; description: string }> = {
 export function Workspace() {
   const { path, navigate } = useRouterPath();
   const state = useWorkspaceController(navigate);
+  const caseRouteId = /^\/cases\/([^/]+)$/.exec(path)?.[1];
   const runRouteId = path === "/runs/new" ? undefined : /^\/runs\/([^/]+)$/.exec(path)?.[1];
   useEffect(() => {
     if (runRouteId && state.run?.id !== runRouteId) state.openRun(runRouteId, "loading", null, false);
   }, [runRouteId]);
-  const info = runRouteId ? { title: "Run evidence", description: "Inspect the selected run's current status and recorded events." } : pageInfo[path] ?? { title: "Page unavailable", description: "This workspace path is not available yet." };
+  const info = caseRouteId ? { title: "Case workspace", description: "Edit a draft or inspect the exact published version and its executions." } : runRouteId ? { title: "Run evidence", description: "Inspect the selected run's current status and recorded events." } : pageInfo[path] ?? { title: "Page unavailable", description: "This workspace path is not available yet." };
   return <WorkspaceContext.Provider value={state}>
     <AppShell path={path} navigate={navigate} title={info.title} description={info.description} runId={state.run?.id}>
       {state.notice && <div className="alert" role={state.noticeKind === "error" ? "alert" : "status"}>{state.notice}</div>}
@@ -42,7 +43,7 @@ export function Workspace() {
       {state.configError && <div className="alert" role="alert">Model defaults unavailable: {state.configError} <button type="button" onClick={() => void state.loadConfig()}>Retry model defaults</button></div>}
       <div hidden={path !== "/"} className="route-panel"><OverviewPage /></div>
       <div hidden={path !== "/targets"} className="route-panel"><TargetsPage /></div>
-      <div hidden={path !== "/cases"} className="route-panel"><CasesPage /></div>
+      <div hidden={path !== "/cases" && !caseRouteId} className="route-panel"><CasesPage selectedId={caseRouteId} active={path === "/cases" || !!caseRouteId} /></div>
       <div hidden={path !== "/runs/new"} className="route-panel launch-stack">
         <LegacyRunLauncher />
         <ErrorBoundary name="Model settings"><ModelDesk targetId={state.targetId} caseId={state.caseId} cases={state.cases}
@@ -54,7 +55,7 @@ export function Workspace() {
       <div hidden={path !== "/regressions"} className="route-panel"><RegressionsPage /></div>
       <div hidden={path !== "/coverage"} className="route-panel"><CoveragePage /></div>
       <div hidden={path !== "/schedules"} className="route-panel"><SchedulesPage /></div>
-      {!runRouteId && !pageInfo[path] && <div className="panel" role="status">This route has no operator task yet. Use the navigation to open an available page.</div>}
+      {!runRouteId && !caseRouteId && !pageInfo[path] && <div className="panel" role="status">This route has no operator task yet. Use the navigation to open an available page.</div>}
     </AppShell>
   </WorkspaceContext.Provider>;
 }

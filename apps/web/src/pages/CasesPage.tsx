@@ -1,144 +1,38 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { isRecordArray, requestJson } from "../api/client.js";
+import { isCaseRecord, type CaseRecord } from "../components/cases/model.js";
+import { RouteLink } from "../components/router.js";
+import { CaseEditor } from "./CaseEditor.js";
 import { useWorkspace } from "./context.js";
+import "../components/cases/style.css";
 
-export function CasesPage() {
-  const { testCase, setTestCase, pdf, setPdf, documentType, setDocumentType, submit, saveCase } = useWorkspace();
-  return (
-          <section className="panel">
-            <h2>
-              <span>02</span> Case definition
-            </h2>
-            <p className="hint">
-              Define a trust boundary, a scoped check and up to one synthetic
-              PDF. Cross-patient cases test whether the Co-Pilot stays within
-              the selected chart context.
-            </p>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void submit(saveCase);
-              }}
-            >
-              <label>
-                Case title
-                <input
-                  required
-                  value={testCase.title}
-                  onChange={(e) =>
-                    setTestCase({ ...testCase, title: e.target.value })
-                  }
-                />
-              </label>
-              <label>
-                Category
-                <select
-                  value={testCase.category}
-                  onChange={(e) =>
-                    setTestCase({ ...testCase, category: e.target.value })
-                  }
-                >
-                  <option value="prompt_injection">Prompt injection</option>
-                  <option value="cross_patient">Cross-patient access</option>
-                  <option value="unintended_tool_action">
-                    Unintended tool action
-                  </option>
-                </select>
-              </label>
-              <label>
-                Expected safe behavior
-                <textarea
-                  required
-                  value={testCase.expectedSafeBehavior}
-                  onChange={(e) =>
-                    setTestCase({
-                      ...testCase,
-                      expectedSafeBehavior: e.target.value,
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Test message
-                <textarea
-                  required
-                  maxLength={1000}
-                  value={testCase.message}
-                  onChange={(e) =>
-                    setTestCase({ ...testCase, message: e.target.value })
-                  }
-                />
-              </label>
-              <label>
-                Assigned user
-                <select
-                  value={testCase.user}
-                  onChange={(e) =>
-                    setTestCase({ ...testCase, user: e.target.value })
-                  }
-                >
-                  <option>A</option>
-                  <option>B</option>
-                </select>
-              </label>
-              <label>
-                Deterministic check
-                <select
-                  value={testCase.check}
-                  onChange={(e) =>
-                    setTestCase({ ...testCase, check: e.target.value })
-                  }
-                >
-                  <option value="none">Judge only</option>
-                  <option value="forbidden_patient_disclosure">
-                    Other patient's external ID disclosed
-                  </option>
-                  <option value="required_source_citation">
-                    Source citation required
-                  </option>
-                  <option value="forbidden_tool_effect">
-                    Forbidden visible effect
-                  </option>
-                </select>
-              </label>
-              {testCase.check === "forbidden_tool_effect" && (
-                <label>
-                  Visible forbidden effect
-                  <input
-                    required
-                    value={testCase.effect}
-                    onChange={(e) =>
-                      setTestCase({ ...testCase, effect: e.target.value })
-                    }
-                  />
-                </label>
-              )}
-              <label>
-                Synthetic PDF (optional)
-                <input
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  onChange={(e) => setPdf(e.target.files?.[0] ?? null)}
-                />
-              </label>
-              {pdf && (
-                <label>
-                  Document workflow
-                  <select
-                    value={documentType}
-                    onChange={(e) =>
-                      setDocumentType(e.target.value as typeof documentType)
-                    }
-                  >
-                    <option value="lab_pdf">Lab PDF (20 MB / 20 pages)</option>
-                    <option value="intake_form">
-                      Intake form (10 MB / 10 pages)
-                    </option>
-                  </select>
-                </label>
-              )}
-              <button>Save case</button>
-            </form>
-          </section>
-
-  );
+export function CasesPage({ selectedId, active }: { selectedId?: string; active: boolean }) {
+  const { cases, refresh, navigate } = useWorkspace();
+  const [drafts, setDrafts] = useState<CaseRecord[]>([]);
+  const [archived, setArchived] = useState<CaseRecord[]>([]);
+  const [draftError, setDraftError] = useState("");
+  const [archiveError, setArchiveError] = useState("");
+  const loadDrafts = async () => {
+    try { setDrafts(await requestJson("/cases/drafts", isRecordArray(isCaseRecord))); setDraftError(""); }
+    catch (cause) { setDraftError(cause instanceof Error ? cause.message : "Drafts unavailable"); }
+  };
+  const loadArchived = async () => {
+    try { setArchived(await requestJson("/cases/archived", isRecordArray(isCaseRecord))); setArchiveError(""); }
+    catch (cause) { setArchiveError(cause instanceof Error ? cause.message : "Archived cases unavailable"); }
+  };
+  useEffect(() => { void loadDrafts(); void loadArchived(); }, []);
+  const onMutate = async () => { await Promise.all([loadDrafts(), loadArchived(), refresh()]); };
+  return <div className="case-workspace">
+    <aside className="panel case-catalog" aria-label="Case catalog">
+      <div className="eyebrow">REPEATABLE TEST DEFINITIONS</div><h2>Case library</h2>
+      <p className="hint">Only published versions can be selected for a run. Drafts and archived versions stay in their family history.</p>
+      <RouteLink className="task-link" href="/cases" navigate={navigate}>Create new draft</RouteLink>
+      {draftError && <p role="alert">Drafts could not refresh: {draftError} <button type="button" onClick={() => void loadDrafts()}>Retry drafts</button></p>}
+      {archiveError && <p role="alert">Archived cases could not refresh: {archiveError} <button type="button" onClick={() => void loadArchived()}>Retry archived cases</button></p>}
+      <h3>Drafts</h3>{drafts.length ? <ul>{drafts.map(draft => <li key={draft.id}><RouteLink href={`/cases/${draft.id}`} navigate={navigate}>{draft.title}</RouteLink><small>Version {draft.version} · not runnable</small></li>)}</ul> : <p className="hint">No saved drafts.</p>}
+      <h3>Published</h3>{cases.length ? <ul>{cases.map(item => <li key={item.id}><RouteLink href={`/cases/${item.id}`} navigate={navigate}>{item.title}</RouteLink><small>{item.category?.replaceAll("_", " ") ?? "category unknown"}</small></li>)}</ul> : <p className="hint">No published cases.</p>}
+      <h3>Archived</h3>{archived.length ? <ul>{archived.map(item => <li key={item.id}><RouteLink href={`/cases/${item.id}`} navigate={navigate}>{item.title}</RouteLink><small>Version {item.version} · historical only</small></li>)}</ul> : <p className="hint">No archived versions.</p>}
+    </aside>
+    <CaseEditor id={selectedId} active={active} onMutate={onMutate} />
+  </div>;
 }
