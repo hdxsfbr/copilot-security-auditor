@@ -1,0 +1,4 @@
+This is a new greenfield project. The PRD and some other related documents are available in the documents folder. You should start by reading that.
+You are not allowed to poke around at other projects in the same parent folder as this project, so nothing under code other than this project folder.
+I want you to design with in mind that we're going to be using the OpenRouter API keys. We also have some capabilities to run local models on Ollama and I believe we also have Unslot Studio with some models that we could run locally as well.
+Our solution should support both OpenRouter API keys and local models, and if possible also running Codex and Claude in headless mode (so we can also take advantage of our subscription credits that are not billed towards Codex and Claude's API keys) the PRD is the most important document and that describes what this project is about
