@@ -4,7 +4,8 @@ import { AgentContractError, parseAgentMessage, redTeamToJudge, type AgentContex
 import { boundedLimit, DEADLINE_MS, discardResponse, readJsonBody, withinDeadline } from './deadlines.js';
 
 export type Price = { prompt: string; completion: string; request: string; contextLength: number };
-export type ModelUsage = { inputTokens?: number; outputTokens?: number; latencyMs: number; chargeNanos: string | null };
+// generationId is the provider's own reference for a paid response (OpenRouter `id`); local inference has none.
+export type ModelUsage = { inputTokens?: number; outputTokens?: number; latencyMs: number; chargeNanos: string | null; generationId?: string };
 export const roles = ['orchestrator', 'redTeam', 'judge', 'documentation'] as const;
 export type Role = typeof roles[number];
 export type ActiveRoles = Partial<ModelRoles> & Pick<ModelRoles, 'judge'>;
@@ -165,7 +166,9 @@ export async function callRoleJson(assignment: ModelAssignment, messages: { role
   const usage = paid ? record.usage as Record<string, unknown> | undefined : record;
   const validToken = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
   const charge = paid ? usage?.cost : null;
-  return { result, usage: { inputTokens: validToken(paid ? usage?.prompt_tokens : usage?.prompt_eval_count), outputTokens: validToken(paid ? usage?.completion_tokens : usage?.eval_count), latencyMs: Date.now() - started, chargeNanos: paid && (typeof charge === 'number' || typeof charge === 'string') ? nanos(charge).toString() : null } };
+  // Kept only when it is a bounded printable token; anything else is treated as absent, never truncated.
+  const generationId = paid && typeof record.id === 'string' && /^[\x21-\x7e]{1,200}$/.test(record.id) ? record.id : undefined;
+  return { result, usage: { ...(generationId ? { generationId } : {}), inputTokens: validToken(paid ? usage?.prompt_tokens : usage?.prompt_eval_count), outputTokens: validToken(paid ? usage?.completion_tokens : usage?.eval_count), latencyMs: Date.now() - started, chargeNanos: paid && (typeof charge === 'number' || typeof charge === 'string') ? nanos(charge).toString() : null } };
 }
 export async function callJudge(assignment: ModelAssignment, input: AgentJudgePacket | ReturnType<typeof packet>, ollamaUrl: string | undefined, transport: typeof fetch = fetch, price?: Price, options: RoleCallOptions = {}): Promise<{ result: Verdict; usage: ModelUsage }> {
   const call = await callRoleJson(assignment, judgeMessages(input), ollamaUrl, transport, price, { ...options, role: 'judge' });

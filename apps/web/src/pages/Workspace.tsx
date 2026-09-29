@@ -2,6 +2,7 @@ import React, { useEffect } from "react";
 import { ErrorBoundary } from "../api/ErrorBoundary.js";
 import { AppShell } from "../components/AppShell.js";
 import { RunActivity } from "../components/RunActivity.js";
+import { SpendPanel } from "../components/spend/SpendPanel.js";
 import { useRouterPath } from "../components/router.js";
 import { CasesPage } from "./CasesPage.js";
 import { WorkspaceContext } from "./context.js";
@@ -53,6 +54,7 @@ export function Workspace() {
       {state.refreshError && <div className="alert" role="alert">Saved targets, cases, and evidence could not be refreshed: {state.refreshError} <button type="button" onClick={() => void state.refresh()}>Retry data refresh</button></div>}
       {state.configError && <div className="alert" role="alert">Model defaults unavailable: {state.configError} <button type="button" onClick={() => void state.loadConfig()}>Retry model defaults</button></div>}
       <div hidden={path !== "/"} className="route-panel"><OverviewPage active={path === "/"} /></div>
+      {path === "/" && <div className="route-panel"><ErrorBoundary name="Spend reconciliation"><SpendPanel /></ErrorBoundary></div>}
       <div hidden={path !== "/targets"} className="route-panel"><TargetsPage /></div>
       <div hidden={path !== "/cases" && !caseRouteId} className="route-panel"><CasesPage selectedId={caseRouteId} active={path === "/cases" || !!caseRouteId} /></div>
       <div hidden={path !== "/runs/new"} className="route-panel launch-stack">

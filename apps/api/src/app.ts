@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { targetInput, targetUpdateInput, caseInput, caseDraftInput, startInput, adaptiveStart, runDefinition, runDefinitionInput, runDefinitionEdit, runDefinitionRef, scheduleInput, scheduleDefinitionRef, scheduleState, runHistoryQuery, scheduleOccurrenceQuery, type RunDefinition } from '../../../packages/contracts/src/index.js';
 import { coverageQuery } from '../../../packages/contracts/src/coverage.js';
+import { reconcileInput, unresolvedSpendQuery, usageQuery } from '../../../packages/contracts/src/spend.js';
 import { DefinitionRevisionConflict, InvalidRunCursor, Repository, type CandidateIntegrity, type RunDefinitionReference } from './repository.js';
 import { auditArtifactVolume, storePdf, loadPdf } from './artifacts.js';
 import { operationsHealth } from './operations.js';
@@ -15,6 +16,7 @@ import { migrationNames } from '../../../db/migrate.js';
 import { findingReview } from '../../../packages/contracts/src/report.js';
 import { registerFindingRoutes } from './finding-routes.js';
 import { registerRegressionRoutes } from './regression-routes.js';
+import { totalsOf } from './spend.js';
 
 export function createApp(repo: Repository) {
   const app = express();
@@ -259,7 +261,23 @@ export function createApp(repo: Repository) {
     const id = z.uuid().parse(req.params.id);
     return await repo.run(id) ? res.set('Cache-Control', 'no-store').json(await repo.reports.accounting(id)) : res.status(404).json({ v: 1, code: 'not_found', message: 'Run not found' });
   });
-  app.get('/api/runs/:id/usage', async (req, res) => res.json(await repo.usage(z.uuid().parse(req.params.id))));
+  // The default response stays the call array. `include=totals` wraps it with separate provider-reported,
+  // operator-reconciled, reserved and unresolved totals computed from the same rows.
+  app.get('/api/runs/:id/usage', async (req, res) => {
+    const calls = await repo.usage(z.uuid().parse(req.params.id));
+    return res.json(usageQuery.parse(req.query).include === 'totals' ? { v: 1, calls, totals: totalsOf(calls) } : calls);
+  });
+  app.get('/api/spend/unresolved', async (req, res) => res.set('Cache-Control', 'no-store').json(await repo.spend.unresolved(unresolvedSpendQuery.parse(req.query).limit)));
+  app.post('/api/spend/calls/:id/reconcile', async (req, res) => {
+    const result = await repo.spend.reconcile(z.uuid().parse(req.params.id), reconcileInput.parse(req.body));
+    if (result.status === 'not_found') return res.status(404).json({ v: 1, code: 'not_found', message: 'Model call not found' });
+    if (result.status === 'invalid') return res.status(400).json({ v: 1, code: 'invalid', reason: result.reason, maxChargeNanos: result.maxChargeNanos, message: result.reason === 'charge_out_of_bounds' ? 'Charge exceeds the reconciliation bound for this call' : 'Charge exceeds the funds transferred to this report job' });
+    if (result.status === 'conflict') return res.status(409).json({ v: 1, code: 'conflict', reason: result.reason, message: {
+      local_inference_unpriced: 'Local inference has no price and cannot be reconciled', not_unresolved: 'Only an unresolved paid call can be reconciled',
+      already_reconciled: 'This call was already reconciled', idempotency_conflict: 'Idempotency key was already used for a different request' }[result.reason] });
+    const { status, ...body } = result;
+    return res.status(status === 'ok' ? 201 : 200).set('Cache-Control', 'no-store').json({ v: 1, replayed: status === 'replayed', ...body });
+  });
   app.get('/api/candidates', async (_req, res) => res.json(await repo.candidates()));
   app.get('/api/findings', async (_req, res) => res.json(await repo.findings()));
   app.get('/api/findings/:id/integrity', async (req, res) => {

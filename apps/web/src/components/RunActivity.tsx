@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { isRecord, requestJson } from "../api/client.js";
 import { useWorkspace } from "../pages/context.js";
 
-type Usage = { id: string; role: string; provider: "ollama" | "openrouter"; model: string; status: string; inputTokens: number | null; outputTokens: number | null; latencyMs: number | null; chargeNanos: string | null; reservedNanos: string };
+type Usage = { id: string; role: string; provider: "ollama" | "openrouter"; model: string; status: string; inputTokens: number | null; outputTokens: number | null; latencyMs: number | null; chargeNanos: string | null; reservedNanos: string; reconciled?: boolean };
 type AdaptiveCase = { id: string; ordinal: number; category: string; state: string; executed: boolean; reason?: string | null };
 const isUsage = (value: unknown): value is Usage => isRecord(value) && typeof value.id === "string" && typeof value.role === "string" && (value.provider === "ollama" || value.provider === "openrouter") && typeof value.model === "string" && typeof value.status === "string" && (value.inputTokens === null || typeof value.inputTokens === "number") && (value.outputTokens === null || typeof value.outputTokens === "number") && (value.latencyMs === null || typeof value.latencyMs === "number") && (value.chargeNanos === null || typeof value.chargeNanos === "string") && typeof value.reservedNanos === "string";
 const isUsageList = (value: unknown): value is Usage[] => Array.isArray(value) && value.every(isUsage);
@@ -71,7 +71,7 @@ export function RunActivity() {
     <div className="usage-ledger"><h2>Measured model usage</h2>{run.status === "finished" && <button type="button" onClick={() => { void loadUsage(); void loadProgress(); }}>Refresh usage and progress</button>}
       {usageError && <p role="alert">{usageError} <button type="button" onClick={() => void loadUsage()}>Retry usage</button></p>}
       <p>Paid settled: {dollars(String(settled))} · Ollama: no dollar price assigned</p>
-      {usage.length ? usage.map(call => <p key={call.id}>{call.role}: {call.provider} / {call.model} · {call.status} · {call.inputTokens ?? "?"} in / {call.outputTokens ?? "?"} out · {call.latencyMs ?? "?"} ms · {call.provider === "ollama" ? "local, unpriced" : call.status === "settled" ? dollars(call.chargeNanos!) : `reserved ${dollars(call.reservedNanos)}; charge unresolved`}</p>) : <p>No model calls recorded yet.</p>}
+      {usage.length ? usage.map(call => <p key={call.id}>{call.role}: {call.provider} / {call.model} · {call.status} · {call.inputTokens ?? "?"} in / {call.outputTokens ?? "?"} out · {call.latencyMs ?? "?"} ms · {call.provider === "ollama" ? "local, unpriced" : call.status === "settled" ? `${dollars(call.chargeNanos!)}${call.reconciled ? " (operator-attested)" : ""}` : `reserved ${dollars(call.reservedNanos)}; charge unresolved`}</p>) : <p>No model calls recorded yet.</p>}
     </div>
   </section>;
 }
