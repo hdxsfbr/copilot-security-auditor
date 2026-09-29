@@ -1,6 +1,6 @@
 import { randomUUID, createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import pg from 'pg';
-import type { CaseInput, EvidenceEvent, Outcome, StartInput, TargetInput } from '../../../packages/contracts/src/index.js';
+import type { CaseInput, EvidenceEvent, Outcome, StartInput, TargetInput, TargetUpdateInput } from '../../../packages/contracts/src/index.js';
 
 function key() {
   const value = process.env.CREDENTIAL_KEY;
@@ -33,15 +33,27 @@ export class Repository {
       return { id, name: input.name, baseUrl: input.baseUrl };
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
-  async updateTarget(id: string, input: TargetInput): Promise<{ id: string; name: string; baseUrl: string } | { active_run_id: string } | null> {
+  async targetForEdit(id: string) {
+    const row = (await this.pool.query('SELECT t.id,t.name,t.base_url AS "baseUrl",a.ciphertext AS user_a,b.ciphertext AS user_b FROM targets t JOIN credentials a ON a.id=t.user_a_credential JOIN credentials b ON b.id=t.user_b_credential WHERE t.id=$1', [id])).rows[0];
+    if (!row) return null;
+    const a = decrypt<{ username: string; pubpid?: string }>(row.user_a);
+    const b = decrypt<{ username: string; pubpid?: string }>(row.user_b);
+    return { id: row.id, name: row.name, baseUrl: row.baseUrl, userA: { username: a.username, pubpid: a.pubpid ?? '' }, userB: { username: b.username, pubpid: b.pubpid ?? '' } };
+  }
+  async updateTarget(id: string, input: TargetUpdateInput): Promise<{ id: string; name: string; baseUrl: string } | { active_run_id: string } | null> {
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
-      const target = (await db.query('SELECT active_run_id FROM targets WHERE id=$1 FOR UPDATE', [id])).rows[0];
+      const target = (await db.query('SELECT active_run_id,user_a_credential,user_b_credential FROM targets WHERE id=$1 FOR UPDATE', [id])).rows[0];
       if (!target) { await db.query('ROLLBACK'); return null; }
       if (target.active_run_id) { await db.query('ROLLBACK'); return { active_run_id: target.active_run_id }; }
+      const current = await db.query('SELECT id,ciphertext FROM credentials WHERE id=$1 OR id=$2', [target.user_a_credential, target.user_b_credential]);
+      const passwords = new Map<string, string>(current.rows.map(row => [row.id, decrypt<{ password: string }>(row.ciphertext).password]));
+      const userA = { ...input.userA, password: input.userA.password ?? passwords.get(target.user_a_credential) };
+      const userB = { ...input.userB, password: input.userB.password ?? passwords.get(target.user_b_credential) };
+      if (!userA.password || !userB.password) throw new Error('Missing stored target credential');
       const a = randomUUID(), b = randomUUID();
-      await db.query('INSERT INTO credentials(id,ciphertext) VALUES ($1,$2),($3,$4)', [a, encrypt(input.userA), b, encrypt(input.userB)]);
+      await db.query('INSERT INTO credentials(id,ciphertext) VALUES ($1,$2),($3,$4)', [a, encrypt(userA), b, encrypt(userB)]);
       await db.query('UPDATE targets SET name=$2,base_url=$3,user_a_credential=$4,user_b_credential=$5 WHERE id=$1', [id, input.name, input.baseUrl, a, b]);
       await db.query('COMMIT');
       return { id, name: input.name, baseUrl: input.baseUrl };

@@ -38,6 +38,7 @@ test('target updates preserve historical credentials and reject changes while re
   try {
     const { repo } = db;
     const { input, target } = await seed(repo, 'http://example.test/', 'http://ollama.test/');
+    assert.deepEqual(await repo.targetForEdit(target.id), { id: target.id, name: 'Synthetic target', baseUrl: 'http://example.test/', userA: { username: users.userA.username, pubpid: users.userA.pubpid }, userB: { username: users.userB.username, pubpid: users.userB.pubpid } });
     const previous = (await repo.pool.query('SELECT user_a_credential FROM targets WHERE id=$1', [target.id])).rows[0].user_a_credential;
     const queued = await repo.start(input);
     assert.ok(queued && 'id' in queued);
@@ -54,5 +55,11 @@ test('target updates preserve historical credentials and reject changes while re
     assert.deepEqual(await repo.credential(current), replacement.userA);
     assert.equal((await repo.pool.query('SELECT target_snapshot FROM runs WHERE id=$1', [queued.id])).rows[0].target_snapshot.userARef, previous);
     assert.equal(JSON.stringify(await repo.targets()).includes(replacement.userA.password), false);
+    const noPassword = { ...replacement, name: 'Retained passwords', userA: { username: 'carol-renamed', pubpid: 'SYN-101' }, userB: { username: 'dan-renamed', pubpid: 'SYN-201' } };
+    assert.deepEqual(await repo.updateTarget(target.id, noPassword), { id: target.id, name: noPassword.name, baseUrl: noPassword.baseUrl });
+    const refs = (await repo.pool.query('SELECT user_a_credential,user_b_credential FROM targets WHERE id=$1', [target.id])).rows[0];
+    assert.deepEqual(await repo.credential(refs.user_a_credential), { ...noPassword.userA, password: replacement.userA.password });
+    assert.deepEqual(await repo.credential(refs.user_b_credential), { ...noPassword.userB, password: replacement.userB.password });
+    assert.deepEqual((await repo.targetForEdit(target.id))?.userA, noPassword.userA);
   } finally { await db.close(); }
 });

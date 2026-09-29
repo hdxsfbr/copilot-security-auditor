@@ -20,10 +20,18 @@ test('served UI and API start, poll and inspect safe, incomplete and reviewable 
     };
     const target = (await post('/targets', { name: 'Fixture', baseUrl: targetUrl, ...users })).data;
     assert.equal(JSON.stringify(target).includes(users.userA.password), false);
+    const editResponse = await fetch(`${url}/api/targets/${target.id}/edit`);
+    assert.equal(editResponse.status, 200);
+    assert.deepEqual(await editResponse.json(), { id: target.id, name: 'Fixture', baseUrl: targetUrl, userA: { username: users.userA.username, pubpid: users.userA.pubpid }, userB: { username: users.userB.username, pubpid: users.userB.pubpid } });
     const updated = await fetch(`${url}/api/targets/${target.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Renamed fixture', baseUrl: targetUrl, ...users }) });
     assert.equal(updated.status, 200);
     assert.equal((await updated.json()).id, target.id);
     assert.equal((await (await fetch(`${url}/api/targets`)).json()).length, 1);
+    const retained = await fetch(`${url}/api/targets/${target.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Retained fixture', baseUrl: targetUrl, userA: { username: users.userA.username, pubpid: users.userA.pubpid }, userB: { username: users.userB.username, pubpid: users.userB.pubpid } }) });
+    assert.equal(retained.status, 200);
+    assert.equal(JSON.stringify(await retained.json()).includes(users.userA.password), false);
+    const invalid = await fetch(`${url}/api/targets/${target.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Invalid', baseUrl: targetUrl, userA: { ...users.userA, password: '' }, userB: users.userB }) });
+    assert.equal(invalid.status, 400);
     const selected = (await post('/cases', testCase)).data;
     const input = { targetId: target.id, caseId: selected.id, model: 'fixture', ollamaUrl };
     const first = await post('/runs', input); assert.equal(first.status, 202);

@@ -2,7 +2,7 @@ import express from 'express';
 import { z, ZodError } from 'zod';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { targetInput, caseInput, startInput } from '../../../packages/contracts/src/index.js';
+import { targetInput, targetUpdateInput, caseInput, startInput } from '../../../packages/contracts/src/index.js';
 import { Repository } from './repository.js';
 
 export function createApp(repo: Repository) {
@@ -13,8 +13,12 @@ export function createApp(repo: Repository) {
   app.get('/api/config', (_req, res) => res.json({ ollamaUrl: process.env.OLLAMA_URL ?? '', model: process.env.OLLAMA_MODEL ?? '' }));
   app.get('/api/targets', async (_req, res) => res.json(await repo.targets()));
   app.post('/api/targets', async (req, res) => res.status(201).json(await repo.target(targetInput.parse(req.body))));
+  app.get('/api/targets/:id/edit', async (req, res) => {
+    const target = await repo.targetForEdit(z.uuid().parse(req.params.id));
+    return target ? res.set('Cache-Control', 'no-store').json(target) : res.status(404).json({ v: 1, code: 'not_found', message: 'Target not found' });
+  });
   app.put('/api/targets/:id', async (req, res) => {
-    const result = await repo.updateTarget(z.uuid().parse(req.params.id), targetInput.parse(req.body));
+    const result = await repo.updateTarget(z.uuid().parse(req.params.id), targetUpdateInput.parse(req.body));
     if (!result) return res.status(404).json({ v: 1, code: 'not_found', message: 'Target not found' });
     if ('active_run_id' in result) return res.status(409).json({ v: 1, code: 'conflict', message: 'Target already reserved', active_run_id: result.active_run_id });
     return res.json(result);
