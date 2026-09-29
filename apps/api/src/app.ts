@@ -2,7 +2,7 @@ import express from 'express';
 import { z, ZodError } from 'zod';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { targetInput, targetUpdateInput, caseInput, startInput, adaptiveStart, scheduleInput, scheduleState } from '../../../packages/contracts/src/index.js';
+import { targetInput, targetUpdateInput, caseInput, caseDraftInput, startInput, adaptiveStart, scheduleInput, scheduleState } from '../../../packages/contracts/src/index.js';
 import { Repository, type CandidateIntegrity } from './repository.js';
 import { auditArtifactVolume, storePdf, loadPdf } from './artifacts.js';
 import { catalog, installedOllama, legacyRoles, snapshot } from '../../worker/src/models.js';
@@ -25,7 +25,7 @@ export function createApp(repo: Repository) {
     try {
       await repo.pool.query('SELECT 1');
       const migrations = await repo.pool.query('SELECT count(*)::int AS count FROM schema_migrations');
-      if (migrations.rows[0].count !== 9) return res.status(503).json({ status: 'unavailable', database: 'migration_incomplete' });
+      if (migrations.rows[0].count !== 10) return res.status(503).json({ status: 'unavailable', database: 'migration_incomplete' });
       return res.json({ status: 'ok', database: 'ready', migrations: migrations.rows[0].count });
     } catch {
       return res.status(503).json({ status: 'unavailable', database: 'unavailable' });
@@ -86,7 +86,44 @@ export function createApp(repo: Repository) {
     return res.json(result);
   });
   app.get('/api/cases', async (_req, res) => res.json(await repo.cases()));
-  app.post('/api/cases', async (req, res) => res.status(201).json(await repo.createCase(caseInput.parse(req.body))));
+  app.post('/api/cases', async (req, res) => {
+    const input = caseInput.parse(req.body);
+    if (input.actions.some(action => action.kind === 'attach_pdf')) return res.status(400).json({ v: 1, code: 'invalid', message: 'Upload PDFs to a draft before publishing' });
+    return res.status(201).json(await repo.createCase(input));
+  });
+  app.get('/api/cases/drafts', async (_req, res) => res.json(await repo.drafts()));
+  app.post('/api/cases/drafts', async (req, res) => res.status(201).json(await repo.createDraft(caseDraftInput.parse(req.body))));
+  app.put('/api/cases/drafts/:id', async (req, res) => {
+    const result = await repo.updateDraft(z.uuid().parse(req.params.id), caseDraftInput.parse(req.body));
+    return result ? res.json(result) : res.status(409).json({ v: 1, code: 'conflict', message: 'Draft unavailable or already published' });
+  });
+  app.post('/api/cases/drafts/:id/publish', async (req, res) => {
+    const result = await repo.publishDraft(z.uuid().parse(req.params.id));
+    return !result ? res.status(409).json({ v: 1, code: 'conflict', message: 'Draft unavailable or already published' }) :
+      'invalid' in result ? res.status(409).json({ v: 1, code: 'conflict', reason: result.invalid, ...result }) : res.json(result);
+  });
+  app.get('/api/cases/:id', async (req, res) => {
+    const result = await repo.caseRecord(z.uuid().parse(req.params.id));
+    return result ? res.json(result) : res.status(404).json({ v: 1, code: 'not_found', message: 'Case not found' });
+  });
+  app.get('/api/cases/:id/versions', async (req, res) => {
+    const versions = await repo.caseVersions(z.uuid().parse(req.params.id));
+    return versions ? res.json(versions) : res.status(404).json({ v: 1, code: 'not_found', message: 'Case not found' });
+  });
+  app.get('/api/cases/:id/executions', async (req, res) => {
+    const id = z.uuid().parse(req.params.id);
+    if (!await repo.caseRecord(id)) return res.status(404).json({ v: 1, code: 'not_found', message: 'Case not found' });
+    return res.json(await repo.caseExecutions(id));
+  });
+  app.post('/api/cases/:id/clone', async (req, res) => {
+    const result = await repo.cloneCase(z.uuid().parse(req.params.id));
+    return !result ? res.status(404).json({ v: 1, code: 'not_found', message: 'Published case not found' }) :
+      'copyFailed' in result ? res.status(409).json({ v: 1, code: 'conflict', reason: 'artifact_copy_failed', draftId: result.id, message: 'Draft created; copy PDF again and publish when complete' }) : res.status(201).json(result);
+  });
+  app.post('/api/cases/:id/archive', async (req, res) => {
+    const result = await repo.archiveCase(z.uuid().parse(req.params.id));
+    return result ? res.json(result) : res.status(409).json({ v: 1, code: 'conflict', message: 'Case unavailable or already archived' });
+  });
   app.put('/api/cases/:id', async (req, res) => {
     const result = await repo.updateCase(z.uuid().parse(req.params.id), caseInput.parse(req.body));
     return !result ? res.status(404).json({ message: 'Case not found' }) : 'conflict' in result ? res.status(409).json({ message: 'Case already used; create a new version' }) : 'invalid' in result ? res.status(400).json({ message: 'Artifact not linked to case' }) : res.json(result);
@@ -94,7 +131,7 @@ export function createApp(repo: Repository) {
   app.post('/api/cases/:id/artifacts', express.raw({ type: 'application/pdf', limit: '21mb' }), async (req, res) => {
     const id = z.uuid().parse(req.params.id);
     const type = z.enum(['lab_pdf', 'intake_form']).parse(req.query.documentType);
-    if (!(await repo.cases()).some(c => c.id === id)) return res.status(404).json({ v: 1, code: 'not_found', message: 'Case not found' });
+    if (!(await repo.canUploadArtifact(id))) return res.status(409).json({ v: 1, code: 'conflict', message: 'Case unavailable or published version is immutable' });
     if (!Buffer.isBuffer(req.body)) return res.status(400).json({ v: 1, code: 'invalid', message: 'PDF required' });
     try { return res.status(201).json(await storePdf(repo, id, type, req.body)); }
     catch { return res.status(400).json({ v: 1, code: 'invalid', message: 'PDF invalid or over limit' }); }
