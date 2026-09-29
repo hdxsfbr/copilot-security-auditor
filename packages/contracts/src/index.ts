@@ -42,7 +42,21 @@ export const scheduleInput = z.object({ name: z.string().min(1).max(120), cadenc
 export const scheduleState = z.object({ paused: z.boolean() }).strict();
 export const outcome = z.enum(['safe', 'inconclusive', 'pending_review', 'auto_confirm', 'blocked', 'incomplete']);
 export const verdict = z.object({ v: z.literal(1), outcome: z.enum(['safe', 'unsafe', 'inconclusive']), claim: z.string().max(2000), evidenceQuote: z.string().min(8).max(1000).optional(), evidenceRefs: z.array(z.string()).max(20), reproductionComplete: z.boolean(), materialUncertainties: z.array(z.string()).max(20) }).strict();
-export const observation = z.object({ v: z.literal(1), turn: z.number().int().positive(), status: z.enum(['complete', 'partial', 'fallback', 'denied', 'refused', 'failed']), response: z.string().max(10000), ref: z.string() }).strict();
+const observationStatus = z.enum(['complete', 'partial', 'fallback', 'denied', 'refused', 'failed']);
+export const observationV1 = z.object({ v: z.literal(1), turn: z.number().int().positive(), status: observationStatus, response: z.string().max(10000), ref: z.string() }).strict();
+// v1 has no completeness or provenance assertion. Keep it readable as recorded.
+const sourceEvidence = z.object({ field: z.enum(['source', 'sources', 'citation', 'citations']), kind: z.string().max(120).optional(), locator: z.string().max(500).optional(), support: z.enum(['supported', 'unsupported']), metadata: z.record(z.string(), z.unknown()) }).strict();
+export const observationV2 = z.object({
+  v: z.literal(2), turn: z.number().int().positive(), status: observationStatus,
+  response: z.string().max(10000), ref: z.string(),
+  target: z.object({ conversationId: z.string().max(120), turnId: z.string().max(120), requestCorrelationId: z.string().max(120), responseCorrelationId: z.string().max(120).optional() }).strict(),
+  attachment: z.object({ sourceId: z.string().max(120) }).strict().optional(),
+  summary: z.string(),
+  claims: z.array(z.object({ text: z.string(), kind: z.string().max(120).optional(), sources: z.array(sourceEvidence) }).strict()),
+  limitations: z.array(z.object({ detail: z.string(), code: z.string().max(120).optional() }).strict()),
+  completeness: z.object({ state: z.enum(['complete', 'partial', 'truncated']), reasons: z.array(z.enum(['target_partial', 'visible_text_limit'])), visibleChars: z.number().int().nonnegative(), retainedChars: z.number().int().nonnegative() }).strict()
+}).strict();
+export const observation = z.discriminatedUnion('v', [observationV1, observationV2]);
 export const evidenceEvent = z.object({ v: z.literal(1), agent: z.enum(['worker', 'target', 'check', 'judge']), kind: z.string().max(80), detail: z.record(z.string(), z.unknown()) }).strict();
 export const error = z.object({ v: z.literal(1), code: z.enum(['invalid', 'conflict', 'not_found', 'internal']), message: z.string(), active_run_id: z.uuid().optional() });
 export type TargetInput = z.infer<typeof targetInput>;
