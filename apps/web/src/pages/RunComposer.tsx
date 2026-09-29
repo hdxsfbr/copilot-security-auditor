@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ApiResponseError, requestJson } from '../api/client.js';
 import { PreflightSummary } from '../components/models/PreflightSummary.js';
+import { ReportPolicyFields } from '../components/models/ReportPolicyFields.js';
 import { RoleAssignments } from '../components/models/RoleAssignments.js';
 import { activeRoles, allRoles, buildRun, draftFromDefinition, draftKey, isCatalog, isDefinition, isPreflight, isStarted, isSummaryList, launchBlock, newDraft, seedCategory,
-  type Assignment, type Catalog, type Definition, type DefinitionSummary, type Draft, type Preflight, type Role } from '../components/models/definitions.js';
+  type Assignment, type Catalog, type Definition, type DefinitionSummary, type Draft, type Preflight, type ReportDraft, type Role } from '../components/models/definitions.js';
 import { RouteLink } from '../components/router.js';
 import { useWorkspace } from './context.js';
 
@@ -34,7 +35,7 @@ export function RunComposer({ active }: { active: boolean }) {
   const key = keyOf(draft), savedKey = saved ? draftKey(draftFromDefinition(saved), cases, saved.name) : '';
   const current = checked && key && checked.key === key ? checked.result : null;
   const blocked = current ? launchBlock(current) : null, clean = !!saved && savedKey === key;
-  const roles = activeRoles(draft.kind), usesLocal = roles.some(role => draft.roles[role].provider === 'ollama'), usesPaid = roles.some(role => draft.roles[role].provider === 'openrouter');
+  const roles = activeRoles(draft.kind), usesLocal = roles.some(role => draft.roles[role].provider === 'ollama') || draft.report.enabled && draft.report.provider === 'ollama', usesPaid = roles.some(role => draft.roles[role].provider === 'openrouter') || draft.report.enabled && draft.report.provider === 'openrouter';
   const categories = [...new Set(cases.filter(item => draft.caseIds.includes(item.id)).map(seedCategory))];
   const plan = !saved ? 'Start saves this as a new reusable definition, then launches it.' : clean ? `Start launches saved revision ${saved.revision} exactly as shown.` : `Start saves your changes as revision ${saved.revision + 1}, then launches it.`;
 
@@ -49,10 +50,14 @@ export function RunComposer({ active }: { active: boolean }) {
     if ('model' in patch || 'provider' in patch) touched.current.model = true;
     edit(value => ({ ...value, roles: { ...value.roles, [role]: { ...value.roles[role], ...patch } } }));
   };
+  const changeReport = (patch: Partial<ReportDraft>) => {
+    if ('model' in patch || 'provider' in patch) touched.current.model = true;
+    edit(value => ({ ...value, report: { ...value.report, ...patch } }));
+  };
   const withDefaults = (value: Draft): Draft => {
     if (touched.current.url && touched.current.model) return value;
     const roles = touched.current.model ? value.roles : Object.fromEntries(allRoles.map(role => [role, value.roles[role].provider === 'ollama' ? { ...value.roles[role], model } : value.roles[role]])) as Draft['roles'];
-    const next = { ...value, roles, ollamaUrl: touched.current.url ? value.ollamaUrl : ollamaUrl };
+    const next = { ...value, roles, ollamaUrl: touched.current.url ? value.ollamaUrl : ollamaUrl, report: value.report.provider === 'ollama' && !touched.current.model ? { ...value.report, model } : value.report };
     return JSON.stringify(next) === JSON.stringify(value) ? value : next;
   };
   const loadCatalog = async () => {
@@ -193,9 +198,13 @@ export function RunComposer({ active }: { active: boolean }) {
           {usesLocal && <label>Local model server URL<input type="url" required value={draft.ollamaUrl} onChange={event => { touched.current.url = true; edit(value => ({ ...value, ollamaUrl: event.target.value })); }}/></label>}
           {usesPaid && <label>Maximum OpenRouter spend (USD, this run)<input type="number" min="0.000000001" max="100" step="any" required value={draft.cap} onChange={event => edit(value => ({ ...value, cap: event.target.value }))}/></label>}
         </div>
+        <div className="composer-section">
+          <h3>4. Report drafting (optional)</h3>
+          <ReportPolicyFields value={draft.report} catalog={catalog} localModel={model} onChange={changeReport}/>
+        </div>
       </fieldset>
       <div className="composer-section">
-        <h3>4. Check and launch</h3>
+        <h3>5. Check and launch</h3>
         {fault && !fault.top && faultAlert}
         {notice && <p role="status" className="composer-notice">{notice}</p>}
         <PreflightSummary result={current} checking={busy === 'check' || (busy === 'start' && !current)} catalog={catalog}/>

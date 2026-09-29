@@ -26,7 +26,7 @@ export function AppShell({ path, navigate, title, description, runId, children }
       <nav className="app-nav" aria-label="Primary navigation">
         <span className="nav-caption">WORKSPACE</span>
         {navigation.map(item => <RouteLink key={item.href} href={item.href} navigate={navigate}
-          aria-current={path === item.href ? "page" : undefined} className={path === item.href ? "nav-link active" : "nav-link"}>{item.label}</RouteLink>)}
+          aria-current={path === item.href || item.href === "/findings" && path.startsWith("/findings/") ? "page" : undefined} className={path === item.href || item.href === "/findings" && path.startsWith("/findings/") ? "nav-link active" : "nav-link"}>{item.label}</RouteLink>)}
         {runId && <RouteLink href={`/runs/${runId}`} navigate={navigate} aria-current={path === `/runs/${runId}` ? "page" : undefined}
           className={path === `/runs/${runId}` ? "nav-link active" : "nav-link"}>Current run</RouteLink>}
       </nav>
