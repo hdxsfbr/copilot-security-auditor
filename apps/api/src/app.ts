@@ -4,14 +4,29 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { targetInput, targetUpdateInput, caseInput, startInput, adaptiveStart, scheduleInput, scheduleState } from '../../../packages/contracts/src/index.js';
 import { Repository } from './repository.js';
-import { storePdf, loadPdf } from './artifacts.js';
+import { auditArtifactVolume, storePdf, loadPdf } from './artifacts.js';
 import { catalog, installedOllama, legacyRoles, snapshot } from '../../worker/src/models.js';
 
 export function createApp(repo: Repository) {
   const app = express();
+  const targetAllowed = (url: string) => {
+    const configured = process.env.TARGET_ALLOWED_HOSTS?.split(',').map(host => host.trim().toLowerCase()).filter(Boolean) ?? [];
+    if (!configured.length) return false;
+    try { return configured.includes(new URL(url).hostname.toLowerCase()); } catch { return false; }
+  };
   app.disable('x-powered-by');
   app.use(express.json({ limit: '32kb' }));
-  app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+  app.get('/api/health', async (_req, res) => {
+    try {
+      await repo.pool.query('SELECT 1');
+      const migrations = await repo.pool.query('SELECT count(*)::int AS count FROM schema_migrations');
+      if (migrations.rows[0].count !== 8) return res.status(503).json({ status: 'unavailable', database: 'migration_incomplete' });
+      return res.json({ status: 'ok', database: 'ready', migrations: migrations.rows[0].count });
+    } catch {
+      return res.status(503).json({ status: 'unavailable', database: 'unavailable' });
+    }
+  });
+  app.get('/api/integrity', async (_req, res) => res.json(await auditArtifactVolume(repo)));
   app.get('/api/schedules', async (_req, res) => res.json(await repo.schedules()));
   app.get('/api/schedules/:id/occurrences', async (req, res) => res.json(await repo.occurrences(z.uuid().parse(req.params.id))));
   const saveSchedule = async (body: unknown, id?: string) => {
@@ -48,13 +63,19 @@ export function createApp(repo: Repository) {
     return res.json({ openrouter: models.filter(m => !!m && typeof m === 'object' && 'id' in m && typeof m.id === 'string').map(m => (m as { id: string }).id), ollama, configured: !!process.env.OPENROUTER_API_KEY });
   });
   app.get('/api/targets', async (_req, res) => res.json(await repo.targets()));
-  app.post('/api/targets', async (req, res) => res.status(201).json(await repo.target(targetInput.parse(req.body))));
+  app.post('/api/targets', async (req, res) => {
+    const input = targetInput.parse(req.body);
+    if (!targetAllowed(input.baseUrl)) return res.status(400).json({ v: 1, code: 'invalid', message: 'Target host is not in TARGET_ALLOWED_HOSTS' });
+    return res.status(201).json(await repo.target(input));
+  });
   app.get('/api/targets/:id/edit', async (req, res) => {
     const target = await repo.targetForEdit(z.uuid().parse(req.params.id));
     return target ? res.set('Cache-Control', 'no-store').json(target) : res.status(404).json({ v: 1, code: 'not_found', message: 'Target not found' });
   });
   app.put('/api/targets/:id', async (req, res) => {
-    const result = await repo.updateTarget(z.uuid().parse(req.params.id), targetUpdateInput.parse(req.body));
+    const input = targetUpdateInput.parse(req.body);
+    if (!targetAllowed(input.baseUrl)) return res.status(400).json({ v: 1, code: 'invalid', message: 'Target host is not in TARGET_ALLOWED_HOSTS' });
+    const result = await repo.updateTarget(z.uuid().parse(req.params.id), input);
     if (!result) return res.status(404).json({ v: 1, code: 'not_found', message: 'Target not found' });
     if ('active_run_id' in result) return res.status(409).json({ v: 1, code: 'conflict', message: 'Target already reserved', active_run_id: result.active_run_id });
     return res.json(result);
