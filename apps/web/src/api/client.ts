@@ -17,13 +17,14 @@ function responseMessage(value: unknown, status: number): string {
 }
 
 export class ApiResponseError extends Error {
-  constructor(message: string, readonly status: number, readonly code?: string, readonly activeRunId?: string) { super(message); }
+  constructor(message: string, readonly status: number, readonly code?: string, readonly activeRunId?: string, readonly reason?: string) { super(message); }
 }
 
 function responseError(value: unknown, status: number): ApiResponseError {
   return new ApiResponseError(responseMessage(value, status), status,
     isRecord(value) && typeof value.code === 'string' ? value.code : undefined,
-    isRecord(value) && typeof value.active_run_id === 'string' ? value.active_run_id : undefined);
+    isRecord(value) && typeof value.active_run_id === 'string' ? value.active_run_id : undefined,
+    isRecord(value) && typeof value.reason === 'string' ? value.reason : undefined);
 }
 
 async function send(path: string, init?: RequestInit): Promise<Response> {

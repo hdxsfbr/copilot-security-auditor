@@ -8,6 +8,7 @@ import { CasesPage } from "./CasesPage.js";
 import { WorkspaceContext } from "./context.js";
 import { useWorkspaceController } from "./controller.js";
 import { CoveragePage } from "./CoveragePage.js";
+import { FindingDetailPage } from "./FindingDetailPage.js";
 import { FindingsPage } from "./FindingsPage.js";
 import { OverviewPage } from "./OverviewPage.js";
 import { RegressionsPage } from "./RegressionsPage.js";
@@ -33,6 +34,7 @@ export function Workspace() {
   const { path, navigate } = useRouterPath();
   const state = useWorkspaceController(navigate);
   const caseRouteId = /^\/cases\/([^/]+)$/.exec(path)?.[1];
+  const findingRouteId = /^\/findings\/([^/]+)$/.exec(path)?.[1];
   const runMatch = /^\/runs\/([^/]+)(?:\/cases\/([^/]+))?$/.exec(path);
   const runRouteId = path === "/runs/new" ? undefined : runMatch?.[1];
   const executionCaseId = runMatch?.[2];
@@ -47,7 +49,7 @@ export function Workspace() {
     const timer = setInterval(() => { if (!document.hidden) void state.pollRun(runRouteId); }, 1500);
     return () => clearInterval(timer);
   }, [runRouteId, state.run?.id, state.run?.status]);
-  const info = caseRouteId ? { title: "Case workspace", description: "Edit a draft or inspect the exact published version and its executions." } : runRouteId ? { title: "Run evidence", description: "Inspect the selected run's current status and recorded events." } : pageInfo[path] ?? { title: "Page unavailable", description: "This workspace path is not available yet." };
+  const info = findingRouteId ? { title: "Finding review", description: "Review the exact evidence, decide, then approve and download a redacted report revision." } : caseRouteId ? { title: "Case workspace", description: "Edit a draft or inspect the exact published version and its executions." } : runRouteId ? { title: "Run evidence", description: "Inspect the selected run's current status and recorded events." } : pageInfo[path] ?? { title: "Page unavailable", description: "This workspace path is not available yet." };
   return <WorkspaceContext.Provider value={state}>
     <AppShell path={path} navigate={navigate} title={info.title} description={info.description} runId={state.run?.id}>
       {state.notice && <div className="alert" role={state.noticeKind === "error" ? "alert" : "status"}>{state.notice}</div>}
@@ -64,11 +66,12 @@ export function Workspace() {
       {runRouteId && runRouteId === state.run?.id && <div className="route-panel"><RunActivity key={state.run.id} /></div>}
       {runRouteId && <div className="route-panel">{state.run?.id === runRouteId ? <RunDetailPage runId={runRouteId} executionCaseId={executionCaseId} /> : <p role="status">Loading run evidence…</p>}</div>}
       {path === "/runs/new" && state.run?.id && <div className="route-panel"><RunActivity key={state.run.id} /></div>}
-      <div hidden={path !== "/findings"} className="route-panel"><FindingsPage /></div>
+      {path === "/findings" && <div className="route-panel"><FindingsPage /></div>}
+      {findingRouteId && <div className="route-panel"><ErrorBoundary name="Finding review"><FindingDetailPage key={findingRouteId} findingId={decodeURIComponent(findingRouteId)} /></ErrorBoundary></div>}
       <div hidden={path !== "/regressions"} className="route-panel"><RegressionsPage /></div>
       <div hidden={path !== "/coverage"} className="route-panel"><CoveragePage /></div>
       <div hidden={path !== "/schedules"} className="route-panel"><SchedulesPage active={path === "/schedules"} /></div>
-      {!runRouteId && !caseRouteId && !pageInfo[path] && <div className="panel" role="status">This route has no operator task yet. Use the navigation to open an available page.</div>}
+      {!runRouteId && !caseRouteId && !findingRouteId && !pageInfo[path] && <div className="panel" role="status">This route has no operator task yet. Use the navigation to open an available page.</div>}
     </AppShell>
   </WorkspaceContext.Provider>;
 }

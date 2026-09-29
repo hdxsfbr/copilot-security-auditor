@@ -4,9 +4,11 @@ import { isRecord } from '../../api/client.js';
 export type Provider = 'ollama' | 'openrouter';
 export type Role = 'orchestrator' | 'redTeam' | 'judge';
 export type Assignment = { provider: Provider; model: string; maxOutputTokens: number };
+// Optional automatic report drafting. Off by default; a paid model draws only `allowance`, which sits inside the run cap.
+export type ReportDraft = { enabled: boolean; provider: Provider; model: string; maxOutputTokens: number; allowance: string; windowMinutes: number };
 export type Draft = {
   name: string; targetId: string; kind: 'selected' | 'adaptive'; caseId: string; caseIds: string[];
-  roles: Record<Role, Assignment>; maxCases: number; maxMinutes: number; ollamaUrl: string; cap: string;
+  roles: Record<Role, Assignment>; maxCases: number; maxMinutes: number; ollamaUrl: string; cap: string; report: ReportDraft;
 };
 export type Definition = { id: string; name: string; run: RunDefinition; revision: number; archived: boolean };
 export type DefinitionSummary = Pick<Definition, 'id' | 'name' | 'revision'>;
@@ -15,7 +17,7 @@ export type Catalog = { openrouter: string[]; ollama: string[]; configured: bool
 type Status = 'not_required' | 'available' | 'unavailable';
 export type Preflight = {
   status: 'available' | 'unavailable'; issues: { code: string; role?: Role }[]; local: { status: Status; installed: string[] }; paid: { status: Status; configured: boolean };
-  preview: { reservationNanos: string; capNanos: string | null; attempts: number } | null;
+  preview: { reservationNanos: string; capNanos: string | null; attempts: number; reportAllowanceNanos?: string; reportJobReservationNanos?: string } | null;
 };
 type Seed = { id: string; category?: string };
 
@@ -26,6 +28,7 @@ export const roleLabel = (role: Role) => role === 'redTeam' ? 'Red Team' : role[
 export const localAssignment = (model = ''): Assignment => ({ provider: 'ollama', model, maxOutputTokens: 1024 });
 export const newDraft = (targetId: string, caseId: string, model: string, ollamaUrl: string): Draft => ({
   name: '', targetId, kind: 'selected', caseId, caseIds: [], maxCases: 3, maxMinutes: 3, ollamaUrl, cap: '0.25',
+  report: { enabled: false, provider: 'ollama', model, maxOutputTokens: 2048, allowance: '0.05', windowMinutes: 60 },
   roles: { orchestrator: localAssignment(model), redTeam: localAssignment(model), judge: localAssignment(model) },
 });
 export const seedCategory = (seed: { category?: string }) => seed.category ?? 'prompt_injection';
@@ -43,14 +46,17 @@ export const isDefinition = (value: unknown): value is Definition => isRecord(va
 export const isPreflight = (value: unknown): value is Preflight => isRecord(value) && (value.status === 'available' || value.status === 'unavailable')
   && Array.isArray(value.issues) && value.issues.every(issue => isRecord(issue) && typeof issue.code === 'string' && (issue.role === undefined || allRoles.includes(issue.role as Role)))
   && isRecord(value.local) && requirement(value.local.status) && strings(value.local.installed) && isRecord(value.paid) && requirement(value.paid.status) && typeof value.paid.configured === 'boolean'
-  && (value.preview === null || (isRecord(value.preview) && nanosText(value.preview.reservationNanos) && (value.preview.capNanos === null || nanosText(value.preview.capNanos)) && Number.isInteger(value.preview.attempts)));
+  && (value.preview === null || (isRecord(value.preview) && nanosText(value.preview.reservationNanos) && (value.preview.capNanos === null || nanosText(value.preview.capNanos)) && Number.isInteger(value.preview.attempts)
+    && [value.preview.reportAllowanceNanos, value.preview.reportJobReservationNanos].every(item => item === undefined || nanosText(item))));
 export const isStarted = (value: unknown): value is { id: string } => isRecord(value) && typeof value.id === 'string';
 
 /** Draft -> exact API run definition. Only invoked roles are sent, so an all-paid run needs no Ollama URL. */
 export function buildRun(draft: Draft, cases: Seed[]): RunDefinition {
-  const active = activeRoles(draft.kind), local = active.some(role => draft.roles[role].provider === 'ollama'), paid = active.some(role => draft.roles[role].provider === 'openrouter');
+  const active = activeRoles(draft.kind), rp = draft.report;
+  const local = active.some(role => draft.roles[role].provider === 'ollama') || rp.enabled && rp.provider === 'ollama', paid = active.some(role => draft.roles[role].provider === 'openrouter') || rp.enabled && rp.provider === 'openrouter';
+  const reportPolicy = rp.enabled ? { model: { provider: rp.provider, model: rp.model, maxOutputTokens: rp.maxOutputTokens }, ...(rp.provider === 'openrouter' ? { allowanceUsd: Number(rp.allowance) } : {}), reviewWindowMinutes: rp.windowMinutes } : undefined;
   const roles = Object.fromEntries(active.map(role => [role, draft.roles[role]]));
-  const shared = { targetId: draft.targetId, roles, ...(local ? { ollamaUrl: draft.ollamaUrl } : {}), ...(paid ? { openRouterCapUsd: Number(draft.cap) } : {}) };
+  const shared = { targetId: draft.targetId, roles, ...(local ? { ollamaUrl: draft.ollamaUrl } : {}), ...(paid ? { openRouterCapUsd: Number(draft.cap) } : {}), ...(reportPolicy ? { reportPolicy } : {}) };
   let raw: unknown;
   if (draft.kind === 'selected') raw = { kind: 'selected', input: { ...shared, caseId: draft.caseId } };
   else {
@@ -72,7 +78,9 @@ export function draftFromDefinition(definition: Definition): Draft {
   const adaptive = run.kind === 'adaptive' ? run.input : null;
   return { name: definition.name, targetId: input.targetId, kind: run.kind, caseId: run.kind === 'selected' ? run.input.caseId : '', caseIds: adaptive?.caseIds ?? [],
     roles: { orchestrator: adaptive?.roles.orchestrator ?? judge, redTeam: adaptive?.roles.redTeam ?? judge, judge }, maxCases: adaptive?.maxCases ?? 3, maxMinutes: adaptive?.maxMinutes ?? 3,
-    ollamaUrl: input.ollamaUrl ?? '', cap: String(input.openRouterCapUsd ?? 0.25) };
+    ollamaUrl: input.ollamaUrl ?? '', cap: String(input.openRouterCapUsd ?? 0.25),
+    report: input.reportPolicy ? { enabled: true, provider: input.reportPolicy.model.provider, model: input.reportPolicy.model.model, maxOutputTokens: input.reportPolicy.model.maxOutputTokens, allowance: String(input.reportPolicy.allowanceUsd ?? 0.05), windowMinutes: input.reportPolicy.reviewWindowMinutes }
+      : { enabled: false, provider: 'ollama', model: judge.provider === 'ollama' ? judge.model : '', maxOutputTokens: 2048, allowance: '0.05', windowMinutes: 60 } };
 }
 
 /** Stable identity of exactly what would be saved and launched; '' when the draft is not yet valid. */
@@ -96,6 +104,8 @@ export const describeIssue = (issue: Preflight['issues'][number]) => `${issue.ro
 export function launchBlock(result: Preflight): string | null {
   if (result.status !== 'available') return `Launch blocked: ${result.issues.map(describeIssue).join('; ') || 'selected models unavailable'}`;
   if (!result.preview) return 'Launch blocked: the paid reservation could not be verified';
-  if (result.preview.capNanos !== null && BigInt(result.preview.reservationNanos) > BigInt(result.preview.capNanos)) return 'Launch blocked: the conservative reservation exceeds the OpenRouter cap';
+  const { reportAllowanceNanos, reportJobReservationNanos } = result.preview, held = BigInt(reportAllowanceNanos ?? '0');
+  if (result.preview.capNanos !== null && BigInt(result.preview.reservationNanos) + held > BigInt(result.preview.capNanos)) return held ? 'Launch blocked: the conservative reservation plus the report allowance exceeds the OpenRouter cap' : 'Launch blocked: the conservative reservation exceeds the OpenRouter cap';
+  if (reportJobReservationNanos !== undefined && held > 0n && held < BigInt(reportJobReservationNanos)) return 'Launch blocked: the report allowance is below one bounded Documentation call';
   return null;
 }

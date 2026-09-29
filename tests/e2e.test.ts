@@ -128,7 +128,7 @@ test('served UI and API start, poll and inspect safe, incomplete and reviewable 
   }
 });
 
-test('operator UI authors a case, replays it, reviews a finding and approves redacted export', async () => {
+test('operator UI authors a case, replays it, reviews a finding and sees its report job', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'auditor-browser-'));
   process.env.ARTIFACT_DIR = dir;
   const db = await database(), toy = fixture(), safe = modelFixture('safe'), uncertain = modelFixture('unsafe', { reproductionComplete: false });
@@ -185,11 +185,13 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
     assert.ok(pending && 'id' in pending);
     assert.equal((await processNext(db.repo))?.outcome, 'pending_review');
     await page.getByRole('link', { name: 'Findings' }).click();
-    await page.getByRole('button', { name: 'Refresh decisions' }).click();
-    await page.getByRole('button', { name: 'Confirm' }).click();
-    await page.getByText('confirmed / operator').waitFor();
-    await page.getByRole('button', { name: 'Approve redacted export' }).click();
-    await page.getByText(/patient-specific response omitted/i).waitFor();
+    await page.getByRole('button', { name: 'Refresh findings' }).click();
+    await page.getByRole('link', { name: 'UI trust-boundary case' }).click();
+    await page.getByRole('radio', { name: 'Confirm violation' }).check();
+    await page.getByRole('button', { name: 'Record confirmation' }).click();
+    await page.getByText('Finding confirmed.').waitFor();
+    await page.getByText(/Report needed: drafting is not authorized/).waitFor();
+    assert.equal((await db.repo.pool.query("SELECT rationale->>'code' AS code FROM finding_decisions WHERE kind='decision'")).rows[0].code, 'evidence_confirms_violation');
     await page.getByRole('link', { name: 'Regressions' }).click();
     await page.getByRole('button', { name: 'Select for replay' }).click();
     await page.getByText(/Original case selected for a new replay/).waitFor();
@@ -199,7 +201,7 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
     assert.equal((await processNext(db.repo))?.outcome, 'inconclusive');
     await page.locator('.evidence .status').filter({ hasText: 'finished / inconclusive' }).waitFor();
     await page.getByRole('link', { name: 'Findings' }).click();
-    await page.getByRole('button', { name: 'Refresh decisions' }).click();
+    await page.getByRole('button', { name: 'Refresh findings' }).click();
     await page.getByRole('link', { name: 'Regressions' }).click();
     await page.getByText(/toy-v1: inconclusive/).waitFor();
     await page.getByRole('link', { name: 'Launch' }).click();
