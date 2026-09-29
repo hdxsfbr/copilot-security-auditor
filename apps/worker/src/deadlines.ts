@@ -61,6 +61,11 @@ export function discardResponse(response: Response): void {
 export async function readBodyText(response: Response, signal: AbortSignal, maxBytes: number): Promise<string> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error('Missing response body');
+  if (signal.aborted) {
+    void reader.cancel().catch(() => {});
+    try { reader.releaseLock(); } catch { /* Cancellation may still be pending. */ }
+    throw new Error('Response arrived after deadline');
+  }
   const chunks: Uint8Array[] = [];
   let bytes = 0;
   const cancel = () => { void reader.cancel().catch(() => {}); };

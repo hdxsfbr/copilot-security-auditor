@@ -39,6 +39,11 @@ function claimSources(claim: Record<string, unknown>, kind?: string): SourceEvid
 async function boundedTurnJson(response: Response, signal: AbortSignal): Promise<Record<string, unknown>> {
   const reader = response.body?.getReader();
   if (!reader) throw new TargetFailure('incomplete', 'Missing target turn body');
+  if (signal.aborted) {
+    void reader.cancel().catch(() => {});
+    try { reader.releaseLock(); } catch { /* Cancellation may still be pending. */ }
+    throw new TargetFailure('incomplete', 'Target turn body arrived after deadline');
+  }
   const chunks: Uint8Array[] = [];
   let size = 0;
   const cancel = () => { void reader.cancel().catch(() => {}); };
@@ -96,6 +101,7 @@ export class Session {
       ...init, redirect: 'manual', signal,
       headers: { Cookie: [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; '), ...init.headers }
     });
+    if (signal?.aborted) { discardResponse(response); throw new Error('Target response arrived after deadline'); }
     for (const cookie of response.headers.getSetCookie()) {
       const pair = cookie.split(';', 1)[0];
       const split = pair.indexOf('=');

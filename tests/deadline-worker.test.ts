@@ -88,6 +88,20 @@ test('only explicit not-applied response retries; stalled successful turn body i
     assert.equal(turns, 1);
     assert.equal(canceled, true);
   } finally { await session.close(); await toy.close(); }
+
+  const lateToy = fixture(); const lateUrl = await lateToy.start();
+  let lateCanceled = false;
+  const ignoresAbort: typeof fetch = async (input, init) => {
+    if (String(input).includes('/turns')) { await wait(80); return new Response(stalledBody(() => { lateCanceled = true; }), { status: 200 }); }
+    return fetch(input, init);
+  };
+  const late = new Session(lateUrl, users.userA, ignoresAbort, { limits: { turn: 30 } });
+  try {
+    await late.open();
+    await assert.rejects(late.turn('Ask', 1), (error: unknown) => error instanceof TurnFailure && error.attempts.length === 1);
+    await wait(80);
+    assert.equal(lateCanceled, true);
+  } finally { await late.close(); await lateToy.close(); }
 });
 
 test('headers-only and error responses discard stalled bodies; invalid deadline overrides fail closed', async () => {
@@ -141,6 +155,15 @@ test('role deadline covers stalled response body; pre-dispatch exhausted budget 
     (error: unknown) => error instanceof DeadlineExceeded && !error.info.attempted);
   assert.equal(calls, 1);
   await assert.rejects(callRoleJson(assignment, [], 'http://model.test/', transport, undefined, { callMs: -1 }), /Invalid operation deadline/);
+  let lateCanceled = false;
+  const ignoresAbort: typeof fetch = async () => {
+    await wait(80);
+    return new Response(stalledBody(() => { lateCanceled = true; }), { status: 200 });
+  };
+  await assert.rejects(callRoleJson(assignment, [], 'http://model.test/', ignoresAbort, undefined, { callMs: 30 }),
+    (error: unknown) => error instanceof DeadlineExceeded && error.info.attempted);
+  await wait(80);
+  assert.equal(lateCanceled, true);
 });
 
 test('paid Judge timeout after dispatch leaves unknown charge unresolved and emits stage metadata', async () => {
