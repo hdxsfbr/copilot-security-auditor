@@ -8,6 +8,8 @@ import { PDFDocument } from 'pdf-lib';
 import { callJudge, legacyRoles, nanos, reserveAmount, verifiedPrice } from '../apps/worker/src/models.js';
 import { adaptiveStart, startInput } from '../packages/contracts/src/index.js';
 import { admitProposal, adaptiveOutcome, chooseGap, timeExpired } from '../apps/worker/src/adaptive.js';
+import { nextFire } from '../apps/api/src/schedule-time.js';
+import { scheduleInput } from '../packages/contracts/src/index.js';
 
 test('v1 contracts reject unsafe target inputs and unbounded turns', () => {
   assert.equal(targetInput.safeParse({ name: 'test', baseUrl: 'file:///tmp/foo', ...users }).success, false);
@@ -137,4 +139,25 @@ test('adaptive limits, gap choice and proposal admission reject untrusted transp
   for (const message of ['GET /api/secrets', 'http://localhost/path', users.userA.pubpid, users.userB.password]) assert.throws(() => admitProposal({ actions: [{ kind: 'chat_turn', message }] }, seed, [users.userA, users.userB]));
   assert.throws(() => admitProposal({ actions: [{ kind: 'attach_pdf', artifactId: id, documentType: 'lab_pdf', message: 'read' }] }, seed, [users.userA, users.userB]));
   assert.throws(() => admitProposal({ actions: [{ kind: 'chat_turn', message: 'probe', url: 'http://bad/' }] }, seed, [users.userA, users.userB]));
+});
+
+test('daily and weekly wall times survive DST gaps and repeated hours', () => {
+  const spec = { cadence: 'daily' as const, hour: 2, minute: 30, zone: 'America/New_York' };
+  assert.equal(nextFire(spec, new Date('2026-03-08T06:00:00Z')).toISOString(), '2026-03-08T07:00:00.000Z');
+  assert.equal(nextFire(spec, new Date('2026-03-08T07:00:00Z')).toISOString(), '2026-03-09T06:30:00.000Z');
+  const repeat = { ...spec, hour: 1 };
+  assert.equal(nextFire(repeat, new Date('2026-11-01T04:59:00Z')).toISOString(), '2026-11-01T05:30:00.000Z');
+  assert.equal(nextFire(repeat, new Date('2026-11-01T05:31:00Z')).toISOString(), '2026-11-02T06:30:00.000Z');
+  assert.equal(nextFire({ ...spec, cadence: 'weekly', weekday: 0 }, new Date('2026-03-08T07:00:00Z')).toISOString(), '2026-03-15T06:30:00.000Z');
+  assert.equal(nextFire({ ...spec, hour: 9, minute: 15, zone: 'Asia/Kathmandu' }, new Date('2026-01-01T00:00:00Z')).toISOString(), '2026-01-01T03:30:00.000Z');
+});
+
+test('schedule contracts require a bounded run and IANA local time', () => {
+  const id = '123e4567-e89b-42d3-a456-426614174000';
+  const input = { name: 'Synthetic', cadence: 'daily', hour: 9, minute: 0, zone: 'UTC', run: { kind: 'selected', input: { targetId: id, caseId: id, model: 'stub', ollamaUrl: 'http://ollama.test/' } } };
+  assert.ok(scheduleInput.safeParse(input).success);
+  assert.equal(scheduleInput.safeParse({ ...input, zone: 'Not/A_Zone' }).success, false);
+  assert.equal(scheduleInput.safeParse({ ...input, cadence: 'weekly' }).success, false);
+  assert.equal(scheduleInput.safeParse({ ...input, weekday: 0 }).success, false);
+  assert.equal(scheduleInput.safeParse({ ...input, run: { kind: 'adaptive', input: { targetId: id } } }).success, false);
 });

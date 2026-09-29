@@ -410,3 +410,118 @@ test('adaptive PDF proposals can replay only their seed-linked synthetic attachm
     assert.equal(toy.requests.filter(r => r.path.includes('document_upload.php')).length, 2);
   } finally { await toy.close(); await db.close(); await rm(dir, { recursive: true, force: true }); delete process.env.ARTIFACT_DIR; }
 });
+
+test('concurrent scheduler ticks create one occurrence, skip busy targets and advance after pause', async () => {
+  const db = await database(), toy = fixture(), model = modelFixture('safe');
+  const baseUrl = await toy.start(), ollamaUrl = await model.start();
+  try {
+    const { target, selected, input } = await seed(db.repo, baseUrl, ollamaUrl);
+    const other = await db.repo.target({ name: 'Independent', baseUrl, ...users });
+    const start = new Date('2026-09-28T08:58:00Z');
+    const definition = { name: 'Morning', cadence: 'daily' as const, hour: 9, minute: 0, zone: 'UTC', run: { kind: 'selected' as const, input } };
+    const schedule = await db.repo.saveSchedule(definition, { roles: legacyRoles('stub'), pricing: {} }, start); assert.ok(schedule);
+    const second = await db.repo.saveSchedule({ ...definition, name: 'Independent', run: { kind: 'selected', input: { ...input, targetId: other.id } } }, { roles: legacyRoles('stub'), pricing: {} }, start); assert.ok(second);
+    const firstDue = new Date('2026-09-28T09:00:00Z');
+    await Promise.all(Array.from({ length: 5 }, () => db.repo.tick(firstDue)));
+    assert.equal((await db.repo.occurrences(schedule.id)).length, 1);
+    assert.equal((await db.repo.occurrences(second.id)).length, 1);
+    assert.ok((await db.repo.targets()).every(row => row.activeRunId));
+    const active = (await db.repo.occurrences(schedule.id))[0].runId;
+    assert.deepEqual(await db.repo.start(input), { active_run_id: active });
+    const result = await db.repo.tick(new Date('2026-09-29T09:00:00Z'));
+    assert.equal(result.filter(r => r.state === 'skipped').length, 2);
+    const skipped = (await db.repo.occurrences(schedule.id))[0];
+    assert.equal(skipped.state, 'skipped'); assert.equal(skipped.scheduledFor.toISOString(), '2026-09-29T09:00:00.000Z');
+    assert.match(skipped.reason, /Target reserved/);
+    assert.equal((await db.repo.occurrences(schedule.id)).length, 2);
+    assert.equal((await db.repo.schedules()).find(s => s.id === schedule.id).nextFireAt.toISOString(), '2026-09-30T09:00:00.000Z');
+    assert.equal(await db.repo.scheduleState(schedule.id, true, new Date('2026-09-29T10:00:00Z'))?.then(r => r?.paused), true);
+    await db.repo.tick(new Date('2026-09-30T09:00:00Z'));
+    assert.equal((await db.repo.occurrences(schedule.id)).length, 2);
+    const resumed = await db.repo.scheduleState(schedule.id, false, new Date('2026-10-01T10:00:00Z'));
+    assert.equal(resumed?.nextFireAt, '2026-10-02T09:00:00.000Z');
+    assert.equal((await db.repo.occurrences(schedule.id)).length, 2);
+    assert.equal((await processNext(db.repo))?.outcome, 'safe');
+    assert.equal((await db.repo.occurrences(schedule.id)).find(o => o.runId === active)?.state, 'finished');
+    assert.equal((await db.repo.targets()).find(row => row.id === target.id).activeRunId, null);
+    assert.equal(await db.repo.deleteSchedule(schedule.id), true);
+    assert.equal((await db.repo.schedules()).some(s => s.id === schedule.id), false);
+    assert.equal((await db.repo.occurrences(schedule.id)).length, 2);
+    assert.equal(selected.id, input.caseId);
+  } finally { await toy.close(); await model.close(); await db.close(); }
+});
+
+test('scheduled login failure blocks occurrence without producing a security verdict', async () => {
+  const db = await database(), toy = fixture({ login: 200 }), model = modelFixture('safe');
+  const baseUrl = await toy.start(), ollamaUrl = await model.start();
+  try {
+    const { input } = await seed(db.repo, baseUrl, ollamaUrl);
+    const schedule = await db.repo.saveSchedule({ name: 'Login preflight', cadence: 'weekly', weekday: 1, hour: 9, minute: 0, zone: 'UTC', run: { kind: 'selected', input } }, { roles: legacyRoles('stub'), pricing: {} }, new Date('2026-09-28T08:59:00Z')); assert.ok(schedule);
+    await db.repo.tick(new Date('2026-09-28T09:00:00Z'));
+    const occurrence = (await db.repo.occurrences(schedule.id))[0];
+    assert.equal((await processNext(db.repo))?.outcome, 'blocked');
+    assert.equal((await db.repo.occurrences(schedule.id))[0].state, 'blocked');
+    assert.match((await db.repo.occurrences(schedule.id))[0].reason, /preflight/);
+    assert.equal((await db.repo.findings()).length, 0);
+    assert.equal((await db.repo.regressions()).length, 0);
+    assert.equal((await db.repo.run(occurrence.runId)).outcome, 'blocked');
+    assert.equal((await db.repo.targets()).find(row => row.id === input.targetId).activeRunId, null);
+    assert.equal((await db.repo.schedules())[0].nextFireAt.toISOString(), '2026-10-05T09:00:00.000Z');
+  } finally { await toy.close(); await model.close(); await db.close(); }
+});
+
+test('scheduled adaptive login failure blocks before any paid or local model call', async () => {
+  const db = await database(), toy = fixture({ login: 200 }); const baseUrl = await toy.start();
+  try {
+    const { input, selected } = await seed(db.repo, baseUrl, 'http://ollama.test/');
+    const roles = legacyRoles('stub');
+    const definition = { name: 'Adaptive preflight', cadence: 'daily' as const, hour: 9, minute: 0, zone: 'UTC', run: { kind: 'adaptive' as const, input: { targetId: input.targetId, caseIds: [selected.id], categories: ['prompt_injection' as const], maxCases: 1, maxMinutes: 1, ollamaUrl: input.ollamaUrl, roles } } };
+    const schedule = await db.repo.saveSchedule(definition, { roles, pricing: {} }, new Date('2026-09-28T08:58:00Z')); assert.ok(schedule);
+    await db.repo.tick(new Date('2026-09-28T09:00:00Z'));
+    let modelCalls = 0;
+    const transport: typeof fetch = async () => { modelCalls++; throw Error('Model must not dispatch'); };
+    assert.equal((await processNext(db.repo, 'adaptive-preflight', fetch, transport))?.outcome, 'blocked');
+    assert.equal(modelCalls, 0);
+    assert.equal((await db.repo.occurrences(schedule.id))[0].state, 'blocked');
+    assert.equal((await db.repo.findings()).length, 0);
+  } finally { await toy.close(); await db.close(); }
+});
+
+test('scheduled adaptive occurrences reuse case judgment and release the target', async () => {
+  const db = await database(), toy = fixture(); const baseUrl = await toy.start();
+  try {
+    const { input, selected } = await seed(db.repo, baseUrl, 'http://ollama.test/');
+    const roles = legacyRoles('stub');
+    const schedule = await db.repo.saveSchedule({ name: 'Adaptive nightly', cadence: 'daily', hour: 9, minute: 0, zone: 'UTC', run: { kind: 'adaptive', input: { targetId: input.targetId, caseIds: [selected.id], categories: ['prompt_injection'], maxCases: 1, maxMinutes: 2, roles, ollamaUrl: input.ollamaUrl } } }, { roles, pricing: {} }, new Date('2026-09-28T08:58:00Z')); assert.ok(schedule);
+    await db.repo.tick(new Date('2026-09-28T09:00:00Z'));
+    const transport: typeof fetch = async (_url, init) => {
+      const system = JSON.parse(init!.body as string).messages[0].content;
+      const answer = system.startsWith('Choose') ? { caseId: selected.id } : system.startsWith('Propose') ? { actions: [{ kind: 'chat_turn', message: 'synthetic bounded probe' }] } : { v: 1, outcome: 'safe', claim: '', evidenceRefs: ['turn-1'], reproductionComplete: true, materialUncertainties: [] };
+      return new Response(JSON.stringify({ message: { content: JSON.stringify(answer) } }));
+    };
+    assert.equal((await processNext(db.repo, 'scheduled-adaptive', fetch, transport))?.outcome, 'safe');
+    const occurrence = (await db.repo.occurrences(schedule.id))[0];
+    assert.equal(occurrence.state, 'finished');
+    assert.equal((await db.repo.adaptiveCases(occurrence.runId))[0].executed, true);
+    assert.deepEqual((await db.repo.usage(occurrence.runId)).map(c => c.role), ['orchestrator', 'redTeam', 'judge']);
+    assert.equal((await db.repo.targets()).find(t => t.id === input.targetId).activeRunId, null);
+  } finally { await toy.close(); await db.close(); }
+});
+
+test('an expired scheduled worker lease blocks its occurrence without redispatch', async () => {
+  const db = await database();
+  try {
+    const { input } = await seed(db.repo, 'http://target.test/', 'http://ollama.test/');
+    const schedule = await db.repo.saveSchedule({ name: 'Restart fixture', cadence: 'daily', hour: 9, minute: 0, zone: 'UTC', run: { kind: 'selected', input } }, { roles: legacyRoles('stub'), pricing: {} }, new Date('2026-09-28T08:58:00Z')); assert.ok(schedule);
+    await db.repo.tick(new Date('2026-09-28T09:00:00Z'));
+    const old = await db.repo.claim('old-worker'); assert.ok(old);
+    assert.equal((await db.repo.occurrences(schedule.id))[0].state, 'running');
+    await db.repo.pool.query("UPDATE runs SET lease_until=now()-interval '1 second' WHERE id=$1", [old.id]);
+    await db.repo.expire();
+    const occurrence = (await db.repo.occurrences(schedule.id))[0];
+    assert.equal(occurrence.state, 'blocked'); assert.match(occurrence.reason, /uncertain/);
+    assert.equal((await db.repo.run(old.id)).outcome, 'incomplete');
+    assert.equal(await db.repo.claim('replacement-worker'), null);
+    assert.equal((await db.repo.targets()).find(t => t.id === input.targetId).activeRunId, null);
+  } finally { await db.close(); }
+});

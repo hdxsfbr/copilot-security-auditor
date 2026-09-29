@@ -12,7 +12,23 @@ export async function processNext(repo: Repository, owner = 'worker', targetFetc
   await repo.expire();
   const run = await repo.claim(owner);
   if (!run) return null;
-  if (run.adaptive) return processAdaptive(repo, run, targetFetch, modelFetch);
+  if (run.adaptive) {
+    if (await repo.isScheduled(run.id)) {
+      try {
+        const refs = new Set(run.adaptive.seeds.map(seed => seed.definition.user));
+        for (const user of refs) {
+          const identity = await repo.credential<Identity>(user === 'A' ? run.target_snapshot.userARef : run.target_snapshot.userBRef);
+          const probe = new Session(run.target_snapshot.baseUrl, identity, targetFetch);
+          try { await probe.open(); } finally { await probe.close(); }
+        }
+      } catch {
+        await repo.append(run.id, run.lease_generation, evidenceEvent.parse({ v: 1, agent: 'worker', kind: 'failure', detail: { reason: 'Scheduled target/login/chart preflight unavailable', outcome: 'blocked' } }));
+        await repo.finish(run.id, run.lease_generation, 'blocked');
+        return { id: run.id, outcome: 'blocked' as const };
+      }
+    }
+    return processAdaptive(repo, run, targetFetch, modelFetch);
+  }
   const evaluated = await evaluateCase(repo, run, run.definition.case, targetFetch, modelFetch);
   await repo.finish(run.id, run.lease_generation, evaluated.outcome, evaluated.assessment);
   return { id: run.id, outcome: evaluated.outcome };

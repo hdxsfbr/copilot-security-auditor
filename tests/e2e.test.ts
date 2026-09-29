@@ -290,3 +290,40 @@ test('operator starts and stops bounded exploration and sees category gaps', asy
     if (oldUrl === undefined) delete process.env.OLLAMA_URL; else process.env.OLLAMA_URL = oldUrl;
   }
 });
+
+test('operator creates, pauses and inspects skipped scheduled occurrences', async () => {
+  const db = await database(), toy = fixture(), model = modelFixture('safe');
+  const targetUrl = await toy.start(), ollamaUrl = await model.start();
+  const beforeUrl = process.env.OLLAMA_URL, beforeModel = process.env.OLLAMA_MODEL;
+  process.env.OLLAMA_URL = ollamaUrl; process.env.OLLAMA_MODEL = 'stub';
+  const server = createApp(db.repo).listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  try {
+    const target = await db.repo.target({ name: 'Schedule browser target', baseUrl: targetUrl, ...users });
+    const selected = await db.repo.createCase({ ...testCase, title: 'Scheduled browser case' });
+    const page = await browser.newPage(); await page.goto(`http://127.0.0.1:${(server.address() as { port: number }).port}`);
+    const desk = page.locator('.schedule-desk');
+    await desk.getByLabel('Schedule name').fill('Browser daily check');
+    await desk.getByLabel('Saved target').selectOption(target.id);
+    await desk.getByLabel('Scheduled case').selectOption(selected.id);
+    await desk.getByLabel('Local model server URL').fill(ollamaUrl);
+    for (const field of await desk.getByLabel('Model', { exact: true }).all()) await field.fill('stub');
+    await desk.getByRole('button', { name: 'Create schedule' }).click();
+    await desk.getByText('Browser daily check').waitFor();
+    const schedule = (await db.repo.schedules()).find(s => s.definition.name === 'Browser daily check'); assert.ok(schedule);
+    await db.repo.tick(new Date(schedule.nextFireAt));
+    await db.repo.tick(new Date(new Date(schedule.nextFireAt).getTime() + 86400000));
+    await desk.getByText(/Target reserved by run/).waitFor({ timeout: 10000 });
+    assert.equal((await db.repo.occurrences(schedule.id))[0].state, 'skipped');
+    await desk.getByRole('button', { name: 'Pause' }).click();
+    await desk.getByText(/Paused · next/).waitFor();
+    await desk.getByRole('button', { name: 'Resume' }).click();
+    await desk.getByText(/Active · next/).waitFor();
+    assert.equal((await db.repo.occurrences(schedule.id)).length, 2);
+  } finally {
+    await browser.close(); await new Promise<void>(resolve => server.close(() => resolve()));
+    await toy.close(); await model.close(); await db.close();
+    if (beforeUrl === undefined) delete process.env.OLLAMA_URL; else process.env.OLLAMA_URL = beforeUrl;
+    if (beforeModel === undefined) delete process.env.OLLAMA_MODEL; else process.env.OLLAMA_MODEL = beforeModel;
+  }
+});
