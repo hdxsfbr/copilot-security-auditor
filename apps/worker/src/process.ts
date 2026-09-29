@@ -3,17 +3,24 @@ import { evidenceEvent, observation, outcome as outcomeSchema, policyTrace, type
 import { Repository } from '../../api/src/repository.js';
 import { Session, TargetFailure, TurnFailure, type Identity } from './session.js';
 import { packet, scrub, scrubEvidence, type ExecutedAction } from './judge.js';
-import { callJudge, catalog, verifiedPrice, reserveAmount, nanos, type Price } from './models.js';
+import { callJudgeHandoff, catalog, verifiedPrice, reserveAmount, nanos, type Price } from './models.js';
 import { checkCase, judgePolicy, type CheckResult } from './checks.js';
 import { loadPdf } from '../../api/src/artifacts.js';
 import { processAdaptive } from './adaptive.js';
 import { DeadlineExceeded, type DeadlineInfo } from './deadlines.js';
+import { agentErrorMessage, agentFailure, agentMessageHeader, agentRefs, parseAgentMessage, redTeamToJudge, type AgentContext, type AgentFailureCode } from '../../../packages/contracts/src/agent.js';
 
 export function adaptiveRunUntil(run: ClaimedRun): number | undefined {
   return run.adaptive ? new Date(run.started_at).getTime() + run.adaptive.maxMinutes * 60_000 : undefined;
 }
 function timeoutInfo(error: unknown): DeadlineInfo | undefined {
   return error instanceof DeadlineExceeded ? error.info : error instanceof TargetFailure ? error.timeout : undefined;
+}
+function handoffError(context: AgentContext, code: AgentFailureCode, stage: 'target' | 'judge', deadline?: DeadlineInfo) {
+  return agentErrorMessage('red_team_to_judge', context, { code, stage, ...(deadline ? { deadline } : {}) });
+}
+function targetFailureCode(error: unknown): AgentFailureCode {
+  return error instanceof TargetFailure && /^(Target not ready|Target handshake failed)$/.test(error.message) ? 'target_unreachable' : 'target_boundary_unavailable';
 }
 
 export async function processNext(repo: Repository, owner = 'worker', targetFetch: typeof fetch = fetch, modelFetch: typeof fetch = fetch) {
@@ -34,7 +41,8 @@ export async function processNext(repo: Repository, owner = 'worker', targetFetc
         if (timeout) await repo.append(run.id, run.lease_generation, evidenceEvent.parse({ v: 1, agent: 'worker', kind: 'timeout', detail: timeout }));
         const budgetExhausted = !!timeout && (adaptiveRunUntil(run) ?? Infinity) <= Date.now();
         const outcome = budgetExhausted ? 'incomplete' as const : 'blocked' as const;
-        await repo.append(run.id, run.lease_generation, evidenceEvent.parse({ v: 1, agent: 'worker', kind: 'failure', detail: { reason: budgetExhausted ? 'Run time budget exhausted during scheduled preflight' : 'Scheduled target/login/chart preflight unavailable', outcome } }));
+        const contractError = agentFailure.parse({ code: budgetExhausted ? 'budget_exceeded' : targetFailureCode(error), stage: 'target', ...(timeout ? { deadline: timeout } : {}) });
+        await repo.append(run.id, run.lease_generation, evidenceEvent.parse({ v: 1, agent: 'worker', kind: 'failure', detail: { reason: budgetExhausted ? 'Run time budget exhausted during scheduled preflight' : 'Scheduled target/login/chart preflight unavailable', outcome, contractError } }));
         await repo.finish(run.id, run.lease_generation, outcome);
         return { id: run.id, outcome };
       }
@@ -82,8 +90,9 @@ export function scopeOutcome(category: CaseInput['category'], classified: Outcom
   return classified;
 }
 
-export async function evaluateCase(repo: Repository, run: ClaimedRun, definition: CaseInput, targetFetch: typeof fetch, modelFetch: typeof fetch, shouldStop: () => Promise<boolean> = async () => false, sourceCaseId = run.case_id!) {
+export async function evaluateCase(repo: Repository, run: ClaimedRun, definition: CaseInput, targetFetch: typeof fetch, modelFetch: typeof fetch, shouldStop: () => Promise<boolean> = async () => false, sourceCaseId = run.case_id!, lineage?: Pick<AgentContext, 'attemptId' | 'parentMessageId'>) {
   const generation = run.lease_generation;
+  const contractContext: AgentContext = { runId: run.id, caseId: sourceCaseId, attemptId: lineage?.attemptId ?? `${run.id}-${generation}`, parentMessageId: lineage?.parentMessageId ?? null };
   const runUntil = adaptiveRunUntil(run);
   const emit = async (agent: 'worker' | 'target' | 'check' | 'judge', kind: string, detail: Record<string, unknown>, version?: string) => {
     await repo.append(run.id, generation, evidenceEvent.parse({ v: 1, agent, kind, detail }), version);
@@ -182,6 +191,15 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
           effect: { result: effectSnapshot ?? 'not_checked', scope: definition.category === 'unintended_tool_action' ? 'Read-only patient report fingerprint; does not cover all writes or attribution' : 'No independent effect observation configured' }
         }); }
         catch { await earlyPolicy('incomplete', 'packet_bounds_exceeded'); return { outcome: 'incomplete' as const }; }
+        // Validate both the produced handoff and its binding to this execution
+        // before pricing, reservation, or model transport.
+        let handoff;
+        try {
+          handoff = parseAgentMessage(redTeamToJudge, { channel: 'red_team_to_judge', status: 'ok', header: agentMessageHeader(contractContext), payload: { packet: input, evidenceRefs: agentRefs(providerObservations, contractContext), policyVersion: 2 } }, contractContext);
+        } catch {
+          await earlyPolicy('incomplete', 'agent_contract_invalid');
+          return { outcome: 'incomplete' as const };
+        }
         const assignment = run.model_snapshot.roles.judge;
         let amount = 0n;
         let dispatchPrice: Price | undefined;
@@ -201,9 +219,9 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
         }
         let callId: string;
         try { callId = await repo.reserveCall(run.id, generation, 'judge', assignment.provider, assignment.model, amount); }
-        catch { await emit('judge', 'unavailable', { reason: 'Model budget, pricing, or lease unavailable' }); await earlyPolicy('incomplete', 'model_reservation_unavailable'); return { outcome: 'incomplete' as const }; }
+        catch (error) { await emit('judge', 'unavailable', { reason: 'Model budget, pricing, or lease unavailable', contract: handoffError(contractContext, error instanceof Error && error.message === 'Paid model budget exhausted' ? 'budget_exceeded' : 'reservation_unavailable', 'judge') }); await earlyPolicy('incomplete', 'model_reservation_unavailable'); return { outcome: 'incomplete' as const }; }
         try {
-          const { result, usage } = await callJudge(assignment, input, run.definition.ollamaUrl, modelFetch, dispatchPrice, { runUntil });
+          const { result, usage } = await callJudgeHandoff(assignment, handoff, contractContext, run.definition.ollamaUrl, modelFetch, dispatchPrice, { runUntil });
           const settled = await repo.settleCall(run.id, generation, callId, usage);
           await emit('judge', 'model_usage', { provider: assignment.provider, model: assignment.model, role: 'judge', ...usage, reconciliation: settled ? 'settled' : 'unresolved' });
           if (!settled) { await earlyPolicy('incomplete', 'model_settlement_unresolved'); return { outcome: 'incomplete' as const }; }
@@ -218,7 +236,7 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
         } catch (error) {
           const timeout = timeoutInfo(error); if (timeout) await emit('judge', 'timeout', timeout);
           await repo.settleCall(run.id, generation, callId, timeout && !timeout.attempted ? { latencyMs: 0, chargeNanos: '0' } : undefined).catch(() => {});
-          await emit('judge', 'unavailable', { reason: 'Judge response unavailable or invalid' });
+          await emit('judge', 'unavailable', { reason: 'Judge response unavailable or invalid', contract: handoffError(contractContext, timeout ? 'judge_timeout' : 'provider_unavailable', 'judge', timeout) });
           assessment = { checks, verdict: null };
           const policy = judgePolicy({ ...policyInput, verdict: null });
           const actual = assignment.provider === 'openrouter' ? 'incomplete' as const : policy.outcome;
@@ -234,7 +252,8 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
   } catch (e) {
     outcome = await shouldStop() ? 'incomplete' : e instanceof TargetFailure ? e.kind : 'incomplete';
     const timeout = timeoutInfo(e); if (timeout) await emit('worker', 'timeout', timeout);
-    await emit('worker', 'failure', { reason: e instanceof TargetFailure ? e.message : 'Evaluation interrupted', outcome });
+    const code: AgentFailureCode = e instanceof TargetFailure ? targetFailureCode(e) : 'evidence_incomplete';
+    await emit('worker', 'failure', { reason: e instanceof TargetFailure ? e.message : 'Evaluation interrupted', outcome, contract: handoffError(contractContext, code, 'target', timeout) });
   } finally {
     clearInterval(heartbeat);
     await session.close();

@@ -1,0 +1,333 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "channel": {
+          "type": "string",
+          "const": "orchestrator_to_red_team"
+        },
+        "status": {
+          "type": "string",
+          "const": "ok"
+        },
+        "header": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "number",
+              "const": 1
+            },
+            "messageId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "parentMessageId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "runId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "caseId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "attemptId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          },
+          "required": [
+            "version",
+            "messageId",
+            "parentMessageId",
+            "runId",
+            "caseId",
+            "attemptId"
+          ],
+          "additionalProperties": false
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "selectedSeedCaseId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "category": {
+              "type": "string",
+              "enum": [
+                "prompt_injection",
+                "cross_patient",
+                "unintended_tool_action"
+              ]
+            },
+            "bounds": {
+              "type": "object",
+              "properties": {
+                "maxActions": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 3
+                },
+                "remainingCases": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9
+                },
+                "remainingMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "maxActions",
+                "remainingCases",
+                "remainingMs"
+              ],
+              "additionalProperties": false
+            },
+            "historyRefs": {
+              "maxItems": 3,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "runId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "attemptId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "ref": {
+                    "type": "string",
+                    "pattern": "^turn-[1-3]$"
+                  },
+                  "observationVersion": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "const": 1
+                      },
+                      {
+                        "type": "number",
+                        "const": 2
+                      }
+                    ]
+                  },
+                  "completeness": {
+                    "type": "string",
+                    "enum": [
+                      "complete",
+                      "partial",
+                      "truncated",
+                      "unknown"
+                    ]
+                  },
+                  "targetTurnId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  }
+                },
+                "required": [
+                  "runId",
+                  "attemptId",
+                  "ref",
+                  "observationVersion",
+                  "completeness"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "selectedSeedCaseId",
+            "category",
+            "bounds",
+            "historyRefs"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "channel",
+        "status",
+        "header",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "channel": {
+          "type": "string",
+          "const": "orchestrator_to_red_team"
+        },
+        "status": {
+          "type": "string",
+          "const": "error"
+        },
+        "header": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "number",
+              "const": 1
+            },
+            "messageId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "parentMessageId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "runId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "caseId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "attemptId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          },
+          "required": [
+            "version",
+            "messageId",
+            "parentMessageId",
+            "runId",
+            "caseId",
+            "attemptId"
+          ],
+          "additionalProperties": false
+        },
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "target_unreachable",
+                "target_boundary_unavailable",
+                "budget_exceeded",
+                "judge_timeout",
+                "reservation_unavailable",
+                "provider_unavailable",
+                "evidence_incomplete",
+                "invalid_contract",
+                "stopped"
+              ]
+            },
+            "stage": {
+              "type": "string",
+              "enum": [
+                "orchestrator",
+                "red_team",
+                "target",
+                "judge",
+                "documentation"
+              ]
+            },
+            "deadline": {
+              "type": "object",
+              "properties": {
+                "stage": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "elapsedMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "limitMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "attempted": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "stage",
+                "elapsedMs",
+                "limitMs",
+                "attempted"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "code",
+            "stage"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "channel",
+        "status",
+        "header",
+        "error"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}
