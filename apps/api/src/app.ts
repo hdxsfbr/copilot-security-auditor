@@ -6,6 +6,7 @@ import { targetInput, targetUpdateInput, caseInput, caseDraftInput, startInput, 
 import { coverageQuery } from '../../../packages/contracts/src/coverage.js';
 import { DefinitionRevisionConflict, InvalidRunCursor, Repository, type CandidateIntegrity, type RunDefinitionReference } from './repository.js';
 import { auditArtifactVolume, storePdf, loadPdf } from './artifacts.js';
+import { operationsHealth } from './operations.js';
 import { catalog, installedOllama, preflightModels } from '../../worker/src/models.js';
 import { migrationNames } from '../../../db/migrate.js';
 
@@ -32,6 +33,11 @@ export function createApp(repo: Repository) {
     } catch {
       return res.status(503).json({ status: 'unavailable', database: 'unavailable' });
     }
+  });
+  // Worker/queue diagnostics stay separate from readiness so a stopped worker never fails the API container health check.
+  app.get('/api/operations/health', async (_req, res) => {
+    try { return res.set('Cache-Control', 'no-store').json(await operationsHealth(repo.pool)); }
+    catch { return res.status(503).set('Cache-Control', 'no-store').json({ v: 1, code: 'unavailable', message: 'Operations status unavailable' }); }
   });
   app.get('/api/integrity', async (_req, res) => res.json(await auditArtifactVolume(repo)));
   app.get('/api/schedules', async (_req, res) => res.json(await repo.schedules()));
