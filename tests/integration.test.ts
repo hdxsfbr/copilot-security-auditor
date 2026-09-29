@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { database, seed, users, fixture, modelFixture } from './support.js';
 import { processNext } from '../apps/worker/src/process.js';
-import { storePdf, loadPdf } from '../apps/api/src/artifacts.js';
+import { auditArtifactVolume, storePdf, loadPdf } from '../apps/api/src/artifacts.js';
 import { PDFDocument } from 'pdf-lib';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -136,6 +136,7 @@ test('verified two-user scopes, one regression per confirmation, and fenced arti
     const bytes = Buffer.from(await pdf.save());
     const ref = await storePdf(db.repo, selected.id, 'lab_pdf', bytes);
     assert.deepEqual(await loadPdf(db.repo, selected.id, ref.id, 'lab_pdf'), bytes);
+    assert.equal((await auditArtifactVolume(db.repo)).ok, true);
     await assert.rejects(loadPdf(db.repo, selected.id, ref.id, 'intake_form'), /not linked/);
     await assert.rejects(storePdf(db.repo, selected.id, 'lab_pdf', Buffer.from('%PDF-broken')), /Invalid PDF/);
     const tooManyIntake = await PDFDocument.create(); for (let i = 0; i < 11; i++) tooManyIntake.addPage();
@@ -163,6 +164,13 @@ test('verified two-user scopes, one regression per confirmation, and fenced arti
     assert.equal(JSON.stringify(await db.repo.events(first.id)).includes(users.userA.password), false);
     await writeFile(join(dir, `${ref.id}.pdf`), Buffer.from('tampered'));
     await assert.rejects(loadPdf(db.repo, selected.id, ref.id, 'lab_pdf'), /integrity/);
+    assert.deepEqual((await auditArtifactVolume(db.repo)).corrupt, [ref.id]);
+    await rm(join(dir, `${ref.id}.pdf`));
+    await writeFile(join(dir, 'unreferenced.pdf'), bytes);
+    const audit = await auditArtifactVolume(db.repo);
+    assert.deepEqual(audit.missing, [ref.id]);
+    assert.deepEqual(audit.orphaned, ['unreferenced.pdf']);
+    assert.equal(audit.ok, false);
   } finally { await toy.close(); await model.close(); await db.close(); await rm(dir, { recursive: true, force: true }); delete process.env.ARTIFACT_DIR; }
 });
 

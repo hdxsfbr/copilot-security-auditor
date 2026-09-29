@@ -149,6 +149,9 @@ export class Repository {
   async artifact(caseId: string, id: string, type: string): Promise<{ bytes: number; sha256: string } | null> {
     return (await this.pool.query('SELECT bytes,sha256 FROM artifacts WHERE id=$2 AND document_type=$3 AND (case_id=$1 OR EXISTS (SELECT 1 FROM case_artifact_links WHERE case_id=$1 AND artifact_id=$2))', [caseId, id, type])).rows[0] ?? null;
   }
+  async artifactRefs(): Promise<{ id: string; bytes: number; sha256: string }[]> {
+    return (await this.pool.query('SELECT id,bytes,sha256 FROM artifacts ORDER BY id')).rows;
+  }
   async cases(): Promise<(CaseInput & { id: string })[]> { return (await this.pool.query('SELECT id,definition FROM cases ORDER BY created_at DESC')).rows.map(r => ({ id: r.id as string, ...r.definition as CaseInput })); }
   async updateCase(id: string, definition: CaseInput) {
     const db = await this.pool.connect();

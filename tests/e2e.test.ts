@@ -11,6 +11,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { snapshot, legacyRoles } from '../apps/worker/src/models.js';
 
+process.env.TARGET_ALLOWED_HOSTS = '127.0.0.1,localhost';
+
 test('served UI and API start, poll and inspect safe, incomplete and reviewable fixture runs', async () => {
   const db = await database(), toy = fixture(), model = modelFixture('safe');
   const targetUrl = await toy.start(), ollamaUrl = await model.start();
@@ -20,11 +22,16 @@ test('served UI and API start, poll and inspect safe, incomplete and reviewable 
     const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     assert.match(await (await fetch(url)).text(), /Clinical Auditor/);
     assert.deepEqual(await (await fetch(`${url}/api/config`)).json(), { ollamaUrl: process.env.OLLAMA_URL ?? '', model: process.env.OLLAMA_MODEL ?? '' });
+    const health = await fetch(`${url}/api/health`);
+    assert.equal(health.status, 200);
+    assert.deepEqual(await health.json(), { status: 'ok', database: 'ready', migrations: 8 });
+    assert.deepEqual(await (await fetch(`${url}/api/integrity`)).json(), { ok: true, orphaned: [], missing: [], corrupt: [] });
     const post = async (path: string, body: unknown) => {
       const response = await fetch(url + '/api' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       return { status: response.status, data: await response.json() };
     };
     const target = (await post('/targets', { name: 'Fixture', baseUrl: targetUrl, ...users })).data;
+    assert.equal((await post('/targets', { name: 'Unallowlisted', baseUrl: 'https://outside.example/', ...users })).status, 400);
     assert.equal(JSON.stringify(target).includes(users.userA.password), false);
     const editResponse = await fetch(`${url}/api/targets/${target.id}/edit`);
     assert.equal(editResponse.status, 200);

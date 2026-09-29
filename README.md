@@ -34,6 +34,53 @@ Use the Scheduled evaluations panel to create or edit a daily or weekly schedule
 
 The module handshake and `/copilot-api` paths are specified by the operator's toy target contract. If your target differs, verify the contract before use. Responses are bounded and known secrets are scrubbed before persistence; the Judge receives stable patient aliases rather than raw patient IDs. Keep these toy observations on a trusted LAN.
 
+## Operations and recovery
+
+- **LAN boundary and firewall:** `LAN_BIND` must be the trusted interface address, not `0.0.0.0`; Compose publishes only port 3000 on that address. Add host-firewall rules allowing that port only from the operator subnet, deny it from guest/WAN networks, and do not publish the database, worker, artifact volume, or Ollama port. LAN reachability grants full operator power: every reachable client can configure targets, run tests, read full synthetic evidence, decide reviews, and approve exports. This is the access boundary; there is no authenticated application user.
+- **Target allowlist:** `TARGET_ALLOWED_HOSTS` is a comma-separated exact-hostname allowlist, not a URL or wildcard list. Include only the operator-owned toy target hostname(s), e.g. `host.docker.internal` or a private Compose service name. The API rejects target create/update outside this list. Do not add broad public domains or clinical systems. Provider/Ollama egress should also be restricted at the host/network firewall to the endpoints in use.
+- **Keys and identities:** Generate a unique random `DB_PASSWORD` and 32-byte `CREDENTIAL_KEY`; store `.env` and off-host copies in an operator-controlled secret store with limited access. Back up the credential key separately from the database: database backup without the matching key cannot decrypt saved test identities. Never paste keys into issues/logs or commit them. Use two distinct, least-privilege synthetic OpenEMR accounts assigned only seeded toy charts; use external `pubpid` values, not real patient data. Key rotation requires coordinated credential re-encryption; changing the key in place makes stored credentials unreadable.
+- **Evidence and decisions:** Missing, checksum-mismatched, or orphaned files invalidate evidence integrity. Such cases are incomplete/inconclusive, never safe and never confirmed findings. Evidence/artifact integrity failures require restoration and a new explicit run; never replay an ambiguous target turn automatically. Review captures an action and timestamp only; it does not authenticate or prove the reviewer's identity. Export remains a separate explicit approval.
+- **Spend:** UI call rows distinguish provider-reported OpenRouter charge (`settled`) from conservative reserved amounts whose billing could not be determined (`unresolved`). Unresolved holds remain in the run total and stop further paid calls until an operator reconciles provider usage. A configured cap bounds the auditor's dispatch reservation based on verified pricing, but is not a guarantee against provider-side billing variance. Ollama calls show usage/latency without an invented dollar price.
+
+### Paired database and evidence backup
+
+Take backups while API and worker are stopped so no new database references or artifact writes can race the pair. Keep the dump and volume archive together, encrypt them at rest, and include the matching `CREDENTIAL_KEY` in a separately protected recovery envelope:
+
+```sh
+docker compose stop api worker
+docker compose exec -T db pg_dump -U auditor -d auditor -Fc > auditor-db.dump
+docker compose run --rm --no-deps api tar -C /app/private-evidence -czf - . > private-evidence.tgz
+docker compose start api worker
+```
+
+Restore into an isolated, trusted LAN deployment with the same Compose project/volume names and matching `.env`. Keep API and worker stopped while loading both halves:
+
+```sh
+docker compose stop api worker
+docker compose exec -T db pg_restore --clean --if-exists -U auditor -d auditor < auditor-db.dump
+docker compose run --rm --no-deps api tar -C /app/private-evidence -xzf - < private-evidence.tgz
+docker compose up -d api worker
+curl --fail http://<LAN_BIND>:3000/api/health
+```
+
+Verify a prior run and retrieve its referenced PDFs through the API; `GET /api/integrity` reports missing, corrupt, or orphaned volume entries, and each referenced PDF is checked against stored size and SHA-256 metadata before use. Do not expose the isolated restore to an untrusted network. The API health endpoint reports unavailable until PostgreSQL is reachable, migrations are complete, and its migration ledger can be read; the worker is gated on that health check. Worker leases expired during downtime are fenced, unfinished cases become incomplete, target reservations release, and ambiguous paid calls stay unresolved rather than being redispatched.
+
+### Opt-in live smoke
+
+The standard `npm run test:unit`, `test:integration`, `test:e2e`, and `test:failure` suites are fixture-only; they never invoke `test:live`. The live smoke is a separate, explicit operator command and requires the exact target URL, two assigned synthetic identities, a stated maximum possible provider charge, and confirmation that the target/provider actually enforces a matching spend cap. It validates readiness/login/chart/session for both identities, distinct chart assignments, one bounded synthetic PDF attachment, and one short ticketed turn. It does not provision or authorize a target, and does not itself enforce provider billing; stop if the effective provider-side cap cannot be confirmed.
+
+```sh
+SMOKE_TARGET_URL=https://toy.example.test/ \
+SMOKE_USER_A=synthetic-a SMOKE_PASSWORD_A='...' SMOKE_PUBPID_A=SYN-900001 \
+SMOKE_USER_B=synthetic-b SMOKE_PASSWORD_B='...' SMOKE_PUBPID_B=SYN-900002 \
+SMOKE_CHARGE_CAP_USD=0.05 SMOKE_PROVIDER_CAP_CONFIRMED=true \
+npm run test:live
+```
+
+Run only against an operator-owned toy target after separately authorizing the identities and setting its effective provider-side cap. Do not use real patient data. The smoke command is never run automatically or on startup.
+
 ## Verification
+
+Run `npm run typecheck && npm run build && npm run test:unit && npm run test:integration && npm run test:e2e && npm run test:failure`. Integration/failure suites create disposable PostgreSQL containers; browser e2e also needs `/usr/bin/google-chrome`.
 
 The image build checks types and builds the UI. To run unit tests without host Node, use `docker compose run --rm --no-deps api npm run test:unit`. Integration tests start disposable Docker services and require a Docker daemon. Browser e2e tests also require `/usr/bin/google-chrome`; run `npm run build && npm run test:e2e` on a host with Chrome or an appropriate test container. The fixture suite covers capped mixed-provider behavior without paid provider calls, and fake-clock daily/weekly DST plus concurrent scheduler ticks. A bounded synthetic adaptive run was stopped after an observed turn on the live toy target using the host Ollama; its case/run were incomplete, the observation remained visible, and the target was released.
