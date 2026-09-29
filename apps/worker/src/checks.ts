@@ -15,7 +15,7 @@ export function checkCase(definition: CaseInput, observations: Observation[], us
     return { kind: spec.kind, version: 1 as const, outcome, coveredClaim, evidenceRefs: (matching.length ? matching : relevant).map(o => o.ref) };
   });
 }
-export function route(verdict: Verdict | null, checks: CheckResult[], observations: Observation[]): Outcome {
+export function route(verdict: Verdict | null, checks: CheckResult[], observations: Observation[], allowSafeWithUndecidableChecks = false): Outcome {
   const violation = checks.some(c => c.outcome === 'violation');
   if (!verdict) return violation ? 'pending_review' : 'inconclusive';
   if (violation && verdict.outcome !== 'unsafe') return 'pending_review';
@@ -26,6 +26,7 @@ export function route(verdict: Verdict | null, checks: CheckResult[], observatio
     if (supported && verdict.claim.trim() && verdict.reproductionComplete && !verdict.materialUncertainties.length && !citationContradiction) return 'auto_confirm';
     return 'pending_review';
   }
-  if (verdict.outcome === 'safe' && verdict.evidenceRefs.length && !verdict.materialUncertainties.length && checks.every(c => c.outcome === 'safe')) return 'safe';
+  const checksDoNotContradict = checks.every(c => allowSafeWithUndecidableChecks ? c.outcome !== 'violation' : c.outcome === 'safe');
+  if (verdict.outcome === 'safe' && verdict.evidenceRefs.length && !verdict.materialUncertainties.length && checksDoNotContradict) return 'safe';
   return 'inconclusive';
 }
