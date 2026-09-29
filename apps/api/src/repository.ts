@@ -12,6 +12,7 @@ import { enqueueReportJob, releaseAllowance, ReportJobStore, snapshotReportPolic
 import { recordAutomaticDecision, recordDecision } from './findings.js';
 import { ReportRevisions } from './report-revisions.js';
 import { backfillRegressionIdentities, linkRegressionIdentity, recordReplayLaunch, settleReplay } from './regression-identity.js';
+import { RegressionSuites, settleSuiteRun } from './regression-suites.js';
 import type { ReviewRationale } from '../../../packages/contracts/src/report.js';
 import type { ReplayTrigger } from '../../../packages/contracts/src/regressions.js';
 import { SpendStore } from './spend.js';
@@ -89,7 +90,8 @@ export class Repository {
   readonly reports: ReportJobStore;
   readonly reportRevisions: ReportRevisions;
   readonly spend: SpendStore;
-  constructor(readonly pool: pg.Pool) { this.reports = new ReportJobStore(pool); this.reportRevisions = new ReportRevisions(this); this.spend = new SpendStore(pool); }
+  readonly suites: RegressionSuites;
+  constructor(readonly pool: pg.Pool) { this.reports = new ReportJobStore(pool); this.reportRevisions = new ReportRevisions(this); this.spend = new SpendStore(pool); this.suites = new RegressionSuites(this); }
   async runHistory(limit = 25, cursor?: string) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid run history limit');
     const after = decodeRunCursor(cursor);
@@ -232,6 +234,7 @@ export class Repository {
         processed.push({ id: schedule.id, state, ...(runId ? { runId } : {}) });
       } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
     }
+    await this.suites.sweep(); // suites waiting for a reserved target retry here
     return processed;
   }
   async target(input: TargetInput) {
@@ -408,7 +411,7 @@ export class Repository {
       return { id, ...definition };
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
-  async start(input: StartInput, models?: Snapshot, reference?: RunDefinitionReference, options: { replayTrigger?: ReplayTrigger } = {}): Promise<{ id: string; status: 'queued' } | { active_run_id: string } | null> {
+  async start(input: StartInput, models?: Snapshot, reference?: RunDefinitionReference, options: { replayTrigger?: ReplayTrigger; afterLaunch?: (db: pg.PoolClient, runId: string) => Promise<void> } = {}): Promise<{ id: string; status: 'queued' } | { active_run_id: string } | null> {
     input = startInput.parse(input);
     if (!input.roles && !input.model) throw new Error('A Judge model is required');
     const assigned = projectRoles('selected', input.roles ?? legacyRoles(input.model!));
@@ -436,6 +439,7 @@ export class Repository {
       await db.query('INSERT INTO jobs(run_id) VALUES ($1)', [id]);
       await db.query('UPDATE targets SET active_run_id=$1 WHERE id=$2', [id, target.id]);
       await recordReplayLaunch(db, { id, targetId: target.id, caseId: input.caseId }, options.replayTrigger);
+      await options.afterLaunch?.(db, id);
       await db.query('COMMIT');
       return { id, status: 'queued' };
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
@@ -481,8 +485,10 @@ export class Repository {
         await db.query("UPDATE schedule_occurrences SET state='finished',reason='Stopped before dispatch' WHERE run_id=$1 AND state='queued'", [id]);
         await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [run.target_id, id]);
         await settleReplay(db, id);
+        await settleSuiteRun(db, id);
         await releaseAllowance(db, id, 'run_cancelled');
         await db.query('COMMIT');
+        await this.suites.afterSettle(id);
         return { stopRequested: true, status: 'finished' as const, outcome: 'incomplete' as const };
       }
       await db.query('UPDATE runs SET stop_requested=true WHERE id=$1', [id]);
@@ -676,7 +682,9 @@ export class Repository {
       await db.query("UPDATE schedule_occurrences SET state=CASE WHEN $2='blocked' THEN 'blocked' ELSE 'finished' END,reason=CASE WHEN $3 THEN 'Stopped after in-flight work' WHEN $2='blocked' THEN 'Target/login/chart preflight unavailable' ELSE NULL END WHERE run_id=$1", [id, row.outcome, row.stop_requested]);
       await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [row.target_id, id]);
       await settleReplay(db, id);
+      await settleSuiteRun(db, id);
       await db.query('COMMIT');
+      await this.suites.afterSettle(id);
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
   private async insertRegression(db: pg.PoolClient, candidate: string, run: string, adaptiveCaseId?: string | null) {
@@ -828,8 +836,10 @@ export class Repository {
         await db.query("UPDATE schedule_occurrences SET state='blocked',reason='Worker lease expired; execution uncertain' WHERE run_id=$1", [row.id]);
         await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [row.target_id, row.id]);
         await settleReplay(db, row.id);
+        await settleSuiteRun(db, row.id);
       }
       await db.query('COMMIT');
+      for (const row of rows) await this.suites.afterSettle(row.id);
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
 }

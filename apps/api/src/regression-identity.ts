@@ -3,6 +3,9 @@ import type pg from 'pg';
 import { caseInput, type CaseInput } from '../../../packages/contracts/src/index.js';
 import { regressionNormalizationVersion, type CanonicalAttack, type RegressionIdentityDetail, type RegressionIdentityList, type RegressionIdentityQuery, type ReplaySignal, type ReplayTrigger } from '../../../packages/contracts/src/regressions.js';
 
+import { deriveTargetStates, type StateObservation } from './regression-states.js';
+import type { TargetRegressionState } from '../../../packages/contracts/src/regression-states.js';
+
 type Db = pg.Pool | pg.PoolClient;
 
 // Normalization v1. Two definitions share an identity exactly when these fields are equal after the steps below.
@@ -92,6 +95,26 @@ export async function backfillRegressionIdentities(pool: pg.Pool, force = false)
 export const signalFor = (status: string, outcome: string | null): ReplaySignal => status !== 'finished' ? 'in_progress'
   : outcome === 'safe' ? 'no_violation_observed' : outcome === 'pending_review' || outcome === 'auto_confirm' ? 'violation_observed' : 'unknown';
 
+// G02: the derived state per identity, target and observed version (rules in regression-states.ts), read from the same rows the lineage shows.
+const observationKind = { in_progress: 'pending', no_violation_observed: 'safe', violation_observed: 'violation', unknown: 'inconclusive' } as const;
+async function loadStates(db: Db, ids: string[]) {
+  const sources = (await db.query(`SELECT g.identity_id,r.target_id AS "targetId",r.target_snapshot->>'name' AS "targetName",r.version,COALESCE(r.finished_at,r.created_at) AS at,r.id AS "runId"
+    FROM regressions g JOIN runs r ON r.id=g.source_run_id WHERE g.identity_id=ANY($1::uuid[])`, [ids])).rows;
+  const replays = (await db.query(`SELECT * FROM (SELECT l.identity_id,l.target_id AS "targetId",r.target_snapshot->>'name' AS "targetName",COALESCE(l.target_version,r.version) AS version,r.status,
+    COALESCE(l.outcome,CASE WHEN r.status='finished' THEN r.outcome END) AS outcome,COALESCE(l.finished_at,r.finished_at,l.created_at) AS at,l.run_id AS "runId",
+    row_number() OVER (PARTITION BY l.identity_id ORDER BY l.created_at DESC,l.id DESC) AS n FROM regression_replays l JOIN runs r ON r.id=l.run_id WHERE l.identity_id=ANY($1::uuid[])) x WHERE n<=2000`, [ids])).rows;
+  const byIdentity = new Map<string, StateObservation[]>();
+  const add = (identity: string, item: StateObservation) => byIdentity.set(identity, [...byIdentity.get(identity) ?? [], item]);
+  for (const row of sources) add(row.identity_id, { targetId: row.targetId, targetName: row.targetName, version: row.version, kind: 'violation', basis: 'source_finding', runId: row.runId, at: new Date(row.at).toISOString() });
+  for (const row of replays) add(row.identity_id, { targetId: row.targetId, targetName: row.targetName, version: row.version, kind: observationKind[signalFor(row.status, row.outcome)], basis: 'replay', runId: row.runId, at: new Date(row.at).toISOString() });
+  return new Map([...byIdentity].map(([identity, items]) => [identity, deriveTargetStates(items)]));
+}
+// A filtered list shows only the asked target, and only the asked version's entry when one is named.
+const narrow = (states: TargetRegressionState[], targetId?: string, version?: string): TargetRegressionState[] => !targetId ? states : states.filter(state => state.targetId === targetId).flatMap(state => {
+  const scopes = version === undefined ? state.scopes : state.scopes.filter(scope => scope.targetVersion === version);
+  return scopes.length ? [{ ...state, current: scopes[0], scopes }] : [];
+});
+
 const sourceSql = `SELECT g.identity_id,g.id AS "regressionId",g.candidate_id AS "findingId",c.state,c.run_id AS "runId",c.adaptive_case_id AS "executionCaseId",
   CASE WHEN c.adaptive_case_id IS NULL THEN r.case_id ELSE ac.source_case_id END AS "sourceCaseId",g.replay_case_id AS "replayCaseId",
   r.target_id AS "targetId",r.target_snapshot->>'name' AS "targetName",r.version AS "targetVersion",g.created_at AS "createdAt",
@@ -115,11 +138,12 @@ async function hydrate(db: Db, identities: Row[], sourceCap: number, replayCap: 
   const latest = group((await db.query(`SELECT * FROM (SELECT *,row_number() OVER (PARTITION BY identity_id ORDER BY "createdAt" DESC,id DESC) AS n FROM (
       SELECT DISTINCT ON (x.identity_id,x."targetId",COALESCE(x."targetVersion",'')) x.* FROM (${replaySql} WHERE l.identity_id=ANY($1::uuid[])) x
       ORDER BY x.identity_id,x."targetId",COALESCE(x."targetVersion",''),x."createdAt" DESC,x.id DESC) d) e WHERE n<=20 ORDER BY identity_id,"createdAt" DESC,id DESC`, [ids])).rows.map(({ n, ...row }) => withSignal(row)));
+  const states = await loadStates(db, ids);
   const replays = replayCap === null ? new Map() : group((await db.query(`SELECT * FROM (SELECT x.*,row_number() OVER (PARTITION BY x.identity_id ORDER BY x."createdAt" DESC,x.id DESC) AS n FROM (${replaySql} WHERE l.identity_id=ANY($1::uuid[])) x) y WHERE n<=$2 ORDER BY identity_id,n`, [ids, replayCap])).rows.map(({ n, ...row }) => withSignal(row)));
   return identities.map(row => {
     const { seq, canonical, first_seen_candidate_id, normalization_version, user_slot, created_at, ...rest } = row;
     return { ...rest, normalizationVersion: normalization_version, user: user_slot, createdAt: created_at, firstSeenFindingId: first_seen_candidate_id, canonical,
-      sourceFindingCount: counts.get(row.id)?.sources ?? 0, replayCount: counts.get(row.id)?.replays ?? 0, sourceFindings: sources.get(row.id) ?? [], latestReplays: latest.get(row.id) ?? [], replays: replays.get(row.id) ?? [] };
+      sourceFindingCount: counts.get(row.id)?.sources ?? 0, replayCount: counts.get(row.id)?.replays ?? 0, sourceFindings: sources.get(row.id) ?? [], latestReplays: latest.get(row.id) ?? [], targetStates: states.get(row.id) ?? [], replays: replays.get(row.id) ?? [] };
   });
 }
 const identitySql = `SELECT i.id,i.seq,i.normalization_version,i.fingerprint,i.category,i.user_slot,i.canonical,i.first_seen_candidate_id,i.created_at,
@@ -129,10 +153,12 @@ export async function listRegressionIdentities(pool: pg.Pool, query: RegressionI
   await backfillRegressionIdentities(pool);
   const rows = (await pool.query(`${identitySql} WHERE ($2::bigint IS NULL OR i.seq<$2::bigint) AND ($3::text IS NULL OR i.category=$3)
     AND ($4::uuid IS NULL OR EXISTS (SELECT 1 FROM regressions g JOIN runs r ON r.id=g.source_run_id WHERE g.identity_id=i.id AND r.target_id=$4)
-      OR EXISTS (SELECT 1 FROM regression_replays l WHERE l.identity_id=i.id AND l.target_id=$4)) ORDER BY i.seq DESC LIMIT $1`,
-    [query.limit + 1, query.cursor ?? null, query.category ?? null, query.targetId ?? null])).rows;
+      OR EXISTS (SELECT 1 FROM regression_replays l WHERE l.identity_id=i.id AND l.target_id=$4))
+    AND ($5::text IS NULL OR EXISTS (SELECT 1 FROM regressions g JOIN runs r ON r.id=g.source_run_id WHERE g.identity_id=i.id AND r.target_id=$4 AND r.version=$5)
+      OR EXISTS (SELECT 1 FROM regression_replays l WHERE l.identity_id=i.id AND l.target_id=$4 AND l.target_version=$5)) ORDER BY i.seq DESC LIMIT $1`,
+    [query.limit + 1, query.cursor ?? null, query.category ?? null, query.targetId ?? null, query.targetVersion ?? null])).rows;
   const page = rows.slice(0, query.limit);
-  const items = (await hydrate(pool, page, 20, null)).map(({ canonical, replays, ...item }) => ({ ...item, actionCount: canonical.actions.length,
+  const items = (await hydrate(pool, page, 20, null)).map(({ canonical, replays, ...item }) => ({ ...item, targetStates: narrow(item.targetStates, query.targetId, query.targetVersion), actionCount: canonical.actions.length,
     attachmentCount: canonical.actions.filter((action: { kind: string }) => action.kind === 'attach_pdf').length, firstMessage: String(canonical.actions[0].message).slice(0, 160) }));
   const unlinked = (await pool.query(`SELECT g.id AS "regressionId",g.candidate_id AS "findingId",g.identity_unlinked_reason AS reason,count(*) OVER ()::int AS count FROM regressions g
     WHERE g.identity_id IS NULL AND g.identity_unlinked_reason IS NOT NULL ORDER BY g.created_at,g.id LIMIT 20`)).rows;

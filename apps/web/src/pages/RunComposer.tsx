@@ -5,6 +5,7 @@ import { ReportPolicyFields } from '../components/models/ReportPolicyFields.js';
 import { RoleAssignments } from '../components/models/RoleAssignments.js';
 import { activeRoles, allRoles, buildRun, draftFromDefinition, draftKey, isCatalog, isDefinition, isPreflight, isStarted, isSummaryList, launchBlock, newDraft, seedCategory,
   type Assignment, type Catalog, type Definition, type DefinitionSummary, type Draft, type Preflight, type ReportDraft, type Role } from '../components/models/definitions.js';
+import { SuiteComposer } from '../components/models/SuiteComposer.js';
 import { RouteLink } from '../components/router.js';
 import { useWorkspace } from './context.js';
 
@@ -28,6 +29,7 @@ export function RunComposer({ active }: { active: boolean }) {
   const [busy, setBusy] = useState<Action | 'load' | null>(null);
   const [fault, setFault] = useState<Fault | null>(null);
   const [notice, setNotice] = useState('');
+  const [launch, setLaunch] = useState<'run' | 'suite'>('run');
 
   const chosen = cases.find(item => item.id === draft.caseId), target = targets.find(item => item.id === draft.targetId);
   const nameOf = (value: Draft) => value.name.trim() || `${targets.find(item => item.id === value.targetId)?.name ?? 'Target'} · ${value.kind === 'selected' ? cases.find(item => item.id === value.caseId)?.title ?? 'case' : 'adaptive exploration'}`.slice(0, 120);
@@ -142,7 +144,11 @@ export function RunComposer({ active }: { active: boolean }) {
     {fault?.top && faultAlert}
     {definitionsError && <p role="alert" className="alert">Saved definitions unavailable: {definitionsError} <button type="button" onClick={() => void loadDefinitions()}>Retry definitions</button></p>}
     {catalogError && <p role="alert" className="alert">Model catalog unavailable: {catalogError}. Typed model names still work; preflight remains the authority. <button type="button" onClick={() => void loadCatalog()}>Retry model catalog</button></p>}
-    <form onSubmit={event => { event.preventDefault(); void run('start'); }}>
+    <fieldset className="composer-mode composer-launch"><legend>Launch type</legend>
+      <label className="composer-choice"><input type="radio" name="launch-type" checked={launch === 'run'} onChange={() => setLaunch('run')}/>Run</label>
+      <label className="composer-choice"><input type="radio" name="launch-type" checked={launch === 'suite'} onChange={() => setLaunch('suite')}/>Regression suite</label>
+    </fieldset>
+    {launch === 'suite' ? <SuiteComposer active={active}/> : <form onSubmit={event => { event.preventDefault(); void run('start'); }}>
       <fieldset disabled={busy !== null} className="composer-fields">
         <div className="composer-section">
           <h3>1. Definition and target</h3>
@@ -215,6 +221,6 @@ export function RunComposer({ active }: { active: boolean }) {
           <button className="primary" type="submit" aria-describedby="composer-plan" disabled={busy !== null || !!blocked}>{busy === 'start' ? 'Starting…' : busy === 'load' ? 'Loading…' : 'Start run'}</button>
         </div>
       </div>
-    </form>
+    </form>}
   </section>;
 }

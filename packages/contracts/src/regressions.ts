@@ -1,10 +1,12 @@
 import { z } from 'zod';
+import { targetRegressionState } from './regression-states.js';
 
 // G01 regression identity and replay lineage, v1.
 // An identity groups confirmed findings whose normalized attack sequences are equivalent (see apps/api/src/regression-identity.ts
 // for the exact rules); every finding stays listed under it, so grouping never discards evidence. A replay is one run of a
-// regression's replay case, linked explicitly to the identity, the source finding and the exact target. Nothing here derives
-// "fixed", "recurring" or "resurfaced": that judgement belongs to the G02 suites, which read `signal` and `outcome`.
+// regression's replay case, linked explicitly to the identity, the source finding and the exact target. A replay row states only
+// what was observed (`signal`, `outcome`); the derived recurring/fixed/resurfaced/unknown judgement is G02's `targetStates`
+// (regression-states.ts), computed from these rows and never stored on them.
 export const regressionNormalizationVersion = 1;
 const attackCategory = z.enum(['prompt_injection', 'cross_patient', 'unintended_tool_action']);
 const timestamp = z.iso.datetime({ offset: true });
@@ -24,8 +26,9 @@ export const regressionIdentityQuery = z.object({
   limit: z.string().regex(/^[0-9]{1,3}$/).transform(Number).pipe(z.number().int().min(1).max(100)).default(25),
   cursor: z.string().regex(/^[0-9]{1,18}$/).optional(),
   category: attackCategory.optional(),
-  targetId: z.uuid().optional() // identities with a source finding or a replay on this target
-}).strict();
+  targetId: z.uuid().optional(), // identities with a source finding or a replay on this target
+  targetVersion: z.string().min(1).max(200).optional() // with targetId: only identities observed at this exact recorded version
+}).strict().refine(query => query.targetVersion === undefined || query.targetId !== undefined, 'targetVersion needs targetId');
 
 // One confirmed finding under an identity. `executionCaseId` is the exact adaptive execution the finding came from
 // (null for a selected run); `sourceCaseId` is the catalog case (selected) or seed case (adaptive) it started from.
@@ -46,7 +49,9 @@ const identityFields = {
   category: attackCategory.nullable(), user: z.enum(['A', 'B']), title: z.string().nullable(), createdAt: timestamp, firstSeenFindingId: z.uuid(),
   sourceFindingCount: z.number().int().nonnegative(), replayCount: z.number().int().nonnegative(),
   // The newest replay for each distinct target and target version; never pooled across targets or versions.
-  latestReplays: z.array(regressionReplay).max(20)
+  latestReplays: z.array(regressionReplay).max(20),
+  // G02: derived state per target (newest observation first), limited to the queried target and version when the list is filtered.
+  targetStates: z.array(targetRegressionState).max(10)
 };
 export const regressionIdentitySummary = z.object({
   ...identityFields, actionCount: z.number().int().min(1).max(3), attachmentCount: z.number().int().nonnegative(), firstMessage: z.string().max(160),

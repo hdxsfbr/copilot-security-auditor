@@ -17,6 +17,7 @@ import { findingReview } from '../../../packages/contracts/src/report.js';
 import { registerFindingRoutes } from './finding-routes.js';
 import { registerRegressionRoutes } from './regression-routes.js';
 import { totalsOf } from './spend.js';
+import { registerRegressionSuiteRoutes } from './regression-suite-routes.js';
 
 export function createApp(repo: Repository) {
   const app = express();
@@ -317,6 +318,7 @@ export function createApp(repo: Repository) {
   });
   registerFindingRoutes(app, repo, evidenceConflict);
   registerRegressionRoutes(app, repo);
+  registerRegressionSuiteRoutes(app, repo);
   const dist = fileURLToPath(new URL('../../../dist/web/', import.meta.url));
   if (existsSync(dist)) { app.use(express.static(dist)); app.get(/^(?!\/api\/).*/, (_req, res) => res.sendFile('index.html', { root: dist })); }
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
