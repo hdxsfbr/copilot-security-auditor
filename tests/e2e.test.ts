@@ -226,8 +226,8 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
     await page.getByRole('button', { name: 'Upload PDF to this draft' }).click();
     await page.getByText(/PDF invalid or over limit/).waitFor();
     await page.waitForFunction(() => {
-      const alert = document.querySelector('.case-editor [role="alert"]');
-      if (!alert || document.activeElement !== alert) return false;
+      const alert = globalThis.document.querySelector('.case-editor [role="alert"]');
+      if (!alert || globalThis.document.activeElement !== alert) return false;
       const bounds = alert.getBoundingClientRect();
       return bounds.top >= 0 && bounds.bottom <= window.innerHeight;
     });
