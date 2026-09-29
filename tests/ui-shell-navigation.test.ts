@@ -60,10 +60,12 @@ test('task routes preserve drafts, support history and hard reload, and isolate 
     await page.getByLabel('Target name').fill('Draft synthetic target');
     await page.getByRole('link', { name: 'Launch' }).click();
     await page.getByLabel('Saved authorized target').selectOption(target.id);
+    await page.waitForFunction(() => (document.querySelector('.model-desk input[type="url"]') as HTMLInputElement | null)?.value === 'http://127.0.0.1:11434');
     await page.locator('.model-desk').getByLabel('Local model server URL').fill('');
     if (capture) await page.screenshot({ path: join(output, 'desktop-launch.png'), fullPage: true });
     await page.getByRole('link', { name: 'Schedules' }).click();
     await page.getByLabel('Schedule name').fill('Draft synthetic schedule');
+    await page.waitForFunction(() => (document.querySelector('.schedule-desk input[type="url"]') as HTMLInputElement | null)?.value === 'http://127.0.0.1:11434');
     await page.locator('.schedule-desk').getByLabel('Local model server URL').fill('');
     await page.getByRole('link', { name: 'Targets' }).click();
     assert.equal(await page.getByLabel('Target name').inputValue(), 'Draft synthetic target');
