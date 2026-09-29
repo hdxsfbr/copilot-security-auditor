@@ -6,6 +6,8 @@ import type { CheckResult } from '../../worker/src/checks.js';
 import { legacyRoles, nanos, projectRoles, reserveAmount, type Role, type Snapshot, type ModelUsage } from '../../worker/src/models.js';
 import { nextFire } from './schedule-time.js';
 import { copyPdf, verifyArtifactFile, type ArtifactFileStatus } from './artifacts.js';
+import { scopedCoverage } from './coverage.js';
+import type { CoverageQuery } from '../../../packages/contracts/src/coverage.js';
 
 export type CandidateIntegrity = {
   status: 'complete' | 'missing' | 'corrupt' | 'unlinked' | 'invalid_definition' | 'unavailable';
@@ -689,6 +691,7 @@ export class Repository {
     COALESCE((SELECT jsonb_agg(jsonb_build_object('runId',v.id,'version',v.version,'outcome',v.outcome) ORDER BY v.created_at)
       FROM runs v WHERE v.case_id=COALESCE(g.replay_case_id,r.case_id) AND v.target_id=r.target_id AND v.id<>r.id AND v.status='finished'), '[]'::jsonb) AS replays
     FROM regressions g JOIN runs r ON r.id=g.source_run_id ORDER BY g.created_at DESC`)).rows; }
+  scopedCoverage(query: CoverageQuery, now?: Date) { return scopedCoverage(this.pool, query, now); }
   async coverage() { return (await this.pool.query("SELECT category,outcome,count(*)::integer AS count FROM (SELECT COALESCE(definition->'case'->>'category','prompt_injection') AS category,outcome FROM runs WHERE status='finished' AND adaptive IS NULL UNION ALL SELECT category,state AS outcome FROM adaptive_cases WHERE executed) evaluated GROUP BY 1,2")).rows; }
   private async candidateEvidenceRow(db: pg.PoolClient, id: string): Promise<CandidateEvidenceRow | null> {
     return (await db.query(`SELECT c.id,c.run_id,c.state,c.adaptive_case_id,c.export_approved_at,r.version,

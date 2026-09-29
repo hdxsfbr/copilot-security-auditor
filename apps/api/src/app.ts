@@ -3,6 +3,7 @@ import { z, ZodError } from 'zod';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { targetInput, targetUpdateInput, caseInput, caseDraftInput, startInput, adaptiveStart, runDefinition, runDefinitionInput, runDefinitionEdit, runDefinitionRef, scheduleInput, scheduleDefinitionRef, scheduleState, runHistoryQuery, type RunDefinition } from '../../../packages/contracts/src/index.js';
+import { coverageQuery } from '../../../packages/contracts/src/coverage.js';
 import { DefinitionRevisionConflict, InvalidRunCursor, Repository, type CandidateIntegrity, type RunDefinitionReference } from './repository.js';
 import { auditArtifactVolume, storePdf, loadPdf } from './artifacts.js';
 import { catalog, installedOllama, preflightModels } from '../../worker/src/models.js';
@@ -235,6 +236,10 @@ export function createApp(repo: Repository) {
     } catch { return res.status(409).json({ message: 'Regression evidence or attachment unavailable' }); }
   });
   app.get('/api/coverage', async (_req, res) => res.json(await repo.coverage()));
+  app.get('/api/coverage/scoped', async (req, res) => {
+    const report = await repo.scopedCoverage(coverageQuery.parse(req.query));
+    return report ? res.set('Cache-Control', 'no-store').json(report) : res.status(404).json({ v: 1, code: 'not_found', message: 'Target not found' });
+  });
   app.post('/api/findings/:id/review', async (req, res) => {
     const result = await repo.review(z.uuid().parse(req.params.id), z.enum(['confirm', 'reject']).parse(req.body?.decision));
     return !result ? res.status(404).json({ message: 'Finding not found' }) : 'integrityFailure' in result && result.integrityFailure ? evidenceConflict(res, result.integrityFailure) : 'conflict' in result ? res.status(409).json({ message: 'Decision already final' }) : res.json(result);
