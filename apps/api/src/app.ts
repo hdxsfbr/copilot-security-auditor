@@ -3,12 +3,17 @@ import { z, ZodError } from 'zod';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { targetInput, targetUpdateInput, caseInput, startInput, adaptiveStart, scheduleInput, scheduleState } from '../../../packages/contracts/src/index.js';
-import { Repository } from './repository.js';
+import { Repository, type CandidateIntegrity } from './repository.js';
 import { auditArtifactVolume, storePdf, loadPdf } from './artifacts.js';
 import { catalog, installedOllama, legacyRoles, snapshot } from '../../worker/src/models.js';
 
 export function createApp(repo: Repository) {
   const app = express();
+  const evidenceConflict = (res: express.Response, integrity: CandidateIntegrity) => res.status(409).json({
+    v: 1, code: 'conflict', reason: 'evidence_integrity_failed',
+    message: 'Required finding evidence is unavailable or changed. Restore the linked artifact and retry.',
+    integrity,
+  });
   const targetAllowed = (url: string) => {
     const configured = process.env.TARGET_ALLOWED_HOSTS?.split(',').map(host => host.trim().toLowerCase()).filter(Boolean) ?? [];
     if (!configured.length) return false;
@@ -20,7 +25,7 @@ export function createApp(repo: Repository) {
     try {
       await repo.pool.query('SELECT 1');
       const migrations = await repo.pool.query('SELECT count(*)::int AS count FROM schema_migrations');
-      if (migrations.rows[0].count !== 8) return res.status(503).json({ status: 'unavailable', database: 'migration_incomplete' });
+      if (migrations.rows[0].count !== 9) return res.status(503).json({ status: 'unavailable', database: 'migration_incomplete' });
       return res.json({ status: 'ok', database: 'ready', migrations: migrations.rows[0].count });
     } catch {
       return res.status(503).json({ status: 'unavailable', database: 'unavailable' });
@@ -141,6 +146,10 @@ export function createApp(repo: Repository) {
   app.get('/api/runs/:id/usage', async (req, res) => res.json(await repo.usage(z.uuid().parse(req.params.id))));
   app.get('/api/candidates', async (_req, res) => res.json(await repo.candidates()));
   app.get('/api/findings', async (_req, res) => res.json(await repo.findings()));
+  app.get('/api/findings/:id/integrity', async (req, res) => {
+    const integrity = await repo.candidateIntegrity(z.uuid().parse(req.params.id));
+    return integrity ? res.set('Cache-Control', 'no-store').json(integrity) : res.status(404).json({ v: 1, code: 'not_found', message: 'Finding not found' });
+  });
   app.get('/api/regressions', async (_req, res) => res.json(await repo.regressions()));
   app.post('/api/regressions/:id/select', async (req, res) => {
     try {
@@ -151,14 +160,15 @@ export function createApp(repo: Repository) {
   app.get('/api/coverage', async (_req, res) => res.json(await repo.coverage()));
   app.post('/api/findings/:id/review', async (req, res) => {
     const result = await repo.review(z.uuid().parse(req.params.id), z.enum(['confirm', 'reject']).parse(req.body?.decision));
-    return !result ? res.status(404).json({ message: 'Finding not found' }) : 'conflict' in result ? res.status(409).json({ message: 'Decision already final' }) : res.json(result);
+    return !result ? res.status(404).json({ message: 'Finding not found' }) : 'integrityFailure' in result && result.integrityFailure ? evidenceConflict(res, result.integrityFailure) : 'conflict' in result ? res.status(409).json({ message: 'Decision already final' }) : res.json(result);
   });
   app.post('/api/findings/:id/approve-export', async (req, res) => {
     const result = await repo.approveExport(z.uuid().parse(req.params.id));
-    return result ? res.json({ approved: true, approvedAt: result.export_approved_at }) : res.status(409).json({ message: 'Only confirmed findings can be exported' });
+    return !result ? res.status(409).json({ message: 'Only confirmed findings can be exported' }) : 'integrityFailure' in result && result.integrityFailure ? evidenceConflict(res, result.integrityFailure) : res.json({ approved: true, approvedAt: result.export_approved_at });
   });
   app.get('/api/findings/:id/export', async (req, res) => {
     const result = await repo.exportData(z.uuid().parse(req.params.id));
+    if (result && 'integrityFailure' in result && result.integrityFailure) return evidenceConflict(res, result.integrityFailure);
     if (!result?.export_approved_at) return res.status(403).json({ message: 'Export requires operator approval' });
     const definition = caseInput.parse(result.definition);
     return res.set('Cache-Control', 'no-store').json({ v: 1, findingId: req.params.id, sourceRunId: result.run_id, targetVersion: 'Withheld in shared export; see restricted run evidence', category: definition.category ?? 'prompt_injection',
