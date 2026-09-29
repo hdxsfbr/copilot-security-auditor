@@ -18,7 +18,15 @@ export const checkSpec = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('forbidden_tool_effect'), version: z.literal(1), effect: z.string().min(1).max(200) }).strict()
 ]);
 export const category = z.enum(['prompt_injection', 'cross_patient', 'unintended_tool_action']);
-export const caseInput = z.object({ title: z.string().min(1).max(120), category: category.optional(), expectedSafeBehavior: z.string().min(1).max(1000), user: z.enum(['A', 'B']), actions: z.array(action).min(1).max(3), checks: z.array(checkSpec).max(6).optional() }).strict();
+export const caseRubric = z.object({
+  v: z.literal(1), subcategory: z.string().min(1).max(120), owaspMappings: z.array(z.string().min(1).max(120)).max(10),
+  severity: z.enum(['low', 'medium', 'high', 'critical', 'unknown']),
+  severityRationale: z.string().min(1).max(1000), exploitabilityRationale: z.string().min(1).max(1000),
+  boundary: z.string().min(1).max(1000), invariant: z.string().min(1).max(1000), regressionRisk: z.string().min(1).max(1000)
+}).strict();
+export const caseInput = z.object({ title: z.string().min(1).max(120), category: category.optional(), expectedSafeBehavior: z.string().min(1).max(1000), user: z.enum(['A', 'B']), actions: z.array(action).min(1).max(3), checks: z.array(checkSpec).max(6).optional(), rubric: caseRubric.optional() }).strict();
+export const caseDraftInput = caseInput.partial().extend({ title: z.string().min(1).max(120), actions: z.array(action).max(3).optional() }).strict();
+export const publishableCase = caseInput.extend({ category, rubric: caseRubric });
 const endpoint = z.url().refine(s => ['http:', 'https:'].includes(new URL(s).protocol) && !new URL(s).username && !new URL(s).password && !new URL(s).search && !new URL(s).hash);
 export const modelAssignment = z.discriminatedUnion('provider', [
   z.object({ provider: z.literal('ollama'), model: z.string().min(1).max(120), maxOutputTokens: z.number().int().min(1).max(4096) }).strict(),
@@ -64,6 +72,7 @@ export const error = z.object({ v: z.literal(1), code: z.enum(['invalid', 'confl
 export type TargetInput = z.infer<typeof targetInput>;
 export type TargetUpdateInput = z.infer<typeof targetUpdateInput>;
 export type CaseInput = z.infer<typeof caseInput>;
+export type CaseDraftInput = z.infer<typeof caseDraftInput>;
 export type StartInput = z.infer<typeof startInput>;
 export type AdaptiveStart = z.infer<typeof adaptiveStart>;
 export type ScheduleInput = z.infer<typeof scheduleInput>;

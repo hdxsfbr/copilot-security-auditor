@@ -1,0 +1,11 @@
+ALTER TABLE cases ADD COLUMN family_id uuid;
+UPDATE cases SET family_id=id WHERE family_id IS NULL;
+ALTER TABLE cases ALTER COLUMN family_id SET NOT NULL;
+ALTER TABLE cases ADD COLUMN version integer NOT NULL DEFAULT 1 CHECK (version > 0);
+ALTER TABLE cases ADD COLUMN state text NOT NULL DEFAULT 'published' CHECK (state IN ('draft','published','archived'));
+ALTER TABLE cases ADD COLUMN authoring_mode text NOT NULL DEFAULT 'legacy' CHECK (authoring_mode IN ('legacy','versioned'));
+ALTER TABLE cases ADD COLUMN published_at timestamptz;
+UPDATE cases SET published_at=created_at WHERE published_at IS NULL;
+ALTER TABLE cases ADD COLUMN archived_at timestamptz;
+CREATE UNIQUE INDEX cases_family_version ON cases(family_id,version);
+CREATE INDEX cases_runnable ON cases(created_at DESC) WHERE state='published';
