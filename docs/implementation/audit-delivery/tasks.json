@@ -1357,14 +1357,18 @@
         "Q01"
       ],
       "locks": [
-        "ci-harness"
+        "ci-harness",
+        "delivery-plan"
       ],
       "files": [
         ".gitlab-ci.yml",
-        "docs/implementation/validation.md"
+        "docs/implementation/validation.md",
+        "docs/implementation/audit-delivery/PLAN.md",
+        "docs/implementation/audit-delivery/tasks.json",
+        "scripts/audit-coordinator.mjs",
+        "tests/coordinator.test.mjs"
       ],
-      "gate": "Requires operator-provided or approved runner infrastructure. Only listed project runner 281 has never contacted GitLab; shared runners are disabled. Do not create infrastructure or use runner registration secrets without the required environment details.",
-      "scope": "Restore executable remote CI, then demonstrate the complete fixture pipeline on a known revision. User authorized verified local checks temporarily on 2026-09-29; this issue records the independent infrastructure gap and ends that exception when verified. Do not represent queued CI as successful or disable failing tests.",
+      "scope": "Record restoration of runner 282 after enabling untagged jobs, and its successful fixture pipeline 32849/job 137071 on revision 14883c7. Retire the temporary runner-unavailable coordinator policy for subsequent work while preserving the historical local-check decision. Document runner diagnostics and required MR visual evidence without disabling tests or invoking live services.",
       "accept": [
         "An online runner picks up this project's jobs and the full required pipeline passes on a known revision.",
         "Validation docs and coordinator policy/journal remove the temporary runner-unavailable exception for subsequent work.",
@@ -1409,13 +1413,5 @@
         "url": "https://linear.app/hdxsfbr/issue/HDX-41/d01-record-temporary-local-validation-policy-and-runner-blocker"
       }
     }
-  ],
-  "validationPolicy": {
-    "runnerUnavailable": {
-      "authorized": true,
-      "authorizedOn": "2026-09-29",
-      "untilTask": "Q03",
-      "reason": "User explicitly chose verified local checks temporarily while runner setup is tracked separately."
-    }
-  }
+  ]
 }
