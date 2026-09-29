@@ -5,6 +5,24 @@ import type { AdaptiveStart, CaseInput, EvidenceEvent, Outcome, ScheduleInput, S
 import type { CheckResult } from '../../worker/src/checks.js';
 import { legacyRoles, nanos, reserveAmount, type Role, type Snapshot, type ModelUsage } from '../../worker/src/models.js';
 import { nextFire } from './schedule-time.js';
+import { verifyArtifactFile, type ArtifactFileStatus } from './artifacts.js';
+
+export type CandidateIntegrity = {
+  status: 'complete' | 'missing' | 'corrupt' | 'unlinked' | 'invalid_definition' | 'unavailable';
+  artifacts: { id: string; status: ArtifactFileStatus | 'unlinked' }[];
+  checkedAt: string;
+};
+type CandidateEvidenceRow = {
+  id: string;
+  run_id: string;
+  state: string;
+  adaptive_case_id: string | null;
+  export_approved_at: Date | null;
+  version: string | null;
+  outcome: string | null;
+  definition: unknown;
+  source_case_id: string | null;
+};
 
 function key() {
   const value = process.env.CREDENTIAL_KEY;
@@ -258,14 +276,25 @@ export class Repository {
       const run = (await db.query("SELECT stop_requested,started_at,adaptive FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() FOR UPDATE", [id, generation])).rows[0];
       if (!run) throw new Error('Lease lost');
       const stopped = run.stop_requested || Date.now() >= new Date(run.started_at).getTime() + run.adaptive.maxMinutes * 60000;
-      const final = stopped ? 'incomplete' : outcome;
+      let final = stopped ? 'incomplete' : outcome;
       const caseRow = (await db.query("UPDATE adaptive_cases SET state=$3,executed=$4,reason=$5,finished_at=now() WHERE id=$1 AND run_id=$2 AND state IN ('proposed','executing') RETURNING definition", [caseId, id, final, executed, stopped ? 'Stopped or timed out' : reason ?? null])).rows[0];
       if (!caseRow) throw new Error('Case already finished');
       if (assessment && !stopped) await db.query('INSERT INTO adaptive_assessments(case_id,checks,verdict,route) VALUES ($1,$2,$3,$4)', [caseId, JSON.stringify(assessment.checks), assessment.verdict, final]);
       if (executed && (final === 'pending_review' || final === 'auto_confirm')) {
         const candidate = randomUUID();
-        await db.query('INSERT INTO candidates(id,run_id,adaptive_case_id,state,decision_route,decided_at) VALUES ($1,$2,$3,$4,$5,$6)', [candidate, id, caseId, final === 'auto_confirm' ? 'confirmed' : 'pending_review', final === 'auto_confirm' ? 'automatic' : null, final === 'auto_confirm' ? new Date() : null]);
-        if (final === 'auto_confirm') await this.insertRegression(db, candidate, id, caseId);
+        await db.query("INSERT INTO candidates(id,run_id,adaptive_case_id,state) VALUES ($1,$2,$3,'pending_review')", [candidate, id, caseId]);
+        if (final === 'auto_confirm') {
+          const candidateRow = await this.candidateEvidenceRow(db, candidate);
+          const integrity = await this.checkCandidateEvidence(db, candidateRow!);
+          if (integrity.status === 'complete') {
+            await db.query("UPDATE candidates SET state='confirmed',decision_route='automatic',decided_at=now() WHERE id=$1", [candidate]);
+            await this.insertRegression(db, candidate, id, caseId);
+          } else {
+            final = 'pending_review';
+            await db.query("UPDATE adaptive_cases SET state='pending_review',reason='Required evidence integrity failed' WHERE id=$1", [caseId]);
+            await db.query("UPDATE adaptive_assessments SET route='pending_review' WHERE case_id=$1", [caseId]);
+          }
+        }
       }
       await db.query('COMMIT');
       return final;
@@ -352,8 +381,18 @@ export class Repository {
       if (assessment) await db.query('INSERT INTO assessments(run_id,checks,verdict,route) VALUES ($1,$2,$3,$4)', [id, JSON.stringify(assessment.checks), assessment.verdict, result]);
       if (!row.adaptive && (result === 'pending_review' || result === 'auto_confirm')) {
         const candidate = randomUUID();
-        await db.query('INSERT INTO candidates(id,run_id,state,decision_route,decided_at) VALUES ($1,$2,$3,$4,$5)', [candidate, id, result === 'auto_confirm' ? 'confirmed' : 'pending_review', result === 'auto_confirm' ? 'automatic' : null, result === 'auto_confirm' ? new Date() : null]);
-        if (result === 'auto_confirm') await this.insertRegression(db, candidate, id);
+        await db.query("INSERT INTO candidates(id,run_id,state) VALUES ($1,$2,'pending_review')", [candidate, id]);
+        if (result === 'auto_confirm') {
+          const candidateRow = await this.candidateEvidenceRow(db, candidate);
+          const integrity = await this.checkCandidateEvidence(db, candidateRow!);
+          if (integrity.status === 'complete') {
+            await db.query("UPDATE candidates SET state='confirmed',decision_route='automatic',decided_at=now() WHERE id=$1", [candidate]);
+            await this.insertRegression(db, candidate, id);
+          } else {
+            await db.query("UPDATE runs SET outcome='pending_review' WHERE id=$1", [id]);
+            await db.query("UPDATE assessments SET route='pending_review' WHERE run_id=$1", [id]);
+          }
+        }
       }
       await db.query("UPDATE schedule_occurrences SET state=CASE WHEN $2='blocked' THEN 'blocked' ELSE 'finished' END,reason=CASE WHEN $2='blocked' THEN 'Target/login/chart preflight unavailable' ELSE NULL END WHERE run_id=$1", [id, row.outcome]);
       await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [row.target_id, id]);
@@ -363,7 +402,7 @@ export class Repository {
   private async insertRegression(db: pg.PoolClient, candidate: string, run: string, adaptiveCaseId?: string | null) {
     await db.query('INSERT INTO regressions(id,candidate_id,source_run_id,definition) SELECT $1,$2,r.id,COALESCE(ac.definition,r.definition->\'case\') FROM runs r LEFT JOIN adaptive_cases ac ON ac.id=$4 WHERE r.id=$3 ON CONFLICT (candidate_id) DO NOTHING', [randomUUID(), candidate, run, adaptiveCaseId ?? null]);
   }
-  async findings() { return (await this.pool.query("SELECT c.id,c.run_id AS \"runId\",c.state,c.decision_route AS \"decisionRoute\",c.export_approved_at AS \"exportApprovedAt\",r.version,COALESCE(ac.state,r.outcome) AS outcome,COALESCE(ac.definition,r.definition->'case')->>'title' AS title FROM candidates c JOIN runs r ON r.id=c.run_id LEFT JOIN adaptive_cases ac ON ac.id=c.adaptive_case_id ORDER BY c.created_at DESC")).rows; }
+  async findings() { return (await this.pool.query("SELECT c.id,c.run_id AS \"runId\",c.state,c.decision_route AS \"decisionRoute\",c.export_approved_at AS \"exportApprovedAt\",c.evidence_integrity AS \"evidenceIntegrity\",r.version,COALESCE(ac.state,r.outcome) AS outcome,COALESCE(ac.definition,r.definition->'case')->>'title' AS title FROM candidates c JOIN runs r ON r.id=c.run_id LEFT JOIN adaptive_cases ac ON ac.id=c.adaptive_case_id ORDER BY c.created_at DESC")).rows; }
   async selectRegression(id: string) {
     const db = await this.pool.connect();
     try {
@@ -387,13 +426,60 @@ export class Repository {
       FROM runs v WHERE v.case_id=COALESCE(g.replay_case_id,r.case_id) AND v.target_id=r.target_id AND v.id<>r.id AND v.status='finished'), '[]'::jsonb) AS replays
     FROM regressions g JOIN runs r ON r.id=g.source_run_id ORDER BY g.created_at DESC`)).rows; }
   async coverage() { return (await this.pool.query("SELECT category,outcome,count(*)::integer AS count FROM (SELECT COALESCE(definition->'case'->>'category','prompt_injection') AS category,outcome FROM runs WHERE status='finished' AND adaptive IS NULL UNION ALL SELECT category,state AS outcome FROM adaptive_cases WHERE executed) evaluated GROUP BY 1,2")).rows; }
+  private async candidateEvidenceRow(db: pg.PoolClient, id: string): Promise<CandidateEvidenceRow | null> {
+    return (await db.query(`SELECT c.id,c.run_id,c.state,c.adaptive_case_id,c.export_approved_at,r.version,
+      CASE WHEN c.adaptive_case_id IS NULL THEN r.outcome ELSE ac.state END AS outcome,
+      CASE WHEN c.adaptive_case_id IS NULL THEN r.definition->'case' ELSE ac.definition END AS definition,
+      CASE WHEN c.adaptive_case_id IS NULL THEN r.case_id ELSE ac.source_case_id END AS source_case_id
+      FROM candidates c JOIN runs r ON r.id=c.run_id
+      LEFT JOIN adaptive_cases ac ON ac.id=c.adaptive_case_id AND ac.run_id=c.run_id
+      WHERE c.id=$1 FOR UPDATE OF c`, [id])).rows[0] ?? null;
+  }
+  private async checkCandidateEvidence(db: pg.PoolClient, row: CandidateEvidenceRow): Promise<CandidateIntegrity> {
+    const checkedAt = new Date().toISOString();
+    const parsed = caseInput.safeParse(row.definition);
+    if (!parsed.success || !row.source_case_id) {
+      const integrity: CandidateIntegrity = { status: 'invalid_definition', artifacts: [], checkedAt };
+      await db.query('UPDATE candidates SET evidence_integrity=$2 WHERE id=$1', [row.id, integrity]);
+      return integrity;
+    }
+    const references = new Map<string, { id: string; documentType: string }>();
+    for (const action of parsed.data.actions) if (action.kind === 'attach_pdf') references.set(`${action.artifactId}:${action.documentType}`, { id: action.artifactId, documentType: action.documentType });
+    const artifacts: CandidateIntegrity['artifacts'] = [];
+    for (const reference of references.values()) {
+      const metadata = (await db.query(`SELECT a.id,a.bytes,a.sha256 FROM artifacts a
+        WHERE a.id=$2 AND a.document_type=$3 AND
+        (a.case_id=$1 OR EXISTS (SELECT 1 FROM case_artifact_links l WHERE l.case_id=$1 AND l.artifact_id=a.id))`,
+        [row.source_case_id, reference.id, reference.documentType])).rows[0] as { id: string; bytes: number; sha256: string } | undefined;
+      artifacts.push({ id: reference.id, status: metadata ? await verifyArtifactFile(metadata) : 'unlinked' });
+    }
+    const failed = artifacts.find(artifact => artifact.status !== 'available');
+    const integrity: CandidateIntegrity = { status: failed && failed.status !== 'available' ? failed.status : 'complete', artifacts, checkedAt };
+    await db.query('UPDATE candidates SET evidence_integrity=$2 WHERE id=$1', [row.id, integrity]);
+    return integrity;
+  }
+  async candidateIntegrity(id: string): Promise<CandidateIntegrity | null> {
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const row = await this.candidateEvidenceRow(db, id);
+      if (!row) { await db.query('ROLLBACK'); return null; }
+      const integrity = await this.checkCandidateEvidence(db, row);
+      await db.query('COMMIT');
+      return integrity;
+    } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
+  }
   async review(id: string, decision: 'confirm' | 'reject') {
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
-      const row = (await db.query('SELECT run_id,state,adaptive_case_id FROM candidates WHERE id=$1 FOR UPDATE', [id])).rows[0];
+      const row = await this.candidateEvidenceRow(db, id);
       if (!row) { await db.query('ROLLBACK'); return null; }
       if (row.state === 'pending_review') {
+        if (decision === 'confirm') {
+          const integrity = await this.checkCandidateEvidence(db, row);
+          if (integrity.status !== 'complete') { await db.query('COMMIT'); return { integrityFailure: integrity }; }
+        }
         await db.query('UPDATE candidates SET state=$2,decision_route=$3,decided_at=now() WHERE id=$1', [id, decision === 'confirm' ? 'confirmed' : 'rejected', 'operator']);
         if (decision === 'confirm') await this.insertRegression(db, id, row.run_id, row.adaptive_case_id);
       } else if (row.state !== (decision === 'confirm' ? 'confirmed' : 'rejected')) { await db.query('ROLLBACK'); return { conflict: true }; }
@@ -402,11 +488,30 @@ export class Repository {
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
   async approveExport(id: string) {
-    const row = (await this.pool.query("UPDATE candidates SET export_approved_at=COALESCE(export_approved_at,now()) WHERE id=$1 AND state='confirmed' RETURNING run_id,export_approved_at", [id])).rows[0];
-    return row ?? null;
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const row = await this.candidateEvidenceRow(db, id);
+      if (!row || row.state !== 'confirmed') { await db.query('ROLLBACK'); return null; }
+      const integrity = await this.checkCandidateEvidence(db, row);
+      if (integrity.status !== 'complete') { await db.query('COMMIT'); return { integrityFailure: integrity }; }
+      const approved = (await db.query('UPDATE candidates SET export_approved_at=COALESCE(export_approved_at,now()) WHERE id=$1 RETURNING run_id,export_approved_at', [id])).rows[0];
+      await db.query('COMMIT');
+      return approved;
+    } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
   }
   async exportData(id: string) {
-    return (await this.pool.query("SELECT c.export_approved_at,r.version,COALESCE(ac.definition,r.definition->'case') AS definition,COALESCE(ac.state,r.outcome) AS outcome,r.id AS run_id FROM candidates c JOIN runs r ON r.id=c.run_id LEFT JOIN adaptive_cases ac ON ac.id=c.adaptive_case_id WHERE c.id=$1 AND c.state='confirmed'", [id])).rows[0] ?? null;
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const row = await this.candidateEvidenceRow(db, id);
+      if (!row || row.state !== 'confirmed') { await db.query('ROLLBACK'); return null; }
+      if (!row.export_approved_at) { await db.query('COMMIT'); return { export_approved_at: null }; }
+      const integrity = await this.checkCandidateEvidence(db, row);
+      if (integrity.status !== 'complete') { await db.query('COMMIT'); return { integrityFailure: integrity }; }
+      await db.query('COMMIT');
+      return { export_approved_at: row.export_approved_at, version: row.version, definition: row.definition, outcome: row.outcome, run_id: row.run_id };
+    } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
   }
   async expire() {
     const db = await this.pool.connect();

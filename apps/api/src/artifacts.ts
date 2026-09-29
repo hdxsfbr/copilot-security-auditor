@@ -1,10 +1,28 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PDFDocument } from 'pdf-lib';
 import type { Repository } from './repository.js';
 
 const root = () => process.env.ARTIFACT_DIR ?? '/app/private-evidence';
+export type ArtifactFileStatus = 'available' | 'missing' | 'corrupt' | 'unavailable';
+
+// Read a single opened file descriptor so a path swap cannot change the bytes
+// between the metadata and digest checks. A later loss is checked again on export.
+export async function verifyArtifactFile(ref: { id: string; bytes: number; sha256: string }): Promise<ArtifactFileStatus> {
+  let file;
+  try {
+    file = await open(join(root(), `${ref.id}.pdf`), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const metadata = await file.stat();
+    if (!metadata.isFile() || metadata.size !== ref.bytes) return 'corrupt';
+    const bytes = await file.readFile();
+    return bytes.length === ref.bytes && createHash('sha256').update(bytes).digest('hex') === ref.sha256 ? 'available' : 'corrupt';
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' ? 'missing' : code === 'ELOOP' ? 'corrupt' : 'unavailable';
+  } finally { await file?.close(); }
+}
 export async function storePdf(repo: Repository, caseId: string, documentType: 'lab_pdf' | 'intake_form', bytes: Buffer) {
   const limit = documentType === 'lab_pdf' ? 20 * 1024 * 1024 : 10 * 1024 * 1024;
   if (!bytes.length || bytes.length > limit || !bytes.subarray(0, 5).equals(Buffer.from('%PDF-'))) throw new Error('Invalid PDF size or signature');
