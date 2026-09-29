@@ -4,8 +4,18 @@
 
 node_modules/
 dist/
-.env
 *.log
 
-# Riptide artifacts (cloud-synced)
-.humanlayer/tasks/
+# Local environment and secret files; keep the documented template tracked.
+.env*
+!.env.example
+
+# Local databases and private evidence backups.
+/backups/
+/auditor-db.dump*
+/private-evidence.tgz*
+
+# Generated test output.
+/coverage/
+/test-results/
+/playwright-report/
