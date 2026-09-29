@@ -1,0 +1,14 @@
+[
+  {
+    "chargeNanos": null,
+    "id": "7b6ca453-7601-48a5-8c02-50f3bd3f636a",
+    "inputTokens": 495,
+    "latencyMs": 701,
+    "model": "qwen3-coder:30b",
+    "outputTokens": 94,
+    "provider": "ollama",
+    "reservedNanos": "0",
+    "role": "judge",
+    "status": "settled"
+  }
+]
