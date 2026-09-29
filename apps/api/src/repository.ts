@@ -1,11 +1,11 @@
 import { randomUUID, createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import pg from 'pg';
-import { caseInput } from '../../../packages/contracts/src/index.js';
-import type { AdaptiveStart, CaseInput, EvidenceEvent, Outcome, ScheduleInput, StartInput, TargetInput, TargetUpdateInput, Verdict } from '../../../packages/contracts/src/index.js';
+import { caseInput, publishableCase } from '../../../packages/contracts/src/index.js';
+import type { AdaptiveStart, CaseDraftInput, CaseInput, EvidenceEvent, Outcome, ScheduleInput, StartInput, TargetInput, TargetUpdateInput, Verdict } from '../../../packages/contracts/src/index.js';
 import type { CheckResult } from '../../worker/src/checks.js';
 import { legacyRoles, nanos, reserveAmount, type Role, type Snapshot, type ModelUsage } from '../../worker/src/models.js';
 import { nextFire } from './schedule-time.js';
-import { verifyArtifactFile, type ArtifactFileStatus } from './artifacts.js';
+import { copyPdf, verifyArtifactFile, type ArtifactFileStatus } from './artifacts.js';
 
 export type CandidateIntegrity = {
   status: 'complete' | 'missing' | 'corrupt' | 'unlinked' | 'invalid_definition' | 'unavailable';
@@ -62,7 +62,7 @@ export class Repository {
       if (id && !(await db.query('SELECT 1 FROM schedules WHERE id=$1 AND NOT deleted FOR UPDATE', [id])).rowCount) { await db.query('ROLLBACK'); return null; }
       if (!(await db.query('SELECT 1 FROM targets WHERE id=$1', [run.targetId])).rowCount) throw new Error('Target unavailable');
       const ids = input.run.kind === 'selected' ? [input.run.input.caseId] : input.run.input.caseIds;
-      const saved = await db.query('SELECT id,definition FROM cases WHERE id=ANY($1::uuid[])', [ids]);
+      const saved = await db.query("SELECT id,definition FROM cases WHERE id=ANY($1::uuid[]) AND state='published' FOR SHARE", [ids]);
       if (saved.rowCount !== ids.length) throw new Error('Case unavailable');
       if (input.run.kind === 'adaptive' && input.run.input.categories.some(c => !saved.rows.some(row => (row.definition.category ?? 'prompt_injection') === c))) throw new Error('Category has no seed case');
       for (const row of saved.rows) for (const action of (row.definition as CaseInput).actions) if (action.kind === 'attach_pdf' && !(await db.query('SELECT 1 FROM artifacts WHERE id=$2 AND document_type=$3 AND (case_id=$1 OR EXISTS (SELECT 1 FROM case_artifact_links WHERE case_id=$1 AND artifact_id=$2))', [row.id, action.artifactId, action.documentType])).rowCount) throw new Error('Artifact unavailable');
@@ -104,6 +104,11 @@ export class Repository {
         if (!target) { state = 'blocked'; reason = 'Target unavailable'; }
         else if (target.active_run_id) { state = 'skipped'; reason = `Target reserved by run ${target.active_run_id}`; }
         else {
+          const caseIds = (schedule.definition as ScheduleInput).run.kind === 'selected' ? [(input as StartInput).caseId] : (input as AdaptiveStart).caseIds;
+          const runnable = await db.query("SELECT id FROM cases WHERE id=ANY($1::uuid[]) AND state='published' FOR SHARE", [caseIds]);
+          if (runnable.rowCount !== caseIds.length) { state = 'blocked'; reason = 'Case draft, archived or unavailable'; }
+        }
+        if (state === 'queued' && target) {
           runId = randomUUID();
           const selected = (schedule.run_snapshot as { case?: CaseInput; adaptive?: unknown; ollamaUrl: string });
           await db.query('INSERT INTO runs(id,target_id,case_id,definition,target_snapshot,model_snapshot,paid_cap_nanos,adaptive) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [runId, target.id, selected.case ? (input as StartInput).caseId : null, selected.case ? selected : { ollamaUrl: selected.ollamaUrl }, { name: target.name, baseUrl: target.base_url, userARef: target.user_a_credential, userBRef: target.user_b_credential }, schedule.model_snapshot, input.openRouterCapUsd === undefined ? null : nanos(input.openRouterCapUsd).toString(), selected.adaptive ?? null]);
@@ -157,12 +162,109 @@ export class Repository {
   }
   async targets() { return (await this.pool.query('SELECT id,name,base_url AS "baseUrl",active_run_id AS "activeRunId" FROM targets ORDER BY created_at DESC')).rows; }
   async createCase(input: CaseInput) {
+    if (input.actions.some(action => action.kind === 'attach_pdf')) throw new Error('Upload PDFs to a draft before publishing');
     const id = randomUUID();
-    await this.pool.query('INSERT INTO cases(id,definition) VALUES ($1,$2)', [id, input]);
+    await this.pool.query('INSERT INTO cases(id,family_id,definition,published_at) VALUES ($1,$1,$2,now())', [id, input]);
     return { id, ...input };
   }
+  async createDraft(input: CaseDraftInput) {
+    const id = randomUUID();
+    await this.pool.query("INSERT INTO cases(id,family_id,definition,state,authoring_mode,published_at) VALUES ($1,$1,$2,'draft','versioned',NULL)", [id, input]);
+    return { id, familyId: id, version: 1, state: 'draft' as const, ...input };
+  }
+  async caseRecord(id: string) {
+    const row = (await this.pool.query('SELECT id,family_id AS "familyId",version,state,authoring_mode AS "authoringMode",definition,created_at AS "createdAt",published_at AS "publishedAt",archived_at AS "archivedAt" FROM cases WHERE id=$1', [id])).rows[0];
+    return row ? { ...row, ...row.definition, metadataStatus: row.definition.category && row.definition.rubric ? 'complete' : row.state === 'draft' ? 'incomplete_draft' : 'unknown_legacy' } : null;
+  }
+  async canUploadArtifact(id: string) {
+    return !!(await this.pool.query("SELECT 1 FROM cases WHERE id=$1 AND (state='draft' OR (state='published' AND authoring_mode='legacy'))", [id])).rowCount;
+  }
+  async caseVersions(id: string) {
+    const rows = (await this.pool.query('SELECT id,family_id AS "familyId",version,state,authoring_mode AS "authoringMode",definition,created_at AS "createdAt",published_at AS "publishedAt",archived_at AS "archivedAt" FROM cases WHERE family_id=(SELECT family_id FROM cases WHERE id=$1) ORDER BY version', [id])).rows;
+    return rows.length ? rows.map(row => ({ ...row, ...row.definition, metadataStatus: row.definition.category && row.definition.rubric ? 'complete' : row.state === 'draft' ? 'incomplete_draft' : 'unknown_legacy' })) : null;
+  }
+  async caseExecutions(id: string) {
+    return (await this.pool.query(`
+      SELECT r.id AS "runId",NULL::uuid AS "adaptiveCaseId",r.status,r.outcome,r.version AS "targetVersion",
+        c.version AS "caseVersion",r.definition->'case' AS definition,r.created_at AS "createdAt"
+      FROM runs r JOIN cases c ON c.id=r.case_id WHERE c.id=$1
+      UNION ALL
+      SELECT r.id,ac.id,r.status,ac.state,r.version,c.version,ac.definition,r.created_at
+      FROM adaptive_cases ac JOIN runs r ON r.id=ac.run_id JOIN cases c ON c.id=ac.source_case_id WHERE c.id=$1
+      ORDER BY "createdAt" DESC`, [id])).rows;
+  }
+  async drafts() {
+    return (await this.pool.query("SELECT id,family_id AS \"familyId\",version,state,authoring_mode AS \"authoringMode\",definition,created_at AS \"createdAt\" FROM cases WHERE state='draft' ORDER BY created_at DESC")).rows.map(row => ({ ...row, ...row.definition }));
+  }
+  async updateDraft(id: string, definition: CaseDraftInput, expectedDefinition?: CaseDraftInput) {
+    const row = (await this.pool.query("UPDATE cases SET definition=$2 WHERE id=$1 AND state='draft' AND authoring_mode='versioned' AND ($3::jsonb IS NULL OR definition=$3::jsonb) RETURNING family_id,version", [id, definition, expectedDefinition ?? null])).rows[0];
+    return row ? { id, familyId: row.family_id as string, version: row.version as number, state: 'draft' as const, ...definition } : null;
+  }
+  async publishDraft(id: string) {
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const row = (await db.query("SELECT definition,family_id,version FROM cases WHERE id=$1 AND state='draft' AND authoring_mode='versioned' FOR UPDATE", [id])).rows[0];
+      if (!row) { await db.query('ROLLBACK'); return null; }
+      const parsed = publishableCase.safeParse(row.definition);
+      if (!parsed.success) { await db.query('ROLLBACK'); return { invalid: 'definition' as const, issues: parsed.error.issues.map(issue => ({ path: issue.path, code: issue.code })) }; }
+      for (const action of parsed.data.actions) if (action.kind === 'attach_pdf') {
+        const artifact = (await db.query(`SELECT id,bytes,sha256 FROM artifacts WHERE id=$2 AND document_type=$3
+          AND (case_id=$1 OR EXISTS (SELECT 1 FROM case_artifact_links WHERE case_id=$1 AND artifact_id=$2))`, [id, action.artifactId, action.documentType])).rows[0];
+        if (!artifact) { await db.query('ROLLBACK'); return { invalid: 'artifact_unlinked' as const, artifactId: action.artifactId }; }
+        const status = await verifyArtifactFile(artifact);
+        if (status !== 'available') { await db.query('ROLLBACK'); return { invalid: 'artifact_integrity' as const, artifactId: action.artifactId, status }; }
+      }
+      await db.query("UPDATE cases SET state='published',definition=$2,published_at=now() WHERE id=$1", [id, parsed.data]);
+      await db.query('COMMIT');
+      return { id, familyId: row.family_id as string, version: row.version as number, state: 'published' as const, ...parsed.data };
+    } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
+  }
+  async cloneCase(id: string) {
+    const db = await this.pool.connect();
+    let draftId: string;
+    let source: CaseInput;
+    let familyId: string;
+    let version: number;
+    try {
+      await db.query('BEGIN');
+      const root = (await db.query('SELECT family_id FROM cases WHERE id=$1', [id])).rows[0];
+      if (!root) { await db.query('ROLLBACK'); return null; }
+      familyId = root.family_id;
+      await db.query('SELECT id FROM cases WHERE family_id=$1 AND version=1 FOR UPDATE', [familyId]);
+      const row = (await db.query("SELECT definition FROM cases WHERE id=$1 AND state IN ('published','archived')", [id])).rows[0];
+      if (!row) { await db.query('ROLLBACK'); return null; }
+      source = caseInput.parse(row.definition);
+      version = Number((await db.query('SELECT max(version)::int AS version FROM cases WHERE family_id=$1', [familyId])).rows[0].version) + 1;
+      draftId = randomUUID();
+      await db.query("INSERT INTO cases(id,family_id,version,state,authoring_mode,definition,published_at) VALUES ($1,$2,$3,'draft','versioned',$4,NULL)", [draftId, familyId, version, { ...source, actions: [] }]);
+      await db.query('COMMIT');
+    } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
+    try {
+      const actions = [] as CaseInput['actions'];
+      for (const action of source!.actions) {
+        if (action.kind === 'attach_pdf') {
+          const copied = await copyPdf(this, id, draftId!, action.artifactId, action.documentType);
+          actions.push({ ...action, artifactId: copied.id });
+        } else actions.push(action);
+      }
+      const definition = { ...source!, actions };
+      if (!await this.updateDraft(draftId!, definition, { ...source!, actions: [] })) throw new Error('Draft changed during copy');
+      return { id: draftId!, familyId: familyId!, version: version!, state: 'draft' as const, ...definition };
+    } catch {
+      return { id: draftId!, familyId: familyId!, version: version!, state: 'draft' as const, copyFailed: true as const };
+    }
+  }
+  async archiveCase(id: string) {
+    const row = (await this.pool.query("UPDATE cases SET state='archived',archived_at=now() WHERE id=$1 AND state='published' RETURNING family_id,version", [id])).rows[0];
+    return row ? { id, familyId: row.family_id as string, version: row.version as number, state: 'archived' as const } : null;
+  }
   async addArtifact(ref: { id: string; caseId: string; documentType: string; sha256: string; bytes: number; pages: number }) {
-    await this.pool.query('INSERT INTO artifacts(id,case_id,document_type,sha256,bytes,pages) VALUES ($1,$2,$3,$4,$5,$6)', [ref.id, ref.caseId, ref.documentType, ref.sha256, ref.bytes, ref.pages]);
+    const result = await this.pool.query(`INSERT INTO artifacts(id,case_id,document_type,sha256,bytes,pages)
+      SELECT $1,id,$3,$4,$5,$6 FROM cases WHERE id=$2 AND
+      (state='draft' OR (state='published' AND authoring_mode='legacy')) FOR SHARE`,
+      [ref.id, ref.caseId, ref.documentType, ref.sha256, ref.bytes, ref.pages]);
+    if (!result.rowCount) throw new Error('Case no longer accepts artifacts');
   }
   async artifact(caseId: string, id: string, type: string): Promise<{ bytes: number; sha256: string } | null> {
     return (await this.pool.query('SELECT bytes,sha256 FROM artifacts WHERE id=$2 AND document_type=$3 AND (case_id=$1 OR EXISTS (SELECT 1 FROM case_artifact_links WHERE case_id=$1 AND artifact_id=$2))', [caseId, id, type])).rows[0] ?? null;
@@ -170,14 +272,18 @@ export class Repository {
   async artifactRefs(): Promise<{ id: string; bytes: number; sha256: string }[]> {
     return (await this.pool.query('SELECT id,bytes,sha256 FROM artifacts ORDER BY id')).rows;
   }
-  async cases(): Promise<(CaseInput & { id: string })[]> { return (await this.pool.query('SELECT id,definition FROM cases ORDER BY created_at DESC')).rows.map(r => ({ id: r.id as string, ...r.definition as CaseInput })); }
+  async cases(): Promise<(CaseInput & { id: string })[]> { return (await this.pool.query("SELECT id,definition FROM cases WHERE state='published' ORDER BY created_at DESC")).rows.map(r => ({ id: r.id as string, ...r.definition as CaseInput })); }
   async updateCase(id: string, definition: CaseInput) {
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
-      const row = (await db.query('SELECT id FROM cases WHERE id=$1 FOR UPDATE', [id])).rows[0];
+      const row = (await db.query('SELECT id,state,authoring_mode FROM cases WHERE id=$1 FOR UPDATE', [id])).rows[0];
       if (!row) { await db.query('ROLLBACK'); return null; }
-      if ((await db.query('SELECT 1 FROM runs WHERE case_id=$1 LIMIT 1', [id])).rowCount) { await db.query('ROLLBACK'); return { conflict: true }; }
+      if (row.state !== 'published' || row.authoring_mode !== 'legacy') { await db.query('ROLLBACK'); return { conflict: true }; }
+      if ((await db.query("SELECT 1 FROM runs WHERE case_id=$1 OR adaptive @> jsonb_build_object('seeds',jsonb_build_array(jsonb_build_object('id',$1::text))) LIMIT 1", [id])).rowCount ||
+        (await db.query('SELECT 1 FROM adaptive_cases WHERE source_case_id=$1 LIMIT 1', [id])).rowCount ||
+        (await db.query('SELECT 1 FROM regressions WHERE replay_case_id=$1 LIMIT 1', [id])).rowCount ||
+        (await db.query("SELECT 1 FROM schedules WHERE NOT deleted AND (definition->'run'->'input'->>'caseId'=$1::text OR definition->'run'->'input'->'caseIds' ? $1::text) LIMIT 1", [id])).rowCount) { await db.query('ROLLBACK'); return { conflict: true }; }
       for (const action of definition.actions) if (action.kind === 'attach_pdf' && !(await db.query('SELECT 1 FROM artifacts WHERE id=$2 AND document_type=$3 AND (case_id=$1 OR EXISTS (SELECT 1 FROM case_artifact_links WHERE case_id=$1 AND artifact_id=$2))', [id, action.artifactId, action.documentType])).rowCount) { await db.query('ROLLBACK'); return { invalid: true }; }
       await db.query('UPDATE cases SET definition=$2 WHERE id=$1', [id, definition]);
       await db.query('COMMIT');
@@ -199,7 +305,7 @@ export class Repository {
     try {
       await db.query('BEGIN');
       const target = (await db.query('SELECT id,name,base_url,active_run_id,user_a_credential,user_b_credential FROM targets WHERE id=$1 FOR UPDATE', [input.targetId])).rows[0];
-      const selected = (await db.query('SELECT definition FROM cases WHERE id=$1', [input.caseId])).rows[0];
+      const selected = (await db.query("SELECT definition FROM cases WHERE id=$1 AND state='published' FOR SHARE", [input.caseId])).rows[0];
       if (!target || !selected) { await db.query('ROLLBACK'); return null; }
       if (target.active_run_id) { await db.query('ROLLBACK'); return { active_run_id: target.active_run_id }; }
       const definition = selected.definition as CaseInput;
@@ -225,7 +331,7 @@ export class Repository {
       const target = (await db.query('SELECT id,name,base_url,active_run_id,user_a_credential,user_b_credential FROM targets WHERE id=$1 FOR UPDATE', [input.targetId])).rows[0];
       if (!target) { await db.query('ROLLBACK'); return null; }
       if (target.active_run_id) { await db.query('ROLLBACK'); return { active_run_id: target.active_run_id }; }
-      const saved = await db.query('SELECT id,definition FROM cases WHERE id=ANY($1::uuid[])', [input.caseIds]);
+      const saved = await db.query("SELECT id,definition FROM cases WHERE id=ANY($1::uuid[]) AND state='published' FOR SHARE", [input.caseIds]);
       if (saved.rowCount !== input.caseIds.length || input.categories.some(c => !saved.rows.some(row => (row.definition.category ?? 'prompt_injection') === c))) throw new Error('Selected cases must cover every chosen category');
       for (const row of saved.rows) for (const action of (row.definition as CaseInput).actions) if (action.kind === 'attach_pdf' && !(await db.query('SELECT 1 FROM artifacts WHERE case_id=$1 AND id=$2 AND document_type=$3', [row.id, action.artifactId, action.documentType])).rowCount) throw new Error('Artifact not linked to selected case');
       const id = randomUUID();
@@ -409,12 +515,16 @@ export class Repository {
       await db.query('BEGIN');
       const row = (await db.query('SELECT g.replay_case_id,g.definition,c.adaptive_case_id,ac.source_case_id,r.case_id FROM regressions g JOIN candidates c ON c.id=g.candidate_id JOIN runs r ON r.id=g.source_run_id LEFT JOIN adaptive_cases ac ON ac.id=c.adaptive_case_id WHERE g.id=$1 FOR UPDATE OF g', [id])).rows[0];
       if (!row) { await db.query('ROLLBACK'); return null; }
-      if (row.replay_case_id) { await db.query('COMMIT'); return { caseId: row.replay_case_id as string }; }
+      if (row.replay_case_id) {
+        if (!(await db.query("SELECT 1 FROM cases WHERE id=$1 AND state='published'", [row.replay_case_id])).rowCount) throw new Error('Replay case archived');
+        await db.query('COMMIT'); return { caseId: row.replay_case_id as string };
+      }
       const definition = caseInput.parse(row.definition);
       const source = row.source_case_id ?? row.case_id;
       const caseId = randomUUID();
+      if (!(await db.query("SELECT 1 FROM cases WHERE id=$1 AND state='published' FOR SHARE", [source])).rowCount) throw new Error('Source case archived');
       for (const action of definition.actions) if (action.kind === 'attach_pdf' && !(await db.query('SELECT 1 FROM artifacts WHERE id=$1 AND case_id=$2 AND document_type=$3', [action.artifactId, source, action.documentType])).rowCount) throw new Error('Regression attachment unavailable');
-      await db.query('INSERT INTO cases(id,definition) VALUES ($1,$2)', [caseId, definition]);
+      await db.query('INSERT INTO cases(id,family_id,definition,published_at) VALUES ($1,$1,$2,now())', [caseId, definition]);
       for (const action of definition.actions) if (action.kind === 'attach_pdf') await db.query('INSERT INTO case_artifact_links(case_id,artifact_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [caseId, action.artifactId]);
       await db.query('UPDATE regressions SET replay_case_id=$2 WHERE id=$1', [id, caseId]);
       await db.query('COMMIT');

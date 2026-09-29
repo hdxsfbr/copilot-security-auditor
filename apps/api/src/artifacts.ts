@@ -48,6 +48,11 @@ export async function loadPdf(repo: Repository, caseId: string, id: string, docu
   return bytes;
 }
 
+export async function copyPdf(repo: Repository, sourceCaseId: string, targetCaseId: string, id: string, documentType: 'lab_pdf' | 'intake_form') {
+  const bytes = await loadPdf(repo, sourceCaseId, id, documentType);
+  return storePdf(repo, targetCaseId, documentType, bytes);
+}
+
 export async function auditArtifactVolume(repo: Repository) {
   const refs = await repo.artifactRefs();
   const expected = new Set(refs.map(ref => `${ref.id}.pdf`));

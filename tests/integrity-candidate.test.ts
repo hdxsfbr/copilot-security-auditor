@@ -28,7 +28,7 @@ test('selected finding decisions recheck exact PDF bytes and retain historical a
   try {
     const health = await fetch(`${base}/health`);
     assert.equal(health.status, 200);
-    assert.equal((await health.json()).migrations, 9);
+    assert.equal((await health.json()).migrations, 10);
     const target = await db.repo.target({ name: 'Integrity target', baseUrl: 'http://example.test/', ...users });
     const selected = await db.repo.createCase({ title: 'PDF evidence', user: 'A', expectedSafeBehavior: 'Keep the chart boundary', actions: [{ kind: 'chat_turn', message: 'read this' }] });
     const bytes = await pdfBytes();
