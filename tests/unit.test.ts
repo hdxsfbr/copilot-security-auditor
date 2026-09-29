@@ -6,7 +6,8 @@ import { users } from './support.js';
 import { checkCase, route } from '../apps/worker/src/checks.js';
 import { PDFDocument } from 'pdf-lib';
 import { callJudge, legacyRoles, nanos, reserveAmount, verifiedPrice } from '../apps/worker/src/models.js';
-import { startInput } from '../packages/contracts/src/index.js';
+import { adaptiveStart, startInput } from '../packages/contracts/src/index.js';
+import { admitProposal, adaptiveOutcome, chooseGap, timeExpired } from '../apps/worker/src/adaptive.js';
 
 test('v1 contracts reject unsafe target inputs and unbounded turns', () => {
   assert.equal(targetInput.safeParse({ name: 'test', baseUrl: 'file:///tmp/foo', ...users }).success, false);
@@ -115,4 +116,25 @@ test('provider price ceilings use dollars per million tokens, not rounded nano-u
     };
     await callJudge({ provider: 'openrouter', model: 'fixture/paid', maxOutputTokens: 32 }, packet('synthetic', [], [users.userA, users.userB]), 'http://ollama.test/', transport, { prompt: '0.00000005', completion: '0.00000008', request: '0', contextLength: 8192 });
   } finally { if (previous === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = previous; }
+});
+
+test('adaptive limits, gap choice and proposal admission reject untrusted transport', () => {
+  const id = '123e4567-e89b-42d3-a456-426614174000';
+  const input = { targetId: id, caseIds: [id], categories: ['prompt_injection'], maxCases: 2, maxMinutes: 1, roles: legacyRoles('stub'), ollamaUrl: 'http://ollama.test/' };
+  assert.ok(adaptiveStart.safeParse(input).success);
+  assert.equal(adaptiveStart.safeParse({ ...input, maxCases: 10 }).success, false);
+  assert.equal(adaptiveStart.safeParse({ ...input, maxMinutes: 31 }).success, false);
+  assert.equal(adaptiveStart.safeParse({ ...input, caseIds: [id, id] }).success, false);
+  assert.equal(adaptiveStart.safeParse({ ...input, roles: { ...input.roles, redTeam: { provider: 'openrouter', model: 'test/paid', maxOutputTokens: 32 } } }).success, false);
+  assert.equal(timeExpired(1000, 60999, 1), false);
+  assert.equal(timeExpired(1000, 61000, 1), true);
+  assert.equal(chooseGap(['prompt_injection', 'cross_patient'], [{ category: 'prompt_injection', executed: false }]), 'prompt_injection');
+  assert.equal(chooseGap(['prompt_injection', 'cross_patient'], [{ category: 'prompt_injection', executed: true }]), 'cross_patient');
+  assert.equal(adaptiveOutcome(['prompt_injection', 'cross_patient'], [{ category: 'prompt_injection', executed: true, state: 'safe' }], false), 'incomplete');
+  assert.equal(adaptiveOutcome(['prompt_injection'], [{ category: 'prompt_injection', executed: true, state: 'safe' }], true), 'incomplete');
+  const seed = caseInput.parse({ title: 'seed', user: 'A', expectedSafeBehavior: 'protect boundary', actions: [{ kind: 'chat_turn', message: 'probe' }] });
+  assert.equal(admitProposal({ actions: [{ kind: 'chat_turn', message: 'probe' }] }, seed, [users.userA, users.userB]).length, 1);
+  for (const message of ['GET /api/secrets', 'http://localhost/path', users.userA.pubpid, users.userB.password]) assert.throws(() => admitProposal({ actions: [{ kind: 'chat_turn', message }] }, seed, [users.userA, users.userB]));
+  assert.throws(() => admitProposal({ actions: [{ kind: 'attach_pdf', artifactId: id, documentType: 'lab_pdf', message: 'read' }] }, seed, [users.userA, users.userB]));
+  assert.throws(() => admitProposal({ actions: [{ kind: 'chat_turn', message: 'probe', url: 'http://bad/' }] }, seed, [users.userA, users.userB]));
 });

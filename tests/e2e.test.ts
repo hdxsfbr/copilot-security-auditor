@@ -244,3 +244,49 @@ test('operator selects a paid Judge with local companion roles and sees reported
     await toy.close(); await local.close(); await db.close();
   }
 });
+
+test('operator starts and stops bounded exploration and sees category gaps', async () => {
+  const db = await database(), toy = fixture(); const targetUrl = await toy.start();
+  const model = createServer(async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url === '/api/tags') return res.end(JSON.stringify({ models: [{ name: 'stub' }] }));
+    let body = ''; for await (const part of req) body += part;
+    const message = JSON.parse(body).messages[0].content;
+    const content = message.startsWith('Choose') ? { caseId: (model as Server & { caseId?: string }).caseId } : message.startsWith('Propose') ? { actions: [{ kind: 'chat_turn', message: 'bounded synthetic turn' }] } : { v: 1, outcome: 'safe', claim: '', evidenceRefs: ['turn-1'], reproductionComplete: true, materialUncertainties: [] };
+    return res.end(JSON.stringify({ message: { content: JSON.stringify(content) }, prompt_eval_count: 9, eval_count: 5 }));
+  });
+  await new Promise<void>(resolve => model.listen(0, '127.0.0.1', resolve));
+  const ollamaUrl = `http://127.0.0.1:${(model.address() as { port: number }).port}/`;
+  const oldModel = process.env.OLLAMA_MODEL, oldUrl = process.env.OLLAMA_URL;
+  process.env.OLLAMA_MODEL = 'stub'; process.env.OLLAMA_URL = ollamaUrl;
+  const server = createApp(db.repo).listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  try {
+    const target = await db.repo.target({ name: 'Bounded browser', baseUrl: targetUrl, ...users });
+    const selected = await db.repo.createCase({ ...testCase, title: 'Browser adaptive seed' });
+    (model as Server & { caseId?: string }).caseId = selected.id;
+    const page = await browser.newPage(); await page.goto(`http://127.0.0.1:${(server.address() as { port: number }).port}`);
+    await page.getByLabel('Saved authorized target').selectOption(target.id);
+    const desk = page.locator('.model-desk');
+    await desk.getByLabel(/Browser adaptive seed/).check();
+    await desk.getByLabel('Maximum cases').fill('1');
+    await desk.getByRole('button', { name: 'Start bounded exploration' }).click();
+    await page.getByText('queued / awaiting result').waitFor();
+    assert.equal((await processNext(db.repo))?.outcome, 'safe');
+    await page.getByText('finished / safe').waitFor();
+    await desk.getByText(/prompt injection: case 1 safe \(executed\)/).waitFor();
+    assert.match(await desk.innerText(), /orchestrator: ollama \/ stub/);
+    await desk.getByRole('button', { name: 'Start bounded exploration' }).click();
+    await page.getByText('queued / awaiting result').waitFor();
+    await desk.getByRole('button', { name: 'Stop after in-flight work' }).click();
+    await desk.getByRole('button', { name: 'Stop requested' }).waitFor();
+    assert.equal((await processNext(db.repo))?.outcome, 'incomplete');
+    await page.getByText('finished / incomplete').waitFor();
+    await desk.getByText(/prompt injection: not tested \/ gap/).waitFor();
+  } finally {
+    await browser.close(); await new Promise<void>(resolve => server.close(() => resolve()));
+    await new Promise<void>(resolve => model.close(() => resolve())); await toy.close(); await db.close();
+    if (oldModel === undefined) delete process.env.OLLAMA_MODEL; else process.env.OLLAMA_MODEL = oldModel;
+    if (oldUrl === undefined) delete process.env.OLLAMA_URL; else process.env.OLLAMA_URL = oldUrl;
+  }
+});

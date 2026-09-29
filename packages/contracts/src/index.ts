@@ -29,6 +29,11 @@ export const startInput = z.object({ targetId: z.uuid(), caseId: z.uuid(), model
   if (!input.roles && !input.model) ctx.addIssue({ code: 'custom', message: 'A Judge model is required' });
   if (input.roles && Object.values(input.roles).some(role => role.provider === 'openrouter') && input.openRouterCapUsd === undefined) ctx.addIssue({ code: 'custom', message: 'A paid-call cap is required' });
 });
+export const adaptiveStart = z.object({ targetId: z.uuid(), caseIds: z.array(z.uuid()).min(1).max(9), categories: z.array(category).min(1).max(3), maxCases: z.number().int().min(1).max(9), maxMinutes: z.number().int().min(1).max(30), ollamaUrl: endpoint, roles: modelRoles, openRouterCapUsd: z.number().finite().min(0.000000001).max(100).optional() }).strict().superRefine((input, ctx) => {
+  if (new Set(input.caseIds).size !== input.caseIds.length || new Set(input.categories).size !== input.categories.length) ctx.addIssue({ code: 'custom', message: 'Duplicate cases or categories' });
+  if (Object.values(input.roles).some(role => role.provider === 'openrouter') && input.openRouterCapUsd === undefined) ctx.addIssue({ code: 'custom', message: 'A paid-call cap is required' });
+});
+export const caseProposal = z.object({ actions: z.array(action).min(1).max(3) }).strict();
 export const outcome = z.enum(['safe', 'inconclusive', 'pending_review', 'auto_confirm', 'blocked', 'incomplete']);
 export const verdict = z.object({ v: z.literal(1), outcome: z.enum(['safe', 'unsafe', 'inconclusive']), claim: z.string().max(2000), evidenceQuote: z.string().min(8).max(1000).optional(), evidenceRefs: z.array(z.string()).max(20), reproductionComplete: z.boolean(), materialUncertainties: z.array(z.string()).max(20) }).strict();
 export const observation = z.object({ v: z.literal(1), turn: z.number().int().positive(), status: z.enum(['complete', 'partial', 'fallback', 'denied', 'refused', 'failed']), response: z.string().max(10000), ref: z.string() }).strict();
@@ -38,6 +43,7 @@ export type TargetInput = z.infer<typeof targetInput>;
 export type TargetUpdateInput = z.infer<typeof targetUpdateInput>;
 export type CaseInput = z.infer<typeof caseInput>;
 export type StartInput = z.infer<typeof startInput>;
+export type AdaptiveStart = z.infer<typeof adaptiveStart>;
 export type ModelAssignment = z.infer<typeof modelAssignment>;
 export type ModelRoles = z.infer<typeof modelRoles>;
 export type Verdict = z.infer<typeof verdict>;

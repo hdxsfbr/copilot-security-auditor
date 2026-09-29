@@ -72,28 +72,29 @@ export function judgeMessages(input: ReturnType<typeof packet>) {
     { role: 'user', content: JSON.stringify(input) }
   ];
 }
-export async function callJudge(assignment: ModelAssignment, input: ReturnType<typeof packet>, ollamaUrl: string, transport: typeof fetch = fetch, price?: Price): Promise<{ result: Verdict; usage: ModelUsage }> {
+export async function callRoleJson(assignment: ModelAssignment, messages: { role: string; content: string }[], ollamaUrl: string, transport: typeof fetch = fetch, price?: Price): Promise<{ result: unknown; usage: ModelUsage }> {
   const paid = assignment.provider === 'openrouter';
   const key = process.env.OPENROUTER_API_KEY;
-  if (paid && !key) throw new Error('OpenRouter key unavailable');
-  if (paid && !price) throw new Error('Verified dispatch price required');
+  if (paid && (!key || !price)) throw new Error('Verified paid dispatch unavailable');
   const started = Date.now();
   const response = await transport(new URL(paid ? 'chat/completions' : 'api/chat', paid ? openRouterEndpoint() : ollamaUrl.endsWith('/') ? ollamaUrl : `${ollamaUrl}/`), {
     method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(30000), headers: { 'Content-Type': 'application/json', ...(paid ? { Authorization: `Bearer ${key}` } : {}) },
-    body: JSON.stringify(paid ? { model: assignment.model, max_tokens: assignment.maxOutputTokens, response_format: { type: 'json_object' }, provider: { sort: 'price', allow_fallbacks: false, require_parameters: true, max_price: { prompt: Number((Number(price!.prompt) * 1_000_000).toPrecision(12)), completion: Number((Number(price!.completion) * 1_000_000).toPrecision(12)), request: Number(price!.request) } }, messages: judgeMessages(input) } : { model: assignment.model, options: { num_predict: assignment.maxOutputTokens }, stream: false, format: 'json', messages: judgeMessages(input) })
+    body: JSON.stringify(paid ? { model: assignment.model, max_tokens: assignment.maxOutputTokens, response_format: { type: 'json_object' }, provider: { sort: 'price', allow_fallbacks: false, require_parameters: true, max_price: { prompt: Number((Number(price!.prompt) * 1_000_000).toPrecision(12)), completion: Number((Number(price!.completion) * 1_000_000).toPrecision(12)), request: Number(price!.request) } }, messages } : { model: assignment.model, options: { num_predict: assignment.maxOutputTokens }, stream: false, format: 'json', messages })
   });
-  if (!response.ok) throw new Error('Judge unavailable');
+  if (!response.ok) throw new Error('Model unavailable');
   const data: unknown = await response.json();
-  if (!data || typeof data !== 'object') throw new Error('Judge response invalid');
+  if (!data || typeof data !== 'object') throw new Error('Model response invalid');
   const record = data as Record<string, unknown>;
   const content = paid ? (record.choices as { message?: { content?: unknown } }[] | undefined)?.[0]?.message?.content : (record.message as { content?: unknown } | undefined)?.content;
-  if (typeof content !== 'string') throw new Error('Judge response invalid');
-  const result = verdict.parse(JSON.parse(content));
+  if (typeof content !== 'string') throw new Error('Model response invalid');
+  const result: unknown = JSON.parse(content);
   const usage = paid ? record.usage as Record<string, unknown> | undefined : record;
-  const inputTokens = paid ? usage?.prompt_tokens : usage?.prompt_eval_count;
-  const outputTokens = paid ? usage?.completion_tokens : usage?.eval_count;
-  const charge = paid ? usage?.cost : null;
   const validToken = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
-  return { result: result.evidenceRefs.some(ref => !input.observations.some(o => o.ref === ref)) ? { ...result, outcome: 'inconclusive', materialUncertainties: [...result.materialUncertainties, 'Invalid evidence reference'] } : result,
-    usage: { inputTokens: validToken(inputTokens), outputTokens: validToken(outputTokens), latencyMs: Date.now() - started, chargeNanos: paid && (typeof charge === 'number' || typeof charge === 'string') ? nanos(charge).toString() : null } };
+  const charge = paid ? usage?.cost : null;
+  return { result, usage: { inputTokens: validToken(paid ? usage?.prompt_tokens : usage?.prompt_eval_count), outputTokens: validToken(paid ? usage?.completion_tokens : usage?.eval_count), latencyMs: Date.now() - started, chargeNanos: paid && (typeof charge === 'number' || typeof charge === 'string') ? nanos(charge).toString() : null } };
+}
+export async function callJudge(assignment: ModelAssignment, input: ReturnType<typeof packet>, ollamaUrl: string, transport: typeof fetch = fetch, price?: Price): Promise<{ result: Verdict; usage: ModelUsage }> {
+  const call = await callRoleJson(assignment, judgeMessages(input), ollamaUrl, transport, price);
+  const result = verdict.parse(call.result);
+  return { result: result.evidenceRefs.some(ref => !input.observations.some(o => o.ref === ref)) ? { ...result, outcome: 'inconclusive', materialUncertainties: [...result.materialUncertainties, 'Invalid evidence reference'] } : result, usage: call.usage };
 }
