@@ -314,6 +314,16 @@ test('adaptive cases reuse the selected-case pipeline, coverage, confirmation an
     assert.equal(toy.requests.filter(r => r.path.includes('/turns')).length, 2);
     const results = await db.repo.adaptiveCases(started.id);
     assert.deepEqual(results.map(c => [c.category, c.state, c.executed]), [['prompt_injection', 'pending_review', true], ['cross_patient', 'pending_review', true]]);
+    const linked = (await db.repo.events(started.id)).filter(row => row.event.kind === 'turn' || row.event.kind === 'case_outcome');
+    assert.deepEqual(linked.filter(row => row.event.kind === 'turn').map(row => row.event.detail.executionCaseId), results.map(row => row.id));
+    assert.deepEqual(linked.filter(row => row.event.kind === 'case_outcome').map(row => row.event.detail.executionCaseId), results.map(row => row.id));
+    assert.equal(new Set(linked.map(row => row.event.detail.executionCaseId)).size, 2);
+    for (const result of results) {
+      const detail = await db.repo.adaptiveCaseDetail(started.id, result.id);
+      assert.ok(detail);
+      assert.deepEqual(detail.eventIds, (await db.repo.events(started.id)).filter(row => row.event.detail.executionCaseId === result.id).map(row => row.id));
+      assert.equal(detail.eventLinkage, 'tagged');
+    }
     assert.deepEqual((await db.repo.usage(started.id)).map(c => c.role), ['orchestrator', 'redTeam', 'judge', 'orchestrator', 'redTeam', 'judge']);
     const directFinding = (await db.repo.findings()).find(finding => finding.title === 'Adaptive direct');
     assert.ok(directFinding);
