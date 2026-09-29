@@ -3,6 +3,11 @@ stages:
 
 fixture-validation:
   stage: verify
+  # MRs are gated by exact-head local validation (docs/implementation/validation.md); the shared runner verifies main after each merge.
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "web"
+  interruptible: true
   image: node:24-bookworm-slim
   services:
     - name: postgres:17-alpine
