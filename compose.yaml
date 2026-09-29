@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: auditor
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+      POSTGRES_DB: auditor
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auditor -d auditor"]
+      interval: 3s
+      retries: 20
+  api:
+    build: .
+    command: ["npm", "run", "dev:api"]
+    environment:
+      DATABASE_URL: postgres://auditor:${DB_PASSWORD:?Set DB_PASSWORD}@db:5432/auditor
+      CREDENTIAL_KEY: ${CREDENTIAL_KEY:?Set CREDENTIAL_KEY}
+      LAN_HOST: 0.0.0.0
+      CONTAINER_BIND: "true"
+      OLLAMA_URL: ${OLLAMA_URL:?Set OLLAMA_URL}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:?Set OLLAMA_MODEL}
+    ports:
+      - "${LAN_BIND:?Set a trusted LAN IP}:3000:3000"
+    volumes:
+      - private_evidence:/app/private-evidence
+    depends_on:
+      db:
+        condition: service_healthy
+  worker:
+    build: .
+    command: ["npm", "run", "dev:worker"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DATABASE_URL: postgres://auditor:${DB_PASSWORD:?Set DB_PASSWORD}@db:5432/auditor
+      CREDENTIAL_KEY: ${CREDENTIAL_KEY:?Set CREDENTIAL_KEY}
+    volumes:
+      - private_evidence:/app/private-evidence
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+volumes:
+  postgres_data:
+  private_evidence:
