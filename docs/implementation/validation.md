@@ -37,6 +37,22 @@ The job has no `tags:` entry. Runner 282 was online and carried the `digitalocea
 
 The audit observed an adaptive-browser target-selection timeout once; an isolated retry and subsequent complete rerun passed, and the cause was not established. The fixture suite runs files serially to limit resource contention, but does not retry failures automatically. Record any recurrence with the failing test and run output, then investigate within the two focused repair rounds for the owning task.
 
+## Merge gate (from 2026-09-29)
+
+The project runner is a small shared VM on which the full fixture job takes about ten minutes, and it runs one job at a time. Merge requests are therefore gated by local validation of the exact revision, and the GitLab job runs only on `main` after a merge (or when started manually from the web UI). An MR without a pipeline is never described as green CI.
+
+The local gate uses one disposable PostgreSQL service instead of a container per test, and runs test files in parallel:
+
+```sh
+docker run -d --rm --name ca-test-pg -e POSTGRES_USER=auditor -e POSTGRES_PASSWORD=fixture-only \
+  -e POSTGRES_DB=auditor_test -p 127.0.0.1:55432:5432 postgres:17-alpine -c max_connections=300
+npm run typecheck && npm run build
+TEST_DATABASE_URL=postgresql://auditor:fixture-only@127.0.0.1:55432/auditor_test \
+  CHROME_BIN=/usr/bin/google-chrome npm run test:local   # TEST_CONCURRENCY defaults to 8
+```
+
+Each test still gets its own database. On a 32-core workstation the complete suite takes about 25 seconds. The coordinator validates the MR head merged onto current `main`, records the commit and counts in the MR, and reruns a failing file alone once; a failure that repeats in isolation blocks the merge. Browser tests can still time out on first page load when other processes create or remove Docker networks at the same time (Chrome reports `net::ERR_NETWORK_CHANGED`); serving the prebuilt UI to browser tests is the planned fix.
+
 ## Live validation boundary
 
 `npm run test:live` is an explicit operator command, excluded from CI and fixture discovery. It needs separately authorized synthetic target identities and a verified effective downstream spend cap. The smoke test cannot enforce provider billing. Local fixtures, stubs, screenshots and a configured but unrun GitLab job do not establish live acceptance.
