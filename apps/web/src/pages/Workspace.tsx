@@ -1,6 +1,5 @@
 import React, { useEffect } from "react";
 import { ErrorBoundary } from "../api/ErrorBoundary.js";
-import { ModelDesk } from "../ModelDesk.js";
 import { AppShell } from "../components/AppShell.js";
 import { RunActivity } from "../components/RunActivity.js";
 import { useRouterPath } from "../components/router.js";
@@ -9,9 +8,9 @@ import { WorkspaceContext } from "./context.js";
 import { useWorkspaceController } from "./controller.js";
 import { CoveragePage } from "./CoveragePage.js";
 import { FindingsPage } from "./FindingsPage.js";
-import { LegacyRunLauncher } from "./LegacyRunLauncher.js";
 import { OverviewPage } from "./OverviewPage.js";
 import { RegressionsPage } from "./RegressionsPage.js";
+import { RunComposer } from "./RunComposer.js";
 import { RunDetailPage } from "./RunDetailPage.js";
 import { RunsPage } from "./RunsPage.js";
 import { SchedulesPage } from "./SchedulesPage.js";
@@ -21,7 +20,7 @@ const pageInfo: Record<string, { title: string; description: string }> = {
   "/": { title: "Overview", description: "See current work and move directly to the task you need." },
   "/targets": { title: "Targets & identities", description: "Configure authorized synthetic target connections and their chart identities." },
   "/cases": { title: "Cases", description: "Save a scoped synthetic test case and optional PDF for later evaluation." },
-  "/runs/new": { title: "Launch evaluation", description: "Select a saved target and case, then choose the current launch path." },
+  "/runs/new": { title: "Launch evaluation", description: "Compose and preflight a saved evaluation." },
   "/runs": { title: "Runs", description: "Recover saved evaluations and inspect their exact evidence." },
   "/findings": { title: "Findings & review", description: "Inspect reviewable observations and make explicit decisions." },
   "/regressions": { title: "Regressions", description: "Select a confirmed definition for a new replay." },
@@ -57,9 +56,7 @@ export function Workspace() {
       <div hidden={path !== "/targets"} className="route-panel"><TargetsPage /></div>
       <div hidden={path !== "/cases" && !caseRouteId} className="route-panel"><CasesPage selectedId={caseRouteId} active={path === "/cases" || !!caseRouteId} /></div>
       <div hidden={path !== "/runs/new"} className="route-panel launch-stack">
-        <LegacyRunLauncher />
-        <ErrorBoundary name="Model settings"><ModelDesk targetId={state.targetId} caseId={state.caseId} cases={state.cases}
-          onStart={id => state.openRun(id, "assigned per role")} /></ErrorBoundary>
+        <ErrorBoundary name="Run composer"><RunComposer active={path === "/runs/new"} /></ErrorBoundary>
       </div>
       {path === "/runs" && <div className="route-panel"><RunsPage /></div>}
       {runRouteId && runRouteId === state.run?.id && <div className="route-panel"><RunActivity key={state.run.id} /></div>}
