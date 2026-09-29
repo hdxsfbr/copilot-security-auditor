@@ -67,7 +67,7 @@ Verify a prior run and retrieve its referenced PDFs through the API; `GET /api/i
 
 ### Opt-in live smoke
 
-Routine CI and `npm run test:unit`, `test:integration`, `test:e2e`, and `test:failure` are fixture-only; they never invoke `test:live`. The live smoke is a separate, explicit operator command and requires the exact target URL, two assigned synthetic identities, a stated maximum possible provider charge, and confirmation that the target/provider actually enforces a matching spend cap. It validates readiness/login/chart/session for both identities, distinct chart assignments, one bounded synthetic PDF attachment, and one short ticketed turn. It does not provision or authorize a target, and does not itself enforce provider billing; stop if the effective provider-side cap cannot be confirmed.
+The standard `npm run test:unit`, `test:integration`, `test:e2e`, and `test:failure` suites are fixture-only; they never invoke `test:live`. The live smoke is a separate, explicit operator command and requires the exact target URL, two assigned synthetic identities, a stated maximum possible provider charge, and confirmation that the target/provider actually enforces a matching spend cap. It validates readiness/login/chart/session for both identities, distinct chart assignments, one bounded synthetic PDF attachment, and one short ticketed turn. It does not provision or authorize a target, and does not itself enforce provider billing; stop if the effective provider-side cap cannot be confirmed.
 
 ```sh
 SMOKE_TARGET_URL=https://toy.example.test/ \
@@ -77,12 +77,10 @@ SMOKE_CHARGE_CAP_USD=0.05 SMOKE_PROVIDER_CAP_CONFIRMED=true \
 npm run test:live
 ```
 
-Run only against an operator-owned toy target after separately authorizing the identities and setting its effective provider-side cap. Do not use real patient data. The smoke command is intentionally not part of CI or startup.
-
-## Verification and CI
-
-Run `npm run typecheck && npm run build && npm run test:unit && npm run test:integration && npm run test:e2e && npm run test:failure`. Integration/failure suites create disposable PostgreSQL containers; browser e2e also needs `/usr/bin/google-chrome`. GitLab CI runs those fixture suites on a runner with Docker access and Chrome, and never receives live target credentials or invokes `test:live`.
+Run only against an operator-owned toy target after separately authorizing the identities and setting its effective provider-side cap. Do not use real patient data. The smoke command is never run automatically or on startup.
 
 ## Verification
+
+Run `npm run typecheck && npm run build && npm run test:unit && npm run test:integration && npm run test:e2e && npm run test:failure`. Integration/failure suites create disposable PostgreSQL containers; browser e2e also needs `/usr/bin/google-chrome`.
 
 The image build checks types and builds the UI. To run unit tests without host Node, use `docker compose run --rm --no-deps api npm run test:unit`. Integration tests start disposable Docker services and require a Docker daemon. Browser e2e tests also require `/usr/bin/google-chrome`; run `npm run build && npm run test:e2e` on a host with Chrome or an appropriate test container. The fixture suite covers capped mixed-provider behavior without paid provider calls, and fake-clock daily/weekly DST plus concurrent scheduler ticks. A bounded synthetic adaptive run was stopped after an observed turn on the live toy target using the host Ollama; its case/run were incomplete, the observation remained visible, and the target was released.
