@@ -1,6 +1,7 @@
 import { randomUUID, createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import pg from 'pg';
-import type { CaseInput, EvidenceEvent, Outcome, StartInput, TargetInput, TargetUpdateInput, Verdict } from '../../../packages/contracts/src/index.js';
+import { caseInput } from '../../../packages/contracts/src/index.js';
+import type { AdaptiveStart, CaseInput, EvidenceEvent, Outcome, StartInput, TargetInput, TargetUpdateInput, Verdict } from '../../../packages/contracts/src/index.js';
 import type { CheckResult } from '../../worker/src/checks.js';
 import { legacyRoles, nanos, reserveAmount, type Role, type Snapshot, type ModelUsage } from '../../worker/src/models.js';
 
@@ -71,7 +72,7 @@ export class Repository {
     await this.pool.query('INSERT INTO artifacts(id,case_id,document_type,sha256,bytes,pages) VALUES ($1,$2,$3,$4,$5,$6)', [ref.id, ref.caseId, ref.documentType, ref.sha256, ref.bytes, ref.pages]);
   }
   async artifact(caseId: string, id: string, type: string): Promise<{ bytes: number; sha256: string } | null> {
-    return (await this.pool.query('SELECT bytes,sha256 FROM artifacts WHERE case_id=$1 AND id=$2 AND document_type=$3', [caseId, id, type])).rows[0] ?? null;
+    return (await this.pool.query('SELECT bytes,sha256 FROM artifacts WHERE id=$2 AND document_type=$3 AND (case_id=$1 OR EXISTS (SELECT 1 FROM case_artifact_links WHERE case_id=$1 AND artifact_id=$2))', [caseId, id, type])).rows[0] ?? null;
   }
   async cases(): Promise<(CaseInput & { id: string })[]> { return (await this.pool.query('SELECT id,definition FROM cases ORDER BY created_at DESC')).rows.map(r => ({ id: r.id as string, ...r.definition as CaseInput })); }
   async updateCase(id: string, definition: CaseInput) {
@@ -81,7 +82,7 @@ export class Repository {
       const row = (await db.query('SELECT id FROM cases WHERE id=$1 FOR UPDATE', [id])).rows[0];
       if (!row) { await db.query('ROLLBACK'); return null; }
       if ((await db.query('SELECT 1 FROM runs WHERE case_id=$1 LIMIT 1', [id])).rowCount) { await db.query('ROLLBACK'); return { conflict: true }; }
-      for (const action of definition.actions) if (action.kind === 'attach_pdf' && !(await db.query('SELECT 1 FROM artifacts WHERE case_id=$1 AND id=$2 AND document_type=$3', [id, action.artifactId, action.documentType])).rowCount) { await db.query('ROLLBACK'); return { invalid: true }; }
+      for (const action of definition.actions) if (action.kind === 'attach_pdf' && !(await db.query('SELECT 1 FROM artifacts WHERE id=$2 AND document_type=$3 AND (case_id=$1 OR EXISTS (SELECT 1 FROM case_artifact_links WHERE case_id=$1 AND artifact_id=$2))', [id, action.artifactId, action.documentType])).rowCount) { await db.query('ROLLBACK'); return { invalid: true }; }
       await db.query('UPDATE cases SET definition=$2 WHERE id=$1', [id, definition]);
       await db.query('COMMIT');
       return { id, ...definition };
@@ -106,7 +107,7 @@ export class Repository {
       if (!target || !selected) { await db.query('ROLLBACK'); return null; }
       if (target.active_run_id) { await db.query('ROLLBACK'); return { active_run_id: target.active_run_id }; }
       const definition = selected.definition as CaseInput;
-      for (const action of definition.actions) if (action.kind === 'attach_pdf' && !(await db.query('SELECT 1 FROM artifacts WHERE case_id=$1 AND id=$2 AND document_type=$3', [input.caseId, action.artifactId, action.documentType])).rowCount) throw new Error('Artifact not linked to selected case');
+      for (const action of definition.actions) if (action.kind === 'attach_pdf' && !(await db.query('SELECT 1 FROM artifacts WHERE id=$2 AND document_type=$3 AND (case_id=$1 OR EXISTS (SELECT 1 FROM case_artifact_links WHERE case_id=$1 AND artifact_id=$2))', [input.caseId, action.artifactId, action.documentType])).rowCount) throw new Error('Artifact not linked to selected case');
       const id = randomUUID();
       await db.query('INSERT INTO runs(id,target_id,case_id,definition,target_snapshot,model_snapshot,paid_cap_nanos) VALUES ($1,$2,$3,$4,$5,$6,$7)', [id, target.id, input.caseId, { ...input, case: selected.definition }, { name: target.name, baseUrl: target.base_url, userARef: target.user_a_credential, userBRef: target.user_b_credential }, modelSnapshot, input.openRouterCapUsd === undefined ? null : nanos(input.openRouterCapUsd).toString()]);
       await db.query('INSERT INTO jobs(run_id) VALUES ($1)', [id]);
@@ -115,8 +116,85 @@ export class Repository {
       return { id, status: 'queued' };
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
+  async startAdaptive(input: AdaptiveStart, models: Snapshot): Promise<{ id: string; status: 'queued' } | { active_run_id: string } | null> {
+    if (JSON.stringify(models.roles) !== JSON.stringify(input.roles)) throw new Error('Model snapshot mismatch');
+    for (const [role, selection] of Object.entries(input.roles)) if (selection.provider === 'openrouter') {
+      const price = models.pricing[role as Role];
+      if (!price || !input.openRouterCapUsd) throw new Error('Verified pricing and paid cap required');
+      reserveAmount(price, selection.maxOutputTokens);
+    }
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const target = (await db.query('SELECT id,name,base_url,active_run_id,user_a_credential,user_b_credential FROM targets WHERE id=$1 FOR UPDATE', [input.targetId])).rows[0];
+      if (!target) { await db.query('ROLLBACK'); return null; }
+      if (target.active_run_id) { await db.query('ROLLBACK'); return { active_run_id: target.active_run_id }; }
+      const saved = await db.query('SELECT id,definition FROM cases WHERE id=ANY($1::uuid[])', [input.caseIds]);
+      if (saved.rowCount !== input.caseIds.length || input.categories.some(c => !saved.rows.some(row => (row.definition.category ?? 'prompt_injection') === c))) throw new Error('Selected cases must cover every chosen category');
+      for (const row of saved.rows) for (const action of (row.definition as CaseInput).actions) if (action.kind === 'attach_pdf' && !(await db.query('SELECT 1 FROM artifacts WHERE case_id=$1 AND id=$2 AND document_type=$3', [row.id, action.artifactId, action.documentType])).rowCount) throw new Error('Artifact not linked to selected case');
+      const id = randomUUID();
+      const seeds = input.caseIds.map(caseId => { const row = saved.rows.find(r => r.id === caseId)!; return { id: caseId, definition: row.definition as CaseInput }; });
+      await db.query('INSERT INTO runs(id,target_id,definition,target_snapshot,model_snapshot,paid_cap_nanos,adaptive) VALUES ($1,$2,$3,$4,$5,$6,$7)', [id, target.id, { ollamaUrl: input.ollamaUrl }, { name: target.name, baseUrl: target.base_url, userARef: target.user_a_credential, userBRef: target.user_b_credential }, models, input.openRouterCapUsd === undefined ? null : nanos(input.openRouterCapUsd).toString(), { categories: input.categories, maxCases: input.maxCases, maxMinutes: input.maxMinutes, seeds }]);
+      await db.query('INSERT INTO jobs(run_id) VALUES ($1)', [id]);
+      await db.query('UPDATE targets SET active_run_id=$1 WHERE id=$2', [id, target.id]);
+      await db.query('COMMIT');
+      return { id, status: 'queued' };
+    } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
+  }
+  async stop(id: string) {
+    return (await this.pool.query("UPDATE runs SET stop_requested=true WHERE id=$1 AND adaptive IS NOT NULL AND status IN ('queued','running') RETURNING id", [id])).rowCount !== 0;
+  }
+  async stopped(id: string, generation: number) {
+    const row = (await this.pool.query("SELECT stop_requested,started_at,adaptive FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now()", [id, generation])).rows[0];
+    if (!row || !row.adaptive) throw new Error('Lease lost');
+    return row.stop_requested || Date.now() >= new Date(row.started_at).getTime() + row.adaptive.maxMinutes * 60000;
+  }
+  async adaptiveCases(id: string) { return (await this.pool.query('SELECT id,ordinal,category,source_case_id AS "sourceCaseId",definition,state,executed,reason FROM adaptive_cases WHERE run_id=$1 ORDER BY ordinal', [id])).rows; }
+  async beginAdaptiveCase(id: string, generation: number, ordinal: number, category: string, sourceCaseId: string) {
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const row = (await db.query("SELECT id FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() AND stop_requested=false FOR UPDATE", [id, generation])).rows[0];
+      if (!row) throw new Error('Run stopped or lease lost');
+      const caseId = randomUUID();
+      await db.query('INSERT INTO adaptive_cases(id,run_id,ordinal,category,source_case_id,state) VALUES ($1,$2,$3,$4,$5,$6)', [caseId, id, ordinal, category, sourceCaseId, 'proposed']);
+      await db.query('COMMIT');
+      return caseId;
+    } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
+  }
+  async executeAdaptiveCase(id: string, generation: number, caseId: string, definition: CaseInput) {
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const run = (await db.query("SELECT stop_requested,started_at,adaptive FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() FOR UPDATE", [id, generation])).rows[0];
+      if (!run || run.stop_requested || Date.now() >= new Date(run.started_at).getTime() + run.adaptive.maxMinutes * 60000) throw new Error('Run stopped, timed out or lease lost');
+      const updated = await db.query("UPDATE adaptive_cases SET definition=$3,state='executing' WHERE id=$1 AND run_id=$2 AND state='proposed'", [caseId, id, definition]);
+      if (!updated.rowCount) throw new Error('Case not proposed');
+      await db.query('COMMIT');
+    } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
+  }
+  async completeAdaptiveCase(id: string, generation: number, caseId: string, outcome: Outcome | 'rejected', executed: boolean, reason?: string, assessment?: { checks: CheckResult[]; verdict: Verdict | null }) {
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const run = (await db.query("SELECT stop_requested,started_at,adaptive FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() FOR UPDATE", [id, generation])).rows[0];
+      if (!run) throw new Error('Lease lost');
+      const stopped = run.stop_requested || Date.now() >= new Date(run.started_at).getTime() + run.adaptive.maxMinutes * 60000;
+      const final = stopped ? 'incomplete' : outcome;
+      const caseRow = (await db.query("UPDATE adaptive_cases SET state=$3,executed=$4,reason=$5,finished_at=now() WHERE id=$1 AND run_id=$2 AND state IN ('proposed','executing') RETURNING definition", [caseId, id, final, executed, stopped ? 'Stopped or timed out' : reason ?? null])).rows[0];
+      if (!caseRow) throw new Error('Case already finished');
+      if (assessment && !stopped) await db.query('INSERT INTO adaptive_assessments(case_id,checks,verdict,route) VALUES ($1,$2,$3,$4)', [caseId, JSON.stringify(assessment.checks), assessment.verdict, final]);
+      if (executed && (final === 'pending_review' || final === 'auto_confirm')) {
+        const candidate = randomUUID();
+        await db.query('INSERT INTO candidates(id,run_id,adaptive_case_id,state,decision_route,decided_at) VALUES ($1,$2,$3,$4,$5,$6)', [candidate, id, caseId, final === 'auto_confirm' ? 'confirmed' : 'pending_review', final === 'auto_confirm' ? 'automatic' : null, final === 'auto_confirm' ? new Date() : null]);
+        if (final === 'auto_confirm') await this.insertRegression(db, candidate, id, caseId);
+      }
+      await db.query('COMMIT');
+      return final;
+    } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
+  }
   async run(id: string) {
-    return (await this.pool.query('SELECT id,target_id AS "targetId",case_id AS "caseId",status,outcome,version,created_at AS "createdAt",finished_at AS "finishedAt",model_snapshot AS "modelSnapshot",model_snapshot->\'roles\'->\'judge\'->>\'model\' AS model,paid_cap_nanos::text AS "paidCapNanos" FROM runs WHERE id=$1', [id])).rows[0] ?? null;
+    return (await this.pool.query('SELECT id,target_id AS "targetId",case_id AS "caseId",status,outcome,version,created_at AS "createdAt",finished_at AS "finishedAt",model_snapshot AS "modelSnapshot",model_snapshot->\'roles\'->\'judge\'->>\'model\' AS model,paid_cap_nanos::text AS "paidCapNanos",adaptive->\'categories\' AS categories,stop_requested AS "stopRequested" FROM runs WHERE id=$1', [id])).rows[0] ?? null;
   }
   async usage(id: string) {
     return (await this.pool.query('SELECT id,role,provider,model,status,reserved_nanos::text AS "reservedNanos",charge_nanos::text AS "chargeNanos",input_tokens AS "inputTokens",output_tokens AS "outputTokens",latency_ms AS "latencyMs" FROM model_calls WHERE run_id=$1 ORDER BY created_at,id', [id])).rows;
@@ -125,7 +203,7 @@ export class Repository {
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
-      const run = (await db.query("SELECT paid_cap_nanos FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() FOR UPDATE", [id, generation])).rows[0];
+      const run = (await db.query("SELECT paid_cap_nanos FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() AND (adaptive IS NULL OR (stop_requested=false AND started_at+((adaptive->>'maxMinutes')::integer * interval '1 minute')>now())) FOR UPDATE", [id, generation])).rows[0];
       if (!run) throw new Error('Lease lost');
       if (provider === 'openrouter') {
         if (run.paid_cap_nanos === null || amount <= 0n) throw new Error('Paid model has no bounded reserve');
@@ -162,9 +240,9 @@ export class Repository {
       await db.query('BEGIN');
       const row = (await db.query("SELECT id FROM runs WHERE status='queued' ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1")).rows[0];
       if (!row) { await db.query('COMMIT'); return null; }
-      const run = (await db.query("UPDATE runs SET status='running', lease_owner=$2,lease_generation=lease_generation+1,lease_until=now()+interval '60 seconds' WHERE id=$1 RETURNING *", [row.id, owner])).rows[0];
+      const run = (await db.query("UPDATE runs SET status='running',started_at=now(), lease_owner=$2,lease_generation=lease_generation+1,lease_until=now()+interval '60 seconds' WHERE id=$1 RETURNING *", [row.id, owner])).rows[0];
       await db.query('COMMIT');
-      return run as { id: string; target_id: string; case_id: string; lease_generation: number; definition: StartInput & { case: CaseInput }; model_snapshot: Snapshot; target_snapshot: { baseUrl: string; userARef: string; userBRef: string } };
+      return run as { id: string; target_id: string; case_id: string | null; lease_generation: number; definition: StartInput & { case: CaseInput }; adaptive: { categories: NonNullable<CaseInput['category']>[]; maxCases: number; maxMinutes: number; seeds: { id: string; definition: CaseInput }[] } | null; model_snapshot: Snapshot; target_snapshot: { baseUrl: string; userARef: string; userBRef: string }; started_at: Date };
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
   async credential<T>(ref: string): Promise<T> {
@@ -190,10 +268,10 @@ export class Repository {
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
-      const row = (await db.query("UPDATE runs SET status='finished',outcome=$3,finished_at=now(),lease_until=NULL WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() RETURNING target_id", [id, generation, result])).rows[0];
+      const row = (await db.query("UPDATE runs SET status='finished',outcome=CASE WHEN adaptive IS NOT NULL AND (stop_requested OR started_at+((adaptive->>'maxMinutes')::integer * interval '1 minute')<=now()) THEN 'incomplete' ELSE $3 END,finished_at=now(),lease_until=NULL WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() RETURNING target_id,adaptive,outcome", [id, generation, result])).rows[0];
       if (!row) throw new Error('Lease lost');
       if (assessment) await db.query('INSERT INTO assessments(run_id,checks,verdict,route) VALUES ($1,$2,$3,$4)', [id, JSON.stringify(assessment.checks), assessment.verdict, result]);
-      if (result === 'pending_review' || result === 'auto_confirm') {
+      if (!row.adaptive && (result === 'pending_review' || result === 'auto_confirm')) {
         const candidate = randomUUID();
         await db.query('INSERT INTO candidates(id,run_id,state,decision_route,decided_at) VALUES ($1,$2,$3,$4,$5)', [candidate, id, result === 'auto_confirm' ? 'confirmed' : 'pending_review', result === 'auto_confirm' ? 'automatic' : null, result === 'auto_confirm' ? new Date() : null]);
         if (result === 'auto_confirm') await this.insertRegression(db, candidate, id);
@@ -202,24 +280,42 @@ export class Repository {
       await db.query('COMMIT');
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
-  private async insertRegression(db: pg.PoolClient, candidate: string, run: string) {
-    await db.query('INSERT INTO regressions(id,candidate_id,source_run_id,definition) SELECT $1,$2,id,definition->\'case\' FROM runs WHERE id=$3 ON CONFLICT (candidate_id) DO NOTHING', [randomUUID(), candidate, run]);
+  private async insertRegression(db: pg.PoolClient, candidate: string, run: string, adaptiveCaseId?: string | null) {
+    await db.query('INSERT INTO regressions(id,candidate_id,source_run_id,definition) SELECT $1,$2,r.id,COALESCE(ac.definition,r.definition->\'case\') FROM runs r LEFT JOIN adaptive_cases ac ON ac.id=$4 WHERE r.id=$3 ON CONFLICT (candidate_id) DO NOTHING', [randomUUID(), candidate, run, adaptiveCaseId ?? null]);
   }
-  async findings() { return (await this.pool.query("SELECT c.id,c.run_id AS \"runId\",c.state,c.decision_route AS \"decisionRoute\",c.export_approved_at AS \"exportApprovedAt\",r.version,r.outcome,r.definition->'case'->>'title' AS title FROM candidates c JOIN runs r ON r.id=c.run_id ORDER BY c.created_at DESC")).rows; }
+  async findings() { return (await this.pool.query("SELECT c.id,c.run_id AS \"runId\",c.state,c.decision_route AS \"decisionRoute\",c.export_approved_at AS \"exportApprovedAt\",r.version,COALESCE(ac.state,r.outcome) AS outcome,COALESCE(ac.definition,r.definition->'case')->>'title' AS title FROM candidates c JOIN runs r ON r.id=c.run_id LEFT JOIN adaptive_cases ac ON ac.id=c.adaptive_case_id ORDER BY c.created_at DESC")).rows; }
+  async selectRegression(id: string) {
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const row = (await db.query('SELECT g.replay_case_id,g.definition,c.adaptive_case_id,ac.source_case_id,r.case_id FROM regressions g JOIN candidates c ON c.id=g.candidate_id JOIN runs r ON r.id=g.source_run_id LEFT JOIN adaptive_cases ac ON ac.id=c.adaptive_case_id WHERE g.id=$1 FOR UPDATE OF g', [id])).rows[0];
+      if (!row) { await db.query('ROLLBACK'); return null; }
+      if (row.replay_case_id) { await db.query('COMMIT'); return { caseId: row.replay_case_id as string }; }
+      const definition = caseInput.parse(row.definition);
+      const source = row.source_case_id ?? row.case_id;
+      const caseId = randomUUID();
+      for (const action of definition.actions) if (action.kind === 'attach_pdf' && !(await db.query('SELECT 1 FROM artifacts WHERE id=$1 AND case_id=$2 AND document_type=$3', [action.artifactId, source, action.documentType])).rowCount) throw new Error('Regression attachment unavailable');
+      await db.query('INSERT INTO cases(id,definition) VALUES ($1,$2)', [caseId, definition]);
+      for (const action of definition.actions) if (action.kind === 'attach_pdf') await db.query('INSERT INTO case_artifact_links(case_id,artifact_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [caseId, action.artifactId]);
+      await db.query('UPDATE regressions SET replay_case_id=$2 WHERE id=$1', [id, caseId]);
+      await db.query('COMMIT');
+      return { caseId };
+    } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
+  }
   async regressions() { return (await this.pool.query(`SELECT g.id,g.source_run_id AS "sourceRunId",g.definition,r.version,r.target_id AS "targetId",
     COALESCE((SELECT jsonb_agg(jsonb_build_object('runId',v.id,'version',v.version,'outcome',v.outcome) ORDER BY v.created_at)
-      FROM runs v WHERE v.case_id=r.case_id AND v.target_id=r.target_id AND v.id<>r.id AND v.status='finished'), '[]'::jsonb) AS replays
+      FROM runs v WHERE v.case_id=COALESCE(g.replay_case_id,r.case_id) AND v.target_id=r.target_id AND v.id<>r.id AND v.status='finished'), '[]'::jsonb) AS replays
     FROM regressions g JOIN runs r ON r.id=g.source_run_id ORDER BY g.created_at DESC`)).rows; }
-  async coverage() { return (await this.pool.query("SELECT COALESCE(definition->'case'->>'category','prompt_injection') AS category,outcome, count(*)::integer AS count FROM runs WHERE status='finished' GROUP BY 1,2")).rows; }
+  async coverage() { return (await this.pool.query("SELECT category,outcome,count(*)::integer AS count FROM (SELECT COALESCE(definition->'case'->>'category','prompt_injection') AS category,outcome FROM runs WHERE status='finished' AND adaptive IS NULL UNION ALL SELECT category,state AS outcome FROM adaptive_cases WHERE executed) evaluated GROUP BY 1,2")).rows; }
   async review(id: string, decision: 'confirm' | 'reject') {
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
-      const row = (await db.query('SELECT run_id,state FROM candidates WHERE id=$1 FOR UPDATE', [id])).rows[0];
+      const row = (await db.query('SELECT run_id,state,adaptive_case_id FROM candidates WHERE id=$1 FOR UPDATE', [id])).rows[0];
       if (!row) { await db.query('ROLLBACK'); return null; }
       if (row.state === 'pending_review') {
         await db.query('UPDATE candidates SET state=$2,decision_route=$3,decided_at=now() WHERE id=$1', [id, decision === 'confirm' ? 'confirmed' : 'rejected', 'operator']);
-        if (decision === 'confirm') await this.insertRegression(db, id, row.run_id);
+        if (decision === 'confirm') await this.insertRegression(db, id, row.run_id, row.adaptive_case_id);
       } else if (row.state !== (decision === 'confirm' ? 'confirmed' : 'rejected')) { await db.query('ROLLBACK'); return { conflict: true }; }
       await db.query('COMMIT');
       return { id, state: decision === 'confirm' ? 'confirmed' : 'rejected' };
@@ -230,7 +326,7 @@ export class Repository {
     return row ?? null;
   }
   async exportData(id: string) {
-    return (await this.pool.query("SELECT c.export_approved_at,r.version,r.definition->'case' AS definition,r.outcome,r.id AS run_id FROM candidates c JOIN runs r ON r.id=c.run_id WHERE c.id=$1 AND c.state='confirmed'", [id])).rows[0] ?? null;
+    return (await this.pool.query("SELECT c.export_approved_at,r.version,COALESCE(ac.definition,r.definition->'case') AS definition,COALESCE(ac.state,r.outcome) AS outcome,r.id AS run_id FROM candidates c JOIN runs r ON r.id=c.run_id LEFT JOIN adaptive_cases ac ON ac.id=c.adaptive_case_id WHERE c.id=$1 AND c.state='confirmed'", [id])).rows[0] ?? null;
   }
   async expire() {
     const db = await this.pool.connect();
@@ -239,6 +335,7 @@ export class Repository {
       const rows = (await db.query("UPDATE runs SET status='finished',outcome='incomplete',finished_at=now(),lease_generation=lease_generation+1,lease_until=NULL WHERE status='running' AND lease_until<now() RETURNING id,target_id")).rows;
       for (const row of rows) {
         await db.query("UPDATE model_calls SET status='unresolved' WHERE run_id=$1 AND status='reserved'", [row.id]);
+        await db.query("UPDATE adaptive_cases SET state='incomplete',finished_at=now(),reason='Lease expired' WHERE run_id=$1 AND state IN ('proposed','executing')", [row.id]);
         await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [row.target_id, row.id]);
       }
       await db.query('COMMIT');

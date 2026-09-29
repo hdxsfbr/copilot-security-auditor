@@ -2,7 +2,7 @@ import express from 'express';
 import { z, ZodError } from 'zod';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { targetInput, targetUpdateInput, caseInput, startInput } from '../../../packages/contracts/src/index.js';
+import { targetInput, targetUpdateInput, caseInput, startInput, adaptiveStart } from '../../../packages/contracts/src/index.js';
 import { Repository } from './repository.js';
 import { storePdf, loadPdf } from './artifacts.js';
 import { catalog, installedOllama, snapshot } from '../../worker/src/models.js';
@@ -65,6 +65,24 @@ export function createApp(repo: Repository) {
     if ('active_run_id' in result) return res.status(409).json({ v: 1, code: 'conflict', message: 'Target already reserved', active_run_id: result.active_run_id });
     return res.status(202).json(result);
   });
+  app.post('/api/adaptive-runs', async (req, res) => {
+    const input = adaptiveStart.parse(req.body);
+    const installed = Object.values(input.roles).some(role => role.provider === 'ollama') ? await installedOllama(input.ollamaUrl).catch(() => null) : [];
+    if (!installed || Object.values(input.roles).some(role => role.provider === 'ollama' && !installed.includes(role.model))) return res.status(400).json({ v: 1, code: 'invalid', message: 'Selected Ollama model unavailable' });
+    let models;
+    try { models = await snapshot(input.roles); }
+    catch { return res.status(400).json({ v: 1, code: 'invalid', message: 'OpenRouter pricing or model unavailable' }); }
+    try {
+      const result = await repo.startAdaptive(input, models);
+      if (!result) return res.status(404).json({ message: 'Target not found' });
+      if ('active_run_id' in result) return res.status(409).json({ message: 'Target reserved', active_run_id: result.active_run_id });
+      return res.status(202).json(result);
+    } catch { return res.status(400).json({ message: 'Selected cases, categories, artifacts or budget invalid' }); }
+  });
+  app.post('/api/runs/:id/stop', async (req, res) => {
+    return (await repo.stop(z.uuid().parse(req.params.id))) ? res.status(202).json({ stopRequested: true }) : res.status(409).json({ message: 'No active adaptive run' });
+  });
+  app.get('/api/runs/:id/cases', async (req, res) => res.json(await repo.adaptiveCases(z.uuid().parse(req.params.id))));
   app.get('/api/runs/:id', async (req, res) => {
     const run = await repo.run(z.uuid().parse(req.params.id));
     return run ? res.json(run) : res.status(404).json({ v: 1, code: 'not_found', message: 'Run not found' });
@@ -74,6 +92,12 @@ export function createApp(repo: Repository) {
   app.get('/api/candidates', async (_req, res) => res.json(await repo.candidates()));
   app.get('/api/findings', async (_req, res) => res.json(await repo.findings()));
   app.get('/api/regressions', async (_req, res) => res.json(await repo.regressions()));
+  app.post('/api/regressions/:id/select', async (req, res) => {
+    try {
+      const result = await repo.selectRegression(z.uuid().parse(req.params.id));
+      return result ? res.json(result) : res.status(404).json({ message: 'Regression not found' });
+    } catch { return res.status(409).json({ message: 'Regression evidence or attachment unavailable' }); }
+  });
   app.get('/api/coverage', async (_req, res) => res.json(await repo.coverage()));
   app.post('/api/findings/:id/review', async (req, res) => {
     const result = await repo.review(z.uuid().parse(req.params.id), z.enum(['confirm', 'reject']).parse(req.body?.decision));

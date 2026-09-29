@@ -34,6 +34,8 @@ type Run = {
   version: string | null;
   model: string;
   modelSnapshot?: { roles: { judge: { provider: string; model: string } } };
+  categories?: string[] | null;
+  stopRequested?: boolean;
 };
 type Event = {
   id: number;
@@ -767,7 +769,10 @@ function App() {
         <ModelDesk
           targetId={targetId}
           caseId={caseId}
+          cases={cases}
           runId={run?.id}
+          runCategories={run?.categories}
+          runStatus={run?.status}
           onStart={(id) => {
             setRun({ id, status: "queued", outcome: null, version: null, model: "assigned per role" });
             setEvents([]);
@@ -929,15 +934,15 @@ function App() {
                       (f) => f.runId === r.sourceRunId,
                     );
                     if (source) {
-                      void api<{ caseId: string }>(
+                      void api<{ caseId: string | null }>(
                         `/runs/${source.runId}`,
-                      ).then((record) => {
-                        setCaseId(record.caseId);
+                      ).then(async (record) => {
+                        const selected = record.caseId ? record.caseId : (await api<{ caseId: string }>(`/regressions/${r.id}/select`, { method: "POST" })).caseId;
+                        await refresh();
+                        setCaseId(selected);
                         setNoticeKind("success");
-                        setNotice(
-                          "Original case selected for a new replay. Choose a target and launch above.",
-                        );
-                      });
+                        setNotice(record.caseId ? "Original case selected for a new replay. Choose a target and launch above." : "Adaptive regression case selected for replay. Choose a target and launch above.");
+                      }).catch(e => { setNoticeKind("error"); setNotice(String(e)); });
                     }
                   }}
                 >
