@@ -51,7 +51,7 @@ async function fixtureRoute(page: import('playwright-core').Page, mode: { catalo
     if (path === '/coverage') return reply([]);
     if (path === '/schedules') return reply([]);
     if (path === `/runs/${fixtureRun.id}`) return reply(mode.runMalformed ? { ...fixtureRun, modelSnapshot: { roles: {} } } : fixtureRun);
-    if (path === `/runs/${fixtureRun.id}/events`) return reply([fixtureEvent]);
+    if (path === `/runs/${fixtureRun.id}/events/page`) return reply({ items: [{ ...fixtureEvent, id: String(fixtureEvent.id) }], hasMore: false, nextCursor: String(fixtureEvent.id) });
     if (path === `/runs/${fixtureRun.id}/usage` && mode.localErrors.has('usage')) return reply({ message: 'synthetic usage offline' }, 503);
     if (path === `/runs/${fixtureRun.id}/cases` && mode.localErrors.has('progress')) return reply({ message: 'synthetic progress offline' }, 503);
     if (path === `/runs/${fixtureRun.id}/usage`) return reply([]);

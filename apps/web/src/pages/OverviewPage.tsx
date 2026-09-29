@@ -1,8 +1,9 @@
 import React from "react";
+import { OperationsPanel } from "../components/operations/OperationsPanel.js";
 import { RouteLink } from "../components/router.js";
 import { useWorkspace } from "./context.js";
 
-export function OverviewPage() {
+export function OverviewPage({ active }: { active: boolean }) {
   const { targets, cases, findings, run, navigate } = useWorkspace();
   const pending = findings.filter(finding => finding.state === "pending_review").length;
   const reserved = targets.filter(target => target.activeRunId);
@@ -19,5 +20,6 @@ export function OverviewPage() {
       {reserved.map(target => <p key={target.id}><RouteLink href={`/runs/${target.activeRunId}`} navigate={navigate}>Inspect {target.name}'s active run</RouteLink></p>)}
       <RouteLink className="task-link" href="/runs/new" navigate={navigate}>Launch an evaluation</RouteLink>
     </section>
+    <OperationsPanel active={active} navigate={navigate} />
   </div>;
 }

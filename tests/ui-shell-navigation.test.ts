@@ -35,7 +35,7 @@ async function fixture(page: import('playwright-core').Page) {
     if (path === '/config') return respond({ ollamaUrl: 'http://127.0.0.1:11434', model: 'synthetic-local' });
     if (path === '/models') return respond({ openrouter: [], ollama: ['synthetic-local'], configured: false });
     if (path === '/runs/synthetic-run' || path === '/runs/second-run') return respond(run(path.split('/').at(-1)!));
-    if (path === '/runs/synthetic-run/events' || path === '/runs/second-run/events') return respond([event(path.split('/')[2])]);
+    if (path === '/runs/synthetic-run/events/page' || path === '/runs/second-run/events/page') return respond({ items: [event(path.split('/')[2])], hasMore: false, nextCursor: '1' });
     if (path.endsWith('/usage')) return respond([]);
     if (path.endsWith('/cases')) return respond([{ id: 'synthetic-progress', ordinal: 1, category: 'prompt_injection', state: 'running', executed: true, reason: null }]);
     if (path.endsWith('/stop')) return respond({ stopRequested: true });

@@ -6,6 +6,9 @@ import { targetInput, targetUpdateInput, caseInput, caseDraftInput, startInput, 
 import { coverageQuery } from '../../../packages/contracts/src/coverage.js';
 import { DefinitionRevisionConflict, InvalidRunCursor, Repository, type CandidateIntegrity, type RunDefinitionReference } from './repository.js';
 import { auditArtifactVolume, storePdf, loadPdf } from './artifacts.js';
+import { operationsHealth } from './operations.js';
+import { readEventPage } from './event-page.js';
+import { eventPageQuery } from '../../../packages/contracts/src/event-page.js';
 import { catalog, installedOllama, preflightModels } from '../../worker/src/models.js';
 import { migrationNames } from '../../../db/migrate.js';
 
@@ -32,6 +35,11 @@ export function createApp(repo: Repository) {
     } catch {
       return res.status(503).json({ status: 'unavailable', database: 'unavailable' });
     }
+  });
+  // Worker/queue diagnostics stay separate from readiness so a stopped worker never fails the API container health check.
+  app.get('/api/operations/health', async (_req, res) => {
+    try { return res.set('Cache-Control', 'no-store').json(await operationsHealth(repo.pool)); }
+    catch { return res.status(503).set('Cache-Control', 'no-store').json({ v: 1, code: 'unavailable', message: 'Operations status unavailable' }); }
   });
   app.get('/api/integrity', async (_req, res) => res.json(await auditArtifactVolume(repo)));
   app.get('/api/schedules', async (_req, res) => res.json(await repo.schedules()));
@@ -219,6 +227,14 @@ export function createApp(repo: Repository) {
   app.get('/api/runs/:id', async (req, res) => {
     const run = await repo.run(z.uuid().parse(req.params.id));
     return run ? res.json(run) : res.status(404).json({ v: 1, code: 'not_found', message: 'Run not found' });
+  });
+  // Bounded, cursor-based read: `after` is an exclusive decimal event id; new events may arrive after any page.
+  app.get('/api/runs/:id/events/page', async (req, res) => {
+    const id = z.uuid().parse(req.params.id);
+    const query = eventPageQuery.safeParse(req.query);
+    if (!query.success) return res.status(400).json({ v: 1, code: 'invalid', message: 'Invalid event cursor or limit' });
+    const page = await readEventPage(repo.pool, id, query.data.after, query.data.limit);
+    return page ? res.set('Cache-Control', 'no-store').json(page) : res.status(404).json({ v: 1, code: 'not_found', message: 'Run not found' });
   });
   app.get('/api/runs/:id/events', async (req, res) => res.json(await repo.events(z.uuid().parse(req.params.id))));
   app.get('/api/runs/:id/report-jobs', async (req, res) => {

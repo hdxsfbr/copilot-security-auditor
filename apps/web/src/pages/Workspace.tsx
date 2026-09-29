@@ -53,7 +53,7 @@ export function Workspace() {
       {state.notice && <div className="alert" role={state.noticeKind === "error" ? "alert" : "status"}>{state.notice}</div>}
       {state.refreshError && <div className="alert" role="alert">Saved targets, cases, and evidence could not be refreshed: {state.refreshError} <button type="button" onClick={() => void state.refresh()}>Retry data refresh</button></div>}
       {state.configError && <div className="alert" role="alert">Model defaults unavailable: {state.configError} <button type="button" onClick={() => void state.loadConfig()}>Retry model defaults</button></div>}
-      <div hidden={path !== "/"} className="route-panel"><OverviewPage /></div>
+      <div hidden={path !== "/"} className="route-panel"><OverviewPage active={path === "/"} /></div>
       <div hidden={path !== "/targets"} className="route-panel"><TargetsPage /></div>
       <div hidden={path !== "/cases" && !caseRouteId} className="route-panel"><CasesPage selectedId={caseRouteId} active={path === "/cases" || !!caseRouteId} /></div>
       <div hidden={path !== "/runs/new"} className="route-panel launch-stack">

@@ -7,8 +7,8 @@ import { PDFDocument } from 'pdf-lib';
 import { createApp } from '../apps/api/src/app.js';
 import { storePdf } from '../apps/api/src/artifacts.js';
 import { legacyRoles } from '../apps/worker/src/models.js';
-import { database, users } from './support.js';
 import { migrationNames } from '../db/migrate.js';
+import { database, users } from './support.js';
 
 async function pdfBytes() {
   const pdf = await PDFDocument.create();
