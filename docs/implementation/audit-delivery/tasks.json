@@ -1,0 +1,1347 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "gitlabProjectId": 2059,
+    "gitlabHost": "labs.gauntletai.com",
+    "defaultBranch": "main",
+    "linearProjectId": "22e793b5-b9e4-48f7-96c9-de55e0aaa459",
+    "linearProjectUrl": "https://linear.app/hdxsfbr/project/clinical-auditor-evidence-and-operator-workflow-20b47f75a996"
+  },
+  "limits": {
+    "maxSubagents": 3,
+    "maxWorkInProgress": 3,
+    "maxRepairRounds": 2
+  },
+  "tasks": [
+    {
+      "key": "D00",
+      "wave": "W0",
+      "title": "Publish audit, design decisions and merge-driven delivery protocol",
+      "model": "coordinator",
+      "audit": [
+        "A01",
+        "A02",
+        "A03",
+        "A04",
+        "A05",
+        "A06",
+        "A07",
+        "A08",
+        "A09",
+        "A10",
+        "A11",
+        "A12",
+        "A13",
+        "A14",
+        "A15",
+        "A16"
+      ],
+      "deps": [],
+      "locks": [
+        "delivery-plan"
+      ],
+      "files": [
+        "docs/audit/",
+        "docs/implementation/",
+        "scripts/audit-coordinator.mjs",
+        "tests/coordinator.test.mjs"
+      ],
+      "scope": "Publish the audit and a reviewable design baseline, dependency manifest, dispatch/recovery rules and MR acceptance template. No product behavior change.",
+      "accept": [
+        "All 16 findings map to executable issues; graph is acyclic.",
+        "First safe parallel batch and shared-file locks are explicit.",
+        "Merge state is verified from GitLab; no auto-merge or unsupported background-monitor claim."
+      ],
+      "linear": {
+        "id": "HDX-5",
+        "uuid": "1cb7dbd0-3a5d-40c7-a822-71f5f4e188dd",
+        "title": "[D00] Publish audit, design decisions and merge-driven delivery protocol",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-5/d00-publish-audit-design-decisions-and-merge-driven-delivery-protocol"
+      }
+    },
+    {
+      "key": "B01",
+      "wave": "W0",
+      "title": "Define rubric-first threat model, architecture, users, metrics and build decisions",
+      "model": "Sol",
+      "audit": [
+        "A16",
+        "A15"
+      ],
+      "deps": [
+        "D00"
+      ],
+      "locks": [
+        "product-docs"
+      ],
+      "files": [
+        "THREAT_MODEL.md",
+        "USERS.md",
+        "ARCHITECTURE.md",
+        "KEY_METRICS.md",
+        "docs/adr/",
+        "docs/implementation/rubric.md"
+      ],
+      "scope": "Publish original AgentForge hard-gate documents up front, with required approximately 500-word threat/architecture summaries, agent diagram, trust/auth/data boundaries, OWASP threat map, user workflows, measurable success, build-versus-configure decisions and a requirement-to-evidence register. Distinguish current implementation from planned behavior; retain chart-context scope and optional read-only evidence adapter design.",
+      "accept": [
+        "Every original PRD requirement and submission item has an owner, issue/evidence link, and honest status.",
+        "Agent decisions are grounded in explicit custom-vs-existing-tool tradeoffs before further role work.",
+        "Metrics include supported findings, reproducibility, Judge accuracy, versioned regression/coverage and measured resource use; no fictitious baseline."
+      ],
+      "linear": {
+        "id": "HDX-6",
+        "uuid": "ddd6b8bb-d56f-469c-9688-c7546ba652d7",
+        "title": "[B01] Define rubric-first threat model, architecture, users, metrics and build decisions",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-6/b01-define-rubric-first-threat-model-architecture-users-metrics-and"
+      }
+    },
+    {
+      "key": "E01",
+      "wave": "W1",
+      "title": "Preserve structured observations and mark incomplete evidence",
+      "model": "Sol",
+      "audit": [
+        "A01"
+      ],
+      "deps": [
+        "B01"
+      ],
+      "locks": [
+        "contracts",
+        "worker-session",
+        "worker-pipeline"
+      ],
+      "files": [
+        "packages/contracts/src/",
+        "apps/worker/src/session.ts",
+        "apps/worker/src/process.ts",
+        "apps/worker/src/checks.ts",
+        "tests/evidence-*.test.ts"
+      ],
+      "scope": "Version evidence to retain typed claims, sources, limitations, attachment provenance and target identifiers. Bound ingestion and expose completeness/truncation. Keep legacy observations readable without relabeling old results.",
+      "accept": [
+        "Structured citations survive target transport and evidence persistence; prose source markers cannot substitute.",
+        "Over-limit evidence cannot yield complete safe/auto-confirmed outcomes.",
+        "Secrets remain scrubbed; historical v1 evidence remains inspectable."
+      ],
+      "linear": {
+        "id": "HDX-7",
+        "uuid": "1d83bb85-f21f-44bc-bf13-85b8b69e927c",
+        "title": "[E01] Preserve structured observations and mark incomplete evidence",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-7/e01-preserve-structured-observations-and-mark-incomplete-evidence"
+      }
+    },
+    {
+      "key": "E02",
+      "wave": "W1",
+      "title": "Gate finding decisions and exports on candidate evidence integrity",
+      "model": "Sol",
+      "audit": [
+        "A03"
+      ],
+      "deps": [
+        "B01"
+      ],
+      "locks": [
+        "api-data",
+        "artifact-store",
+        "migrations"
+      ],
+      "files": [
+        "apps/api/src/artifacts.ts",
+        "apps/api/src/repository.ts",
+        "apps/api/src/app.ts",
+        "db/migrations/",
+        "tests/integrity-*.test.ts"
+      ],
+      "scope": "Resolve candidate-specific selected/adaptive artifact references; verify hashes and sizes before new confirmation, approval and export. Preserve historical decisions with explicit current integrity status.",
+      "accept": [
+        "Deleting/corrupting a required PDF blocks confirm/approve/export without mutating the decision.",
+        "Restoration permits explicit retry and unrelated candidates stay usable.",
+        "Return typed integrity failures suitable for UI."
+      ],
+      "linear": {
+        "id": "HDX-8",
+        "uuid": "1310952d-923c-4cf5-a958-b935359acfac",
+        "title": "[E02] Gate finding decisions and exports on candidate evidence integrity",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-8/e02-gate-finding-decisions-and-exports-on-candidate-evidence-integrity"
+      }
+    },
+    {
+      "key": "U01",
+      "wave": "W1",
+      "title": "Keep the UI usable through catalog and API failures",
+      "model": "Luna",
+      "audit": [
+        "A04"
+      ],
+      "deps": [
+        "B01"
+      ],
+      "locks": [
+        "web-root",
+        "web-modeldesk",
+        "web-scheduledesk"
+      ],
+      "files": [
+        "apps/web/src/ModelDesk.tsx",
+        "apps/web/src/ScheduleDesk.tsx",
+        "apps/web/src/main.tsx",
+        "apps/web/src/api/",
+        "tests/ui-resilience-*.test.ts"
+      ],
+      "scope": "Centralize HTTP status/success-shape checks, retain valid data, add local retry states and render boundaries. Limit work to failure resilience before navigation changes.",
+      "accept": [
+        "503 JSON from /api/models never empties the root.",
+        "Usage/config/progress failures render local errors while existing evidence and forms remain usable.",
+        "Browser regression demonstrates recovery after retry."
+      ],
+      "linear": {
+        "id": "HDX-9",
+        "uuid": "238704ca-f6e0-4f0b-9cc3-edf2fe9fa962",
+        "title": "[U01] Keep the UI usable through catalog and API failures",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-9/u01-keep-the-ui-usable-through-catalog-and-api-failures"
+      }
+    },
+    {
+      "key": "E03",
+      "wave": "W2",
+      "title": "Rebuild Judge evidence packets and calibrate confirmation gates",
+      "model": "Sol",
+      "audit": [
+        "A02"
+      ],
+      "deps": [
+        "E01"
+      ],
+      "locks": [
+        "contracts",
+        "worker-pipeline",
+        "worker-models"
+      ],
+      "files": [
+        "apps/worker/src/judge.ts",
+        "apps/worker/src/checks.ts",
+        "apps/worker/src/process.ts",
+        "apps/worker/src/models.ts",
+        "packages/contracts/src/",
+        "evals/judge/"
+      ],
+      "scope": "Include sanitized executed prompts, observations, checks, effect indicators and attachments in the Judge packet. Persist policy reasons. Default unsupported LLM-only findings to review; require complete supported safe judgments. Add a labeled synthetic calibration corpus.",
+      "accept": [
+        "The audit's refusal/quoted-phrase example cannot auto-confirm.",
+        "Prompt echoes, partial/truncated evidence and invalid references cannot become unsupported safe/confirmed results.",
+        "Calibration records expected outcomes and exact failed gates without calling a paid model."
+      ],
+      "linear": {
+        "id": "HDX-10",
+        "uuid": "f318dcd2-9bca-4666-b12a-19c08a33d675",
+        "title": "[E03] Rebuild Judge evidence packets and calibrate confirmation gates",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-10/e03-rebuild-judge-evidence-packets-and-calibrate-confirmation-gates"
+      }
+    },
+    {
+      "key": "E04",
+      "wave": "W2",
+      "title": "Use operation-specific deadlines without ambiguous retries",
+      "model": "Sol",
+      "audit": [
+        "A05"
+      ],
+      "deps": [
+        "E03"
+      ],
+      "locks": [
+        "worker-session",
+        "worker-pipeline",
+        "worker-models"
+      ],
+      "files": [
+        "apps/worker/src/session.ts",
+        "apps/worker/src/models.ts",
+        "apps/worker/src/process.ts",
+        "tests/deadline-*.test.ts"
+      ],
+      "scope": "Define target-turn, handshake/upload and role-call deadlines using the supplied target contract and remaining run budget. Distinguish timeout stage and elapsed time; retain unknown paid charges.",
+      "accept": [
+        "A fixture turn lasting beyond 15 seconds but within the configured turn allowance completes.",
+        "An over-deadline turn terminates incomplete once and is not redispatched.",
+        "Only explicitly not-applied turns receive the existing bounded retry."
+      ],
+      "linear": {
+        "id": "HDX-11",
+        "uuid": "9b73ed3a-adf8-45c5-b617-f8692ee0b214",
+        "title": "[E04] Use operation-specific deadlines without ambiguous retries",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-11/e04-use-operation-specific-deadlines-without-ambiguous-retries"
+      }
+    },
+    {
+      "key": "U02",
+      "wave": "W2",
+      "title": "Introduce routed application shell and task-focused navigation",
+      "model": "Sol",
+      "audit": [
+        "A09"
+      ],
+      "deps": [
+        "U01"
+      ],
+      "locks": [
+        "web-root",
+        "web-modeldesk",
+        "web-scheduledesk",
+        "web-shell",
+        "package-config"
+      ],
+      "files": [
+        "apps/web/src/main.tsx",
+        "apps/web/src/style.css",
+        "apps/web/src/pages/",
+        "apps/web/src/components/",
+        "apps/web/package.json"
+      ],
+      "scope": "Extract the monolith into a thin mount/router, shared shell and separate feature pages. Preserve working forms during migration. Establish route, layout, status, loading/error and keyboard conventions; use actual data only. Extract the legacy selected launcher into pages/LegacyRunLauncher.tsx; U04 owns its removal after RunComposer replaces it.",
+      "accept": [
+        "Desktop/sidebar and compact mobile navigation expose stable paths with landmarks and focus states.",
+        "Reloading supported routes works via the existing SPA fallback.",
+        "No capability disappears during extraction; setup no longer precedes every task."
+      ],
+      "linear": {
+        "id": "HDX-12",
+        "uuid": "f6a5cd5c-5b59-4836-a5bf-dcb772461afe",
+        "title": "[U02] Introduce routed application shell and task-focused navigation",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-12/u02-introduce-routed-application-shell-and-task-focused-navigation"
+      }
+    },
+    {
+      "key": "Q01",
+      "wave": "W2",
+      "title": "Make fixture CI and browser setup reproducible",
+      "model": "Luna",
+      "audit": [
+        "A15"
+      ],
+      "deps": [
+        "D00"
+      ],
+      "locks": [
+        "ci-harness",
+        "package-config"
+      ],
+      "files": [
+        ".gitlab-ci.yml",
+        "package.json",
+        "tests/support.ts",
+        "tests/e2e.test.ts",
+        "docs/implementation/validation.md"
+      ],
+      "scope": "Declare browser executable provisioning and disposable PostgreSQL requirements; discover feature tests; run typecheck/build/unit/integration/browser/failure suites in GitLab when a compatible runner exists. Record the intermittent target-selection failure rather than masking it.",
+      "accept": [
+        "Clean local fixture pipeline is reproducible with documented prerequisites.",
+        "Routine CI never invokes test:live or real provider credentials.",
+        "Runner availability is verified; unavailable runners are reported, never represented as a green pipeline."
+      ],
+      "linear": {
+        "id": "HDX-13",
+        "uuid": "06975330-4b23-4c1d-8224-adf3900cafde",
+        "title": "[Q01] Make fixture CI and browser setup reproducible",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-13/q01-make-fixture-ci-and-browser-setup-reproducible"
+      }
+    },
+    {
+      "key": "K01",
+      "wave": "W3",
+      "title": "Publish and enforce versioned inter-agent success and error contracts",
+      "model": "Sol",
+      "audit": [
+        "A02",
+        "A07",
+        "A13",
+        "A16"
+      ],
+      "deps": [
+        "E03"
+      ],
+      "locks": [
+        "contracts",
+        "worker-pipeline",
+        "worker-models"
+      ],
+      "files": [
+        "contracts/",
+        "packages/contracts/src/",
+        "apps/worker/src/",
+        "tests/contracts/",
+        "docs/implementation/contracts.md"
+      ],
+      "scope": "Publish versioned schemas for Orchestrator→Red Team, Red Team→Judge and Judge→Documentation envelopes and known errors. Use shared runtime validators at producer/consumer boundaries, include stable evidence references and explicit compatibility/migration notes. Define the Documentation contract before its implementation; F01 must consume and test it. Cover target unreachable, budget exceeded, Judge timeout, no findings and regression outcomes. This internal work does not depend on a peer service.",
+      "accept": [
+        "Published schemas and runtime definitions cannot drift silently; every implemented producing and consuming role has fixture contract checks.",
+        "Malformed or incompatible messages fail with typed errors before privileged execution.",
+        "Evidence for a genuinely independent peer integration remains separate in I01."
+      ],
+      "linear": {
+        "id": "HDX-38",
+        "uuid": "73de8dd8-9511-4462-90cf-14a79449ed6a",
+        "title": "[K01] Publish and enforce versioned inter-agent success and error contracts",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-38/k01-publish-and-enforce-versioned-inter-agent-success-and-error"
+      }
+    },
+    {
+      "key": "R01",
+      "wave": "W3",
+      "title": "Add run history, exact case lookup and cooperative stop for both modes",
+      "model": "Sol",
+      "audit": [
+        "A06"
+      ],
+      "deps": [
+        "E02",
+        "E04"
+      ],
+      "locks": [
+        "api-data",
+        "contracts",
+        "worker-pipeline"
+      ],
+      "files": [
+        "apps/api/src/app.ts",
+        "apps/api/src/repository.ts",
+        "packages/contracts/src/",
+        "apps/worker/src/process.ts",
+        "apps/worker/src/adaptive.ts"
+      ],
+      "scope": "Add cursor-paginated run history and run/case detail with immutable target/version metadata. Generalize queued and running cancellation to selected and adaptive runs while preserving reservations and lease fencing.",
+      "accept": [
+        "History finds safe, blocked, incomplete and inconclusive manual runs after reload.",
+        "Stopping queued/running selected cases releases safely and cannot execute an additional turn after stop is observed.",
+        "Busy conflicts expose a resolvable active run and adaptive stop still passes."
+      ],
+      "linear": {
+        "id": "HDX-14",
+        "uuid": "4f6728b9-61ec-4f65-b64c-37c54d3b02c3",
+        "title": "[R01] Add run history, exact case lookup and cooperative stop for both modes",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-14/r01-add-run-history-exact-case-lookup-and-cooperative-stop-for-both"
+      }
+    },
+    {
+      "key": "C01",
+      "wave": "W3",
+      "title": "Introduce draft, publish, version and archive lifecycle for cases",
+      "model": "Sol",
+      "audit": [
+        "A10"
+      ],
+      "deps": [
+        "E02",
+        "E01"
+      ],
+      "locks": [
+        "api-data",
+        "contracts",
+        "migrations",
+        "artifact-store"
+      ],
+      "files": [
+        "apps/api/src/",
+        "packages/contracts/src/",
+        "db/migrations/",
+        "tests/case-lifecycle-*.test.ts"
+      ],
+      "scope": "Make attachment authoring recoverable in a non-runnable draft; publish validates the complete definition. Support cloning/versioning and archive without changing run snapshots or existing evidence. Add versioned category/subcategory, OWASP mappings, exploitability and boundary/invariant/regression metadata without inferring missing historical values.",
+      "accept": [
+        "Failed PDF upload leaves a recoverable draft, never an unintended runnable text case.",
+        "Published cases validate up to three actions and six checks with linked artifacts.",
+        "Historical run/replay definitions remain immutable when case versions change.",
+        "New published seeds can carry every required rubric classification and linked observed results; legacy missing metadata is explicit."
+      ],
+      "linear": {
+        "id": "HDX-15",
+        "uuid": "70367e0e-a639-4279-b7bb-47de08d0d4c1",
+        "title": "[C01] Introduce draft, publish, version and archive lifecycle for cases",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-15/c01-introduce-draft-publish-version-and-archive-lifecycle-for-cases"
+      }
+    },
+    {
+      "key": "M01",
+      "wave": "W3",
+      "title": "Validate active roles and save reusable run/model definitions",
+      "model": "Sol",
+      "audit": [
+        "A11"
+      ],
+      "deps": [
+        "E04",
+        "C01"
+      ],
+      "locks": [
+        "api-data",
+        "contracts",
+        "migrations",
+        "worker-models"
+      ],
+      "files": [
+        "apps/api/src/",
+        "apps/worker/src/models.ts",
+        "packages/contracts/src/",
+        "db/migrations/"
+      ],
+      "scope": "Validate only roles actually invoked by the chosen mode; expose installed models, typed availability and conservative cost preview. Save reusable single-selected-case or adaptive run/model definitions for composer and schedule use, with immutable execution snapshots. Paid-only definitions need no unused Ollama URL.",
+      "accept": [
+        "A missing inactive role cannot block a valid Judge-only run.",
+        "Discovered local models and paid preflight reservations are available to the UI.",
+        "Reusing/editing a definition cannot mutate prior runs or scheduled occurrence snapshots."
+      ],
+      "linear": {
+        "id": "HDX-16",
+        "uuid": "67526eb7-c029-4909-88ef-7d8816881dbe",
+        "title": "[M01] Validate active roles and save reusable run/model definitions",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-16/m01-validate-active-roles-and-save-reusable-runmodel-definitions"
+      }
+    },
+    {
+      "key": "U03",
+      "wave": "W4",
+      "title": "Build persistent run history and structured run detail",
+      "model": "Sol",
+      "audit": [
+        "A06",
+        "A09"
+      ],
+      "deps": [
+        "R01",
+        "U02"
+      ],
+      "locks": [
+        "web-runs"
+      ],
+      "files": [
+        "apps/web/src/pages/Runs*",
+        "apps/web/src/pages/RunDetail*",
+        "apps/web/src/components/evidence/",
+        "apps/web/src/hooks/"
+      ],
+      "scope": "Show target/version/mode history, active-run recovery, exact adaptive cases, structured action/response/check/verdict evidence, local step numbers, usage and stop. Keep raw JSON expandable and poll terminal runs only on demand.",
+      "accept": [
+        "Direct URL/reload/new tab recovers the same run and case.",
+        "Busy target link opens its owner; selected/adaptive stops are visible and accurate.",
+        "Inspect evidence goes to the correct case/turn instead of page top."
+      ],
+      "linear": {
+        "id": "HDX-17",
+        "uuid": "f17cb527-ae2d-4059-950f-fd29646c0339",
+        "title": "[U03] Build persistent run history and structured run detail",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-17/u03-build-persistent-run-history-and-structured-run-detail"
+      }
+    },
+    {
+      "key": "C02",
+      "wave": "W4",
+      "title": "Build the versioned multi-step case workspace and starter matrix",
+      "model": "Sol",
+      "audit": [
+        "A10",
+        "A16"
+      ],
+      "deps": [
+        "C01",
+        "U02",
+        "B01",
+        "E03"
+      ],
+      "locks": [
+        "web-cases",
+        "migrations"
+      ],
+      "files": [
+        "apps/web/src/pages/Cases*",
+        "apps/web/src/pages/CaseEditor*",
+        "apps/web/src/components/cases/",
+        "db/migrations/",
+        "evals/seeds/"
+      ],
+      "scope": "Author/edit draft sequences and multiple checks; retry PDFs in place; preview/publish/clone/archive cases. Version new starters around no advice, no unsolicited writes and chart-context isolation; include direct/indirect/multi-turn seeds without overwriting historical definitions.",
+      "accept": [
+        "Invalid PDF can be corrected in the same draft.",
+        "Editor can express the backend's supported action/check bounds.",
+        "Tool-action negative control and proof limitations are visible; old snapshots unchanged."
+      ],
+      "linear": {
+        "id": "HDX-18",
+        "uuid": "9c1dc39e-2496-43b2-b785-d8e936eb1b5c",
+        "title": "[C02] Build the versioned multi-step case workspace and starter matrix",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-18/c02-build-the-versioned-multi-step-case-workspace-and-starter-matrix"
+      }
+    },
+    {
+      "key": "U04",
+      "wave": "W4",
+      "title": "Replace duplicate launchers with one preflighted run composer",
+      "model": "Sol",
+      "audit": [
+        "A11",
+        "A09"
+      ],
+      "deps": [
+        "M01",
+        "U03"
+      ],
+      "locks": [
+        "web-composer",
+        "web-modeldesk",
+        "web-shell"
+      ],
+      "files": [
+        "apps/web/src/pages/RunComposer*",
+        "apps/web/src/components/models/",
+        "apps/web/src/ModelDesk.tsx",
+        "apps/web/src/pages/LegacyRunLauncher.tsx"
+      ],
+      "scope": "Compose target, one selected case or adaptive seeds, active role profile and bounds in one flow; show availability, conservative reservation and meaningful conflict links. Remove superseded launchers and inactive Documentation controls until its implementation exists.",
+      "accept": [
+        "One clear manual launch path retains local and mixed-provider modes.",
+        "Only invoked roles need valid models/endpoints.",
+        "Settings come from reusable definitions; double submits and errors have clear states."
+      ],
+      "linear": {
+        "id": "HDX-19",
+        "uuid": "ad352f1a-f45c-41f7-968a-dacc13cc5064",
+        "title": "[U04] Replace duplicate launchers with one preflighted run composer",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-19/u04-replace-duplicate-launchers-with-one-preflighted-run-composer"
+      }
+    },
+    {
+      "key": "S01",
+      "wave": "W4",
+      "title": "Make schedules reusable, correctly zoned and historically accessible",
+      "model": "Sol",
+      "audit": [
+        "A12"
+      ],
+      "deps": [
+        "M01",
+        "U04"
+      ],
+      "locks": [
+        "api-data",
+        "web-schedules",
+        "web-scheduledesk"
+      ],
+      "files": [
+        "apps/api/src/",
+        "apps/web/src/ScheduleDesk.tsx",
+        "apps/web/src/pages/Schedules*"
+      ],
+      "scope": "Create schedules from run definitions, show target/mode/cases/models/cap, explicitly format in the schedule zone, and add archive/detail/paginated occurrence access without deleting history.",
+      "accept": [
+        "Different browser and schedule zones show correct time and label.",
+        "Removed schedules remain inspectable in archive.",
+        "Occurrences link to run detail with skip/block reasons; existing DST/uniqueness tests pass."
+      ],
+      "linear": {
+        "id": "HDX-20",
+        "uuid": "09afb520-8e50-4f50-b806-b029aa616440",
+        "title": "[S01] Make schedules reusable, correctly zoned and historically accessible",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-20/s01-make-schedules-reusable-correctly-zoned-and-historically"
+      }
+    },
+    {
+      "key": "O01",
+      "wave": "W4",
+      "title": "Expose worker, queue and incremental evidence health",
+      "model": "Sol",
+      "audit": [
+        "A15"
+      ],
+      "deps": [
+        "R01",
+        "Q01",
+        "U03"
+      ],
+      "locks": [
+        "api-data",
+        "migrations",
+        "worker-loop",
+        "web-operations"
+      ],
+      "files": [
+        "apps/api/src/",
+        "apps/worker/src/main.ts",
+        "db/migrations/",
+        "apps/web/src/pages/Overview*",
+        "apps/web/src/components/operations/"
+      ],
+      "scope": "Add observable worker heartbeat/queue age/lease state and safe diagnostic codes; support incremental event cursors and paginated collections; display actionable health in Overview. Document execution concurrency separately from target reservations.",
+      "accept": [
+        "Stopped worker and aging queued run are distinguishable from a running evaluation.",
+        "No diagnostic exposes credentials or provider secrets.",
+        "Completed run polling stops and evidence reads can resume after a cursor."
+      ],
+      "linear": {
+        "id": "HDX-21",
+        "uuid": "7bf29491-9e2b-42e8-aed9-79e136071ceb",
+        "title": "[O01] Expose worker, queue and incremental evidence health",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-21/o01-expose-worker-queue-and-incremental-evidence-health"
+      }
+    },
+    {
+      "key": "F00",
+      "wave": "W5",
+      "title": "Add leased report jobs and bounded post-run model accounting",
+      "model": "Sol",
+      "audit": [
+        "A07",
+        "A11"
+      ],
+      "deps": [
+        "E02",
+        "E03",
+        "M01",
+        "K01"
+      ],
+      "locks": [
+        "api-data",
+        "contracts",
+        "migrations",
+        "worker-loop",
+        "worker-pipeline",
+        "worker-models"
+      ],
+      "files": [
+        "apps/api/src/",
+        "apps/worker/src/",
+        "packages/contracts/src/",
+        "db/migrations/",
+        "tests/report-jobs-*.test.ts"
+      ],
+      "scope": "Implement report-job state, worker leases/fencing, idempotent enqueue and independent accounting after evaluation completion. A disabled-by-default immutable run report policy snapshots the Documentation model and aggregate cap; preflight reserves that allowance within the run total. Transfer allowance atomically to per-report jobs keyed by finding/evidence revision; never reopen or overload a completed execution lease. Unused allowance has an explicit bounded review window/release policy; late confirmation after release requires new explicit report authorization. Missing configuration leaves report-needed status, never unbudgeted inference. F02 owns the enabling controls in composer/review.",
+      "accept": [
+        "Duplicate confirmations or retries create one job per finding/evidence revision; lease loss cannot settle another generation.",
+        "Evaluation completion can release its target reservation while authorized report accounting remains intact; aggregate jobs cannot exceed the held allowance.",
+        "Cancellation/expiry releases only provably unused funds; ambiguous model delivery stays held.",
+        "Existing profiles/runs default to report generation disabled with no new paid requirement."
+      ],
+      "linear": {
+        "id": "HDX-39",
+        "uuid": "84af4a4c-16f0-4f48-a176-6e1f001ccece",
+        "title": "[F00] Add leased report jobs and bounded post-run model accounting",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-39/f00-add-leased-report-jobs-and-bounded-post-run-model-accounting"
+      }
+    },
+    {
+      "key": "F01",
+      "wave": "W5",
+      "title": "Implement evidence-grounded finding metadata and report drafting",
+      "model": "Sol",
+      "audit": [
+        "A07"
+      ],
+      "deps": [
+        "E03",
+        "E02",
+        "M01",
+        "K01",
+        "F00"
+      ],
+      "locks": [
+        "api-data",
+        "contracts",
+        "migrations",
+        "worker-models",
+        "worker-pipeline",
+        "worker-loop"
+      ],
+      "files": [
+        "packages/contracts/src/",
+        "apps/api/src/",
+        "apps/worker/src/reports.ts",
+        "apps/worker/src/models.ts",
+        "db/migrations/",
+        "apps/worker/src/process.ts",
+        "apps/worker/src/main.ts"
+      ],
+      "scope": "Add severity rationale, impact, cited observed/expected behavior, target/version, reproduction, remediation, uncertainty and validation fields. Invoke the bounded Documentation role from approved evidence, validate output, version drafts and separate approval of an exact redacted revision from confirmation. Consume the leased/report-budget job API from F00. Add typed human review rationale and append-only decision/correction history to the API/schema for F02.",
+      "accept": [
+        "Synthetic report contains reproducible steps and stable patient aliases without losing mechanism.",
+        "Missing/invalid evidence prevents a complete report; schema errors do not create findings.",
+        "Documentation usage is budgeted/attributed and report edits invalidate prior revision approval."
+      ],
+      "linear": {
+        "id": "HDX-22",
+        "uuid": "d8b17f7d-0e62-4f01-8bb2-c9ad93411937",
+        "title": "[F01] Implement evidence-grounded finding metadata and report drafting",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-22/f01-implement-evidence-grounded-finding-metadata-and-report-drafting"
+      }
+    },
+    {
+      "key": "F02",
+      "wave": "W5",
+      "title": "Build finding review, report preview and approved downloads",
+      "model": "Sol",
+      "audit": [
+        "A07",
+        "A09",
+        "A03"
+      ],
+      "deps": [
+        "F01",
+        "U03",
+        "U04"
+      ],
+      "locks": [
+        "web-findings",
+        "web-composer",
+        "web-modeldesk"
+      ],
+      "files": [
+        "apps/web/src/pages/Findings*",
+        "apps/web/src/pages/FindingDetail*",
+        "apps/web/src/components/findings/",
+        "apps/web/src/pages/RunComposer*",
+        "apps/web/src/components/models/",
+        "apps/web/src/ModelDesk.tsx"
+      ],
+      "scope": "Present the exact candidate/adaptive case with cited transcript, checks, verdict, gate reasons and integrity. Add review rationale/final state, redacted report preview and download with separate revision-specific approval. Restore Documentation profile/model/output-limit and report-allowance controls in the composer now that F00/F01 exist. Show optional automatic drafting, held report allowance/expiry and report-job state; late confirmation after allowance release needs an explicit report job/cap selection. Review calls send typed rationale.",
+      "accept": [
+        "Confirm/reject decisions are adjacent to supporting evidence and uncertainty.",
+        "Missing evidence disables new confirmation/approval with the reason shown.",
+        "Approved download is actionable and matches the approved report revision."
+      ],
+      "linear": {
+        "id": "HDX-23",
+        "uuid": "ce8d0405-736e-44ed-b2d3-b7e3ad8d412a",
+        "title": "[F02] Build finding review, report preview and approved downloads",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-23/f02-build-finding-review-report-preview-and-approved-downloads"
+      }
+    },
+    {
+      "key": "V01",
+      "wave": "W5",
+      "title": "Scope coverage by target/version with honest denominators",
+      "model": "Sol",
+      "audit": [
+        "A08"
+      ],
+      "deps": [
+        "E03",
+        "C01",
+        "R01"
+      ],
+      "locks": [
+        "api-data",
+        "contracts"
+      ],
+      "files": [
+        "apps/api/src/",
+        "packages/contracts/src/",
+        "tests/coverage-*.test.ts"
+      ],
+      "scope": "Expose category/subcategory/case coverage by target/version/time with separate attempted, executed, assessed and reviewed facts. Keep immutable execution outcome separate from current finding disposition.",
+      "accept": [
+        "Changing target/version changes results; blocked preflight is not counted executed.",
+        "Safe-rate denominator excludes unknown/blocked/incomplete cases.",
+        "Review decisions change adjudication fields without rewriting execution outcomes."
+      ],
+      "linear": {
+        "id": "HDX-24",
+        "uuid": "19af6be3-2dc5-4b8b-ab61-d428feba2d79",
+        "title": "[V01] Scope coverage by target/version with honest denominators",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-24/v01-scope-coverage-by-targetversion-with-honest-denominators"
+      }
+    },
+    {
+      "key": "V02",
+      "wave": "W5",
+      "title": "Show target/version coverage and review trends in the UI",
+      "model": "Luna",
+      "audit": [
+        "A08"
+      ],
+      "deps": [
+        "V01",
+        "U02",
+        "O01"
+      ],
+      "locks": [
+        "web-coverage",
+        "web-operations"
+      ],
+      "files": [
+        "apps/web/src/pages/Coverage*",
+        "apps/web/src/pages/Overview*"
+      ],
+      "scope": "Render a filterable coverage table with explicit gaps, denominators and outcome/disposition separation. Add version/time comparisons only from compatible scoped data.",
+      "accept": [
+        "Selected target/version filters are visible and honored.",
+        "Untested, blocked and inconclusive remain distinct.",
+        "No global counts are labeled as the selected target's coverage."
+      ],
+      "linear": {
+        "id": "HDX-25",
+        "uuid": "66e1874f-990b-4e76-b00a-82fbd1e3b607",
+        "title": "[V02] Show target/version coverage and review trends in the UI",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-25/v02-show-targetversion-coverage-and-review-trends-in-the-ui"
+      }
+    },
+    {
+      "key": "G01",
+      "wave": "W5",
+      "title": "Add regression identity, deduplication and explicit replay lineage",
+      "model": "Sol",
+      "audit": [
+        "A14"
+      ],
+      "deps": [
+        "F01",
+        "C01"
+      ],
+      "locks": [
+        "api-data",
+        "contracts",
+        "migrations"
+      ],
+      "files": [
+        "apps/api/src/",
+        "packages/contracts/src/",
+        "db/migrations/"
+      ],
+      "scope": "Fingerprint normalized attack definitions, associate repeated occurrences with stable findings, link every replay explicitly to a regression and exact case, and preserve target/version identity across environments.",
+      "accept": [
+        "Repeated same attack does not create uncontrolled duplicate regressions.",
+        "Cross-target replays appear under the intended regression.",
+        "Unknown results never imply fixed; adaptive findings resolve to exact case evidence."
+      ],
+      "linear": {
+        "id": "HDX-26",
+        "uuid": "45ea9e09-94b3-4e37-b731-2696b13d89da",
+        "title": "[G01] Add regression identity, deduplication and explicit replay lineage",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-26/g01-add-regression-identity-deduplication-and-explicit-replay-lineage"
+      }
+    },
+    {
+      "key": "G02",
+      "wave": "W5",
+      "title": "Run regression suites and show fixed/resurfaced/unknown states",
+      "model": "Sol",
+      "audit": [
+        "A14"
+      ],
+      "deps": [
+        "G01",
+        "V01",
+        "U04"
+      ],
+      "locks": [
+        "api-data",
+        "worker-pipeline",
+        "web-regressions",
+        "contracts",
+        "migrations",
+        "web-composer"
+      ],
+      "files": [
+        "apps/api/src/",
+        "apps/worker/src/",
+        "packages/contracts/src/",
+        "apps/web/src/pages/Regressions*",
+        "db/migrations/",
+        "apps/web/src/pages/RunComposer*"
+      ],
+      "scope": "Launch bounded selected suites using existing reservations/ledger, link results across explicit versions, and offer an operator-triggered new-version validation action. Preserve no-ambiguous-retry policy. Add an explicit opt-in target-version-change trigger for the Orchestrator to enqueue a bounded suite, with deduplication and the existing target reservation. Introduce selected-suite definitions/execution and composer selection here; M01/U04 initially support one selected case. Include suite persistence migrations and snapshots.",
+      "accept": [
+        "A synthetic fail → fix → resurface sequence is displayed correctly.",
+        "A suite preserves individual incomplete/blocked cases and releases its reservation.",
+        "No automatic deployment, unbounded campaign or missing-result-as-safe behavior."
+      ],
+      "linear": {
+        "id": "HDX-27",
+        "uuid": "591f1379-dddc-43ae-878b-463f9e44ebc3",
+        "title": "[G02] Run regression suites and show fixed/resurfaced/unknown states",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-27/g02-run-regression-suites-and-show-fixedresurfacedunknown-states"
+      }
+    },
+    {
+      "key": "M02",
+      "wave": "W5",
+      "title": "Make unresolved spend investigable and explicitly reconcilable",
+      "model": "Sol",
+      "audit": [
+        "A11",
+        "A15"
+      ],
+      "deps": [
+        "M01",
+        "U03"
+      ],
+      "locks": [
+        "api-data",
+        "worker-models",
+        "migrations",
+        "web-spend"
+      ],
+      "files": [
+        "apps/api/src/",
+        "apps/worker/src/models.ts",
+        "db/migrations/",
+        "apps/web/src/components/spend/"
+      ],
+      "scope": "Persist available provider generation references and reservation/charge provenance; show unresolved totals and bounded operator reconciliation with recorded evidence. Never release an unknown charge merely to resume work.",
+      "accept": [
+        "Provider-reported, reserved and unresolved totals remain separate.",
+        "Reconciliation is idempotent, auditable and cannot exceed accounting invariants.",
+        "Unknown billing remains held; local inference is never assigned a fabricated price."
+      ],
+      "linear": {
+        "id": "HDX-28",
+        "uuid": "ac8bdf3f-228a-4f63-847f-ef4f1d2ec803",
+        "title": "[M02] Make unresolved spend investigable and explicitly reconcilable",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-28/m02-make-unresolved-spend-investigable-and-explicitly-reconcilable"
+      }
+    },
+    {
+      "key": "A17",
+      "wave": "W6",
+      "title": "Give bounded adaptive exploration feedback and mutation lineage",
+      "model": "Sol",
+      "audit": [
+        "A13"
+      ],
+      "deps": [
+        "E03",
+        "V01",
+        "G01",
+        "G02"
+      ],
+      "locks": [
+        "worker-pipeline",
+        "api-data",
+        "contracts",
+        "migrations"
+      ],
+      "files": [
+        "apps/worker/src/adaptive.ts",
+        "apps/api/src/",
+        "packages/contracts/src/",
+        "db/migrations/"
+      ],
+      "scope": "Use sanitized seed actions/checks, prior verdicts, coverage gaps and regression facts. Record parent mutation lineage, avoid repeated blocked/rejected category starvation, and introduce bounded response-conditioned next turns while preserving all limits.",
+      "accept": [
+        "Planner can trace a next action to prior evidence and outcome.",
+        "Repeated rejection cannot consume all effort on the same blocked category without a recorded decision.",
+        "Case/time/spend/stop limits and model-to-transport boundaries remain enforced."
+      ],
+      "linear": {
+        "id": "HDX-29",
+        "uuid": "77858612-b102-49c9-96b0-ccaa57f5a5d3",
+        "title": "[A17] Give bounded adaptive exploration feedback and mutation lineage",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-29/a17-give-bounded-adaptive-exploration-feedback-and-mutation-lineage"
+      }
+    },
+    {
+      "key": "Q02",
+      "wave": "W6",
+      "title": "Verify the complete fixture workflow and baseline performance",
+      "model": "Sol",
+      "audit": [
+        "A01",
+        "A02",
+        "A03",
+        "A04",
+        "A05",
+        "A06",
+        "A07",
+        "A08",
+        "A09",
+        "A10",
+        "A11",
+        "A12",
+        "A13",
+        "A14",
+        "A15",
+        "A16"
+      ],
+      "deps": [
+        "F02",
+        "V02",
+        "G02",
+        "M02",
+        "S01",
+        "O01",
+        "C02",
+        "A17",
+        "Q01"
+      ],
+      "locks": [
+        "acceptance-tests"
+      ],
+      "files": [
+        "tests/acceptance/",
+        "evals/results/",
+        "docs/implementation/validation.md"
+      ],
+      "scope": "Run clean fixture acceptance for all audit defects and new journeys, Judge calibration and representative synthetic throughput. Record exact revisions, known limits and evidence. Do not call live target or paid providers.",
+      "accept": [
+        "All acceptance checks have current-build evidence, including no false pass on failures.",
+        "Browser keyboard/small-screen/error recovery paths are verified.",
+        "Performance results are labeled fixture baselines and never claimed as live 100-case results."
+      ],
+      "linear": {
+        "id": "HDX-30",
+        "uuid": "290bd380-9f9c-4692-a262-baed6011a4ed",
+        "title": "[Q02] Verify the complete fixture workflow and baseline performance",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-30/q02-verify-the-complete-fixture-workflow-and-baseline-performance"
+      }
+    },
+    {
+      "key": "B02",
+      "wave": "W5",
+      "title": "Demonstrate ten-finding triage and reporting quality",
+      "model": "Luna",
+      "audit": [
+        "A07",
+        "A16"
+      ],
+      "deps": [
+        "F01",
+        "B01"
+      ],
+      "locks": [
+        "triage-evidence"
+      ],
+      "files": [
+        "evals/triage/",
+        "docs/submission/triage.md"
+      ],
+      "scope": "Create the required clearly labeled simulated scan with at least ten critical/high/medium/false-positive entries and documented validate/remediate/defer decisions. Use this to assess report utility without passing simulations off as discovered vulnerabilities.",
+      "accept": [
+        "Ten or more simulated findings have evidence, classification and defensible triage decisions.",
+        "Report validation distinguishes unsupported/false-positive cases.",
+        "Simulation is kept separate from the minimum three genuinely discovered vulnerability reports."
+      ],
+      "linear": {
+        "id": "HDX-31",
+        "uuid": "d44fb49b-8926-4a7d-bbf0-ea404ee32810",
+        "title": "[B02] Demonstrate ten-finding triage and reporting quality",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-31/b02-demonstrate-ten-finding-triage-and-reporting-quality"
+      }
+    },
+    {
+      "key": "P01",
+      "wave": "W6",
+      "title": "Produce reproducible 100-case fixture baseline and scale cost analysis",
+      "model": "Sol",
+      "audit": [
+        "A15",
+        "A16"
+      ],
+      "deps": [
+        "Q02",
+        "M02"
+      ],
+      "locks": [
+        "performance-evidence",
+        "ci-harness",
+        "package-config"
+      ],
+      "files": [
+        "tests/performance/",
+        "docs/submission/cost-and-scale.md",
+        "evals/results/performance/",
+        ".gitlab-ci.yml",
+        "package.json"
+      ],
+      "scope": "Record CPU/memory/throughput/orchestration/model/storage latency for 100 fixture cases and a full regression suite; define a regression SLO. Produce 100/1K/10K/100K run cost/scaling scenarios with explicit pricing/workload assumptions and a development-spend input section. Separate measured fixture results from live performance. Wire the measured fixture regression SLO into CI with an explicit, defensible tolerance.",
+      "accept": [
+        "Benchmark is reproducible and identifies bottlenecks with an evidence-based architectural response.",
+        "Cost scenarios account for roles, failures, retries, scheduling and resource bottlenecks, not token multiplication alone.",
+        "Unknown actual dev spend is explicitly an outstanding operator input rather than fabricated."
+      ],
+      "linear": {
+        "id": "HDX-32",
+        "uuid": "fe5691df-5d83-4909-850b-2f9959b8db43",
+        "title": "[P01] Produce reproducible 100-case fixture baseline and scale cost analysis",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-32/p01-produce-reproducible-100-case-fixture-baseline-and-scale-cost"
+      }
+    },
+    {
+      "key": "D02",
+      "wave": "W6",
+      "title": "Publish operating docs, threat map, metrics and rubric traceability",
+      "model": "Luna",
+      "audit": [
+        "A16",
+        "A15"
+      ],
+      "deps": [
+        "Q02",
+        "B02",
+        "P01"
+      ],
+      "locks": [
+        "product-docs"
+      ],
+      "files": [
+        "README.md",
+        "THREAT_MODEL.md",
+        "USERS.md",
+        "ARCHITECTURE.md",
+        "KEY_METRICS.md",
+        "docs/implementation/"
+      ],
+      "scope": "Finalize rubric-first operating docs and submission register from verified results, including architecture, threat model, metrics, AI-use disclosure, interface migration evidence and cost analysis. Link live/peer/video/social/interview requirements as explicit external gates rather than claiming them complete.",
+      "accept": [
+        "All current workflow and evidence-limit language matches implemented behavior.",
+        "Original deliverables are either present with evidence or explicitly listed as still pending.",
+        "No unsupported production readiness, live coverage, cost or compliance claims."
+      ],
+      "linear": {
+        "id": "HDX-33",
+        "uuid": "6454dbb5-487e-4277-8584-cb3620de274a",
+        "title": "[D02] Publish operating docs, threat map, metrics and rubric traceability",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-33/d02-publish-operating-docs-threat-map-metrics-and-rubric-traceability"
+      }
+    },
+    {
+      "key": "X01",
+      "wave": "W3",
+      "title": "Implement optional read-only evidence adapter against an explicit contract",
+      "model": "Sol",
+      "audit": [
+        "A01",
+        "A02",
+        "A16"
+      ],
+      "deps": [
+        "E01",
+        "E03",
+        "B01"
+      ],
+      "locks": [
+        "contracts",
+        "worker-pipeline",
+        "worker-session"
+      ],
+      "files": [
+        "packages/contracts/src/evidence-provider.ts",
+        "apps/worker/src/evidence/",
+        "tests/read-only-evidence-*.test.ts",
+        "docs/implementation/evidence-adapter.md"
+      ],
+      "scope": "Design and implement a disabled-by-default adapter for allowlisted read-only target audit events and seeded chart facts. Keep attacks user-facing; use bounded, sanitized evidence with freshness/correlation/source metadata to support chart-context and effect assertions. Build against synthetic contract fixtures; no target source inspection or invented live endpoint assumptions.",
+      "accept": [
+        "Adapter cannot emit writes or accept model-generated endpoints/identities.",
+        "Positive/negative/missing/stale/unavailable fixture evidence produces correctly scoped checks.",
+        "Black-box mode remains usable with honest unknowns; live activation requires an operator-supplied matching endpoint/auth contract."
+      ],
+      "linear": {
+        "id": "HDX-34",
+        "uuid": "61d0ef3a-f7df-47ee-9390-414b827bfd29",
+        "title": "[X01] Implement optional read-only evidence adapter against an explicit contract",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-34/x01-implement-optional-read-only-evidence-adapter-against-an-explicit"
+      }
+    },
+    {
+      "key": "L01",
+      "wave": "W6",
+      "title": "Run explicitly authorized live synthetic acceptance",
+      "model": "Sol",
+      "audit": [
+        "A16"
+      ],
+      "deps": [
+        "Q02"
+      ],
+      "locks": [
+        "live-validation"
+      ],
+      "gate": "Requires exact authorized synthetic target/identities and explicit effective provider-side spend cap; never auto-dispatch from dependency completion alone.",
+      "files": [
+        "evals/results/live/",
+        "docs/implementation/validation.md"
+      ],
+      "scope": "After operator supplies runtime authorization/configuration, run the bounded three-category live matrix and report proof limitations. Optional read-only evidence adapter remains out of scope until its contract is approved. Capture at least three distinct genuine, reproducible vulnerability reports if the target yields them; never fabricate findings to satisfy the rubric. If fewer are found, record that submission requirement as incomplete. Black-box live acceptance does not depend on optional X01. Adapter-backed assertions additionally require merged X01 and an authorized matching contract; unavailable evidence remains unknown.",
+      "accept": [
+        "Target/versions and bounded synthetic results are recorded without credentials.",
+        "No paid/live run starts solely because this issue becomes dependency-ready.",
+        "Unknown outcomes remain unknown; historical screenshots do not substitute for current evidence."
+      ],
+      "linear": {
+        "id": "HDX-35",
+        "uuid": "9536bffb-b502-4de4-83fc-45d4601ddbe3",
+        "title": "[L01] Run explicitly authorized live synthetic acceptance",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-35/l01-run-explicitly-authorized-live-synthetic-acceptance"
+      }
+    },
+    {
+      "key": "I01",
+      "wave": "W6",
+      "title": "Complete peer integration proof and security-review evidence packet",
+      "model": "Sol",
+      "audit": [
+        "A15",
+        "A16"
+      ],
+      "deps": [
+        "Q02",
+        "B02",
+        "B01",
+        "K01"
+      ],
+      "locks": [
+        "submission-evidence"
+      ],
+      "gate": "Peer integration needs the operator-supplied independently built peer contract/service; fixture compatibility work may proceed but the real integration requirement cannot be marked complete without it.",
+      "files": [
+        "docs/submission/",
+        "contracts/",
+        "evals/results/integration/"
+      ],
+      "scope": "Integrate with an independently supplied peer agent using published contracts alone, without shared source access. Record interface diffs, corrections/ADRs, producer/consumer test results, dependency map and full end-to-end trace. Finalize the ATO-style architecture/dataflow/auth/dependency/scan/test/incident evidence packet and AI-use/Judge-drift disclosure from verified platform artifacts; identify any pending external submission evidence.",
+      "accept": [
+        "Evidence packet names current revisions and actual test/scan results.",
+        "Versioned schemas and explicit known errors have producer/consumer checks.",
+        "Peer integration is verified against an independently supplied interface, or remains explicitly blocked; no simulated proof is mislabeled real."
+      ],
+      "linear": {
+        "id": "HDX-36",
+        "uuid": "82d4e994-d917-4052-a931-b76c9753f238",
+        "title": "[I01] Complete peer integration proof and security-review evidence packet",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-36/i01-complete-peer-integration-proof-and-security-review-evidence"
+      }
+    },
+    {
+      "key": "L02",
+      "wave": "W6",
+      "title": "Run explicitly authorized 100-case live performance acceptance",
+      "model": "Sol",
+      "audit": [
+        "A15",
+        "A16"
+      ],
+      "deps": [
+        "L01",
+        "P01"
+      ],
+      "locks": [
+        "live-validation"
+      ],
+      "gate": "Requires explicit authorization for a 100-case synthetic live workload, target maintenance window/rate limits and an effective total downstream spend cap; never auto-dispatch.",
+      "files": [
+        "evals/results/live-performance/",
+        "docs/submission/performance.md"
+      ],
+      "scope": "Execute the original PRD's 100 consecutive live-case workload under agreed rate/time/spend limits; record actual bottlenecks and full-suite SLO results. Keep live target/operator effects distinct from fixture throughput.",
+      "accept": [
+        "Exactly scoped authorized workload is recorded against a known target revision.",
+        "Target/API rate limits and total spend remain within the explicit approved bounds.",
+        "No fabricated live baseline or implied authorization from an earlier one-turn smoke."
+      ],
+      "linear": {
+        "id": "HDX-37",
+        "uuid": "eb0f37a9-9da5-400e-861e-8e4308543312",
+        "title": "[L02] Run explicitly authorized 100-case live performance acceptance",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-37/l02-run-explicitly-authorized-100-case-live-performance-acceptance"
+      }
+    }
+  ]
+}
