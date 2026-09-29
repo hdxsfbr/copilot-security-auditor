@@ -1,5 +1,6 @@
 import { verdict, type ModelAssignment, type ModelRoles, type Verdict } from '../../../packages/contracts/src/index.js';
 import { packet } from './judge.js';
+import { boundedLimit, DEADLINE_MS, discardResponse, readJsonBody, withinDeadline } from './deadlines.js';
 
 export type Price = { prompt: string; completion: string; request: string; contextLength: number };
 export type ModelUsage = { inputTokens?: number; outputTokens?: number; latencyMs: number; chargeNanos: string | null };
@@ -28,17 +29,21 @@ export function reserveAmount(price: Price, maxOutputTokens: number): bigint {
 }
 export function openRouterEndpoint() { const base = process.env.OPENROUTER_BASE_URL ?? 'https://openrouter.ai/api/v1/'; return base.endsWith('/') ? base : `${base}/`; }
 export async function installedOllama(base: string, transport: typeof fetch = fetch): Promise<string[]> {
-  const response = await transport(new URL('api/tags', base.endsWith('/') ? base : `${base}/`), { redirect: 'manual', signal: AbortSignal.timeout(10000) });
-  if (!response.ok) throw new Error('Ollama models unavailable');
-  const data: unknown = await response.json();
+  const data = await withinDeadline('model.discovery', 10_000, undefined, async signal => {
+    const response = await transport(new URL('api/tags', base.endsWith('/') ? base : `${base}/`), { redirect: 'manual', signal });
+    if (!response.ok) { discardResponse(response); throw new Error('Ollama models unavailable'); }
+    return readJsonBody(response, signal, 1_000_000);
+  });
   if (!data || typeof data !== 'object' || !('models' in data) || !Array.isArray(data.models)) throw new Error('Ollama models invalid');
   return data.models.filter((m: unknown) => !!m && typeof m === 'object' && 'name' in m && typeof m.name === 'string').map((m: { name: string }) => m.name);
 }
-export async function catalog(transport: typeof fetch = fetch, base = openRouterEndpoint(), key = process.env.OPENROUTER_API_KEY) {
+export async function catalog(transport: typeof fetch = fetch, base = openRouterEndpoint(), key = process.env.OPENROUTER_API_KEY, runUntil?: number) {
   if (!key) throw new Error('OpenRouter key unavailable');
-  const response = await transport(new URL('models', base.endsWith('/') ? base : `${base}/`), { headers: { Authorization: `Bearer ${key}` }, redirect: 'manual', signal: AbortSignal.timeout(15000) });
-  if (!response.ok) throw new Error('OpenRouter catalog unavailable');
-  const body: unknown = await response.json();
+  const body = await withinDeadline('model.catalog', DEADLINE_MS.catalog, runUntil, async signal => {
+    const response = await transport(new URL('models', base.endsWith('/') ? base : `${base}/`), { headers: { Authorization: `Bearer ${key}` }, redirect: 'manual', signal });
+    if (!response.ok) { discardResponse(response); throw new Error('OpenRouter catalog unavailable'); }
+    return readJsonBody(response, signal, 4_000_000);
+  });
   if (!body || typeof body !== 'object' || !('data' in body) || !Array.isArray(body.data)) throw new Error('OpenRouter catalog invalid');
   return body.data as unknown[];
 }
@@ -72,17 +77,23 @@ export function judgeMessages(input: ReturnType<typeof packet>) {
     { role: 'user', content: JSON.stringify(input) }
   ];
 }
-export async function callRoleJson(assignment: ModelAssignment, messages: { role: string; content: string }[], ollamaUrl: string, transport: typeof fetch = fetch, price?: Price): Promise<{ result: unknown; usage: ModelUsage }> {
+export type RoleCallOptions = { runUntil?: number; callMs?: number; role?: Role };
+export async function callRoleJson(assignment: ModelAssignment, messages: { role: string; content: string }[], ollamaUrl: string, transport: typeof fetch = fetch, price?: Price, options: RoleCallOptions = {}): Promise<{ result: unknown; usage: ModelUsage }> {
   const paid = assignment.provider === 'openrouter';
   const key = process.env.OPENROUTER_API_KEY;
   if (paid && (!key || !price)) throw new Error('Verified paid dispatch unavailable');
   const started = Date.now();
-  const response = await transport(new URL(paid ? 'chat/completions' : 'api/chat', paid ? openRouterEndpoint() : ollamaUrl.endsWith('/') ? ollamaUrl : `${ollamaUrl}/`), {
-    method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(30000), headers: { 'Content-Type': 'application/json', ...(paid ? { Authorization: `Bearer ${key}` } : {}) },
-    body: JSON.stringify(paid ? { model: assignment.model, max_tokens: assignment.maxOutputTokens, response_format: { type: 'json_object' }, provider: { sort: 'price', allow_fallbacks: false, require_parameters: true, max_price: { prompt: Number((Number(price!.prompt) * 1_000_000).toPrecision(12)), completion: Number((Number(price!.completion) * 1_000_000).toPrecision(12)), request: Number(price!.request) } }, messages } : { model: assignment.model, options: { num_predict: assignment.maxOutputTokens }, stream: false, format: 'json', messages })
+  // Local inference can legitimately outlast 30 seconds; paid delivery keeps
+  // the shorter default because an interrupted charge remains unresolved.
+  const maximum = paid ? DEADLINE_MS.paidRole : DEADLINE_MS.localRole;
+  const data = await withinDeadline(`model.${options.role ?? 'role'}`, boundedLimit(options.callMs, maximum), options.runUntil, async signal => {
+    const response = await transport(new URL(paid ? 'chat/completions' : 'api/chat', paid ? openRouterEndpoint() : ollamaUrl.endsWith('/') ? ollamaUrl : `${ollamaUrl}/`), {
+      method: 'POST', redirect: 'manual', signal, headers: { 'Content-Type': 'application/json', ...(paid ? { Authorization: `Bearer ${key}` } : {}) },
+      body: JSON.stringify(paid ? { model: assignment.model, max_tokens: assignment.maxOutputTokens, response_format: { type: 'json_object' }, provider: { sort: 'price', allow_fallbacks: false, require_parameters: true, max_price: { prompt: Number((Number(price!.prompt) * 1_000_000).toPrecision(12)), completion: Number((Number(price!.completion) * 1_000_000).toPrecision(12)), request: Number(price!.request) } }, messages } : { model: assignment.model, options: { num_predict: assignment.maxOutputTokens }, stream: false, format: 'json', messages })
+    });
+    if (!response.ok) { discardResponse(response); throw new Error('Model unavailable'); }
+    return readJsonBody(response, signal, 2_000_000);
   });
-  if (!response.ok) throw new Error('Model unavailable');
-  const data: unknown = await response.json();
   if (!data || typeof data !== 'object') throw new Error('Model response invalid');
   const record = data as Record<string, unknown>;
   const content = paid ? (record.choices as { message?: { content?: unknown } }[] | undefined)?.[0]?.message?.content : (record.message as { content?: unknown } | undefined)?.content;
@@ -93,8 +104,8 @@ export async function callRoleJson(assignment: ModelAssignment, messages: { role
   const charge = paid ? usage?.cost : null;
   return { result, usage: { inputTokens: validToken(paid ? usage?.prompt_tokens : usage?.prompt_eval_count), outputTokens: validToken(paid ? usage?.completion_tokens : usage?.eval_count), latencyMs: Date.now() - started, chargeNanos: paid && (typeof charge === 'number' || typeof charge === 'string') ? nanos(charge).toString() : null } };
 }
-export async function callJudge(assignment: ModelAssignment, input: ReturnType<typeof packet>, ollamaUrl: string, transport: typeof fetch = fetch, price?: Price): Promise<{ result: Verdict; usage: ModelUsage }> {
-  const call = await callRoleJson(assignment, judgeMessages(input), ollamaUrl, transport, price);
+export async function callJudge(assignment: ModelAssignment, input: ReturnType<typeof packet>, ollamaUrl: string, transport: typeof fetch = fetch, price?: Price, options: RoleCallOptions = {}): Promise<{ result: Verdict; usage: ModelUsage }> {
+  const call = await callRoleJson(assignment, judgeMessages(input), ollamaUrl, transport, price, { ...options, role: 'judge' });
   const result = verdict.parse(call.result);
   return { result: result.evidenceRefs.some(ref => !input.observations.some(o => o.ref === ref)) ? { ...result, outcome: 'inconclusive', materialUncertainties: [...result.materialUncertainties, 'Invalid evidence reference'] } : result, usage: call.usage };
 }
