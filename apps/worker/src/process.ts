@@ -7,6 +7,14 @@ import { callJudge, catalog, verifiedPrice, reserveAmount, nanos, type Price } f
 import { checkCase, judgePolicy, type CheckResult } from './checks.js';
 import { loadPdf } from '../../api/src/artifacts.js';
 import { processAdaptive } from './adaptive.js';
+import { DeadlineExceeded, type DeadlineInfo } from './deadlines.js';
+
+export function adaptiveRunUntil(run: ClaimedRun): number | undefined {
+  return run.adaptive ? new Date(run.started_at).getTime() + run.adaptive.maxMinutes * 60_000 : undefined;
+}
+function timeoutInfo(error: unknown): DeadlineInfo | undefined {
+  return error instanceof DeadlineExceeded ? error.info : error instanceof TargetFailure ? error.timeout : undefined;
+}
 
 export async function processNext(repo: Repository, owner = 'worker', targetFetch: typeof fetch = fetch, modelFetch: typeof fetch = fetch) {
   await repo.expire();
@@ -18,13 +26,17 @@ export async function processNext(repo: Repository, owner = 'worker', targetFetc
         const refs = new Set(run.adaptive.seeds.map(seed => seed.definition.user));
         for (const user of refs) {
           const identity = await repo.credential<Identity>(user === 'A' ? run.target_snapshot.userARef : run.target_snapshot.userBRef);
-          const probe = new Session(run.target_snapshot.baseUrl, identity, targetFetch);
+          const probe = new Session(run.target_snapshot.baseUrl, identity, targetFetch, { runUntil: adaptiveRunUntil(run) });
           try { await probe.open(); } finally { await probe.close(); }
         }
-      } catch {
-        await repo.append(run.id, run.lease_generation, evidenceEvent.parse({ v: 1, agent: 'worker', kind: 'failure', detail: { reason: 'Scheduled target/login/chart preflight unavailable', outcome: 'blocked' } }));
-        await repo.finish(run.id, run.lease_generation, 'blocked');
-        return { id: run.id, outcome: 'blocked' as const };
+      } catch (error) {
+        const timeout = timeoutInfo(error);
+        if (timeout) await repo.append(run.id, run.lease_generation, evidenceEvent.parse({ v: 1, agent: 'worker', kind: 'timeout', detail: timeout }));
+        const budgetExhausted = !!timeout && (adaptiveRunUntil(run) ?? Infinity) <= Date.now();
+        const outcome = budgetExhausted ? 'incomplete' as const : 'blocked' as const;
+        await repo.append(run.id, run.lease_generation, evidenceEvent.parse({ v: 1, agent: 'worker', kind: 'failure', detail: { reason: budgetExhausted ? 'Run time budget exhausted during scheduled preflight' : 'Scheduled target/login/chart preflight unavailable', outcome } }));
+        await repo.finish(run.id, run.lease_generation, outcome);
+        return { id: run.id, outcome };
       }
     }
     return processAdaptive(repo, run, targetFetch, modelFetch);
@@ -72,13 +84,14 @@ export function scopeOutcome(category: CaseInput['category'], classified: Outcom
 
 export async function evaluateCase(repo: Repository, run: ClaimedRun, definition: CaseInput, targetFetch: typeof fetch, modelFetch: typeof fetch, shouldStop: () => Promise<boolean> = async () => false, sourceCaseId = run.case_id!) {
   const generation = run.lease_generation;
+  const runUntil = adaptiveRunUntil(run);
   const emit = async (agent: 'worker' | 'target' | 'check' | 'judge', kind: string, detail: Record<string, unknown>, version?: string) => {
     await repo.append(run.id, generation, evidenceEvent.parse({ v: 1, agent, kind, detail }), version);
   };
   const users = await Promise.all([repo.credential<Identity>(run.target_snapshot.userARef), repo.credential<Identity>(run.target_snapshot.userBRef)]);
   const selected = definition.user === 'A' ? users[0] : users[1];
-  const session = new Session(run.target_snapshot.baseUrl, selected, targetFetch);
-  const other = new Session(run.target_snapshot.baseUrl, definition.user === 'A' ? users[1] : users[0], targetFetch);
+  const session = new Session(run.target_snapshot.baseUrl, selected, targetFetch, { runUntil });
+  const other = new Session(run.target_snapshot.baseUrl, definition.user === 'A' ? users[1] : users[0], targetFetch, { runUntil });
   let outcome: Outcome = 'incomplete';
   let executed = false;
   let observedHistory: Observation[] = [];
@@ -101,6 +114,7 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
           await emit('worker', 'boundary_verified', { scopes: 'distinct open charts in separate user sessions; OpenEMR record access is not asserted', testedBoundary: 'Co-Pilot must remain in the selected chart context' });
         }
         const before = definition.category === 'unintended_tool_action' ? await session.chartReportFingerprint() : null;
+        if (session.lastTimeout) await emit('worker', 'timeout', session.lastTimeout);
         const observations: Observation[] = [];
         for (const [index, action] of definition.actions.entries()) {
           if (await shouldStop()) throw new Error('Run stopped');
@@ -122,6 +136,7 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
         if (definition.category === 'unintended_tool_action') {
           const after = await session.chartReportFingerprint();
           effectSnapshot = before && after ? before === after ? 'unchanged' : 'changed' : 'unavailable';
+          if (session.lastTimeout) await emit('worker', 'timeout', session.lastTimeout);
           await emit('check', 'chart_report_comparison', { result: effectSnapshot, scope: 'read-only patient report including orders; does not cover all writes' });
         }
         return { observations };
@@ -172,12 +187,13 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
         let dispatchPrice: Price | undefined;
         if (assignment.provider === 'openrouter') {
           try {
-            const latest = verifiedPrice(await catalog(modelFetch), assignment.model);
+            const latest = verifiedPrice(await catalog(modelFetch, undefined, undefined, runUntil), assignment.model);
             const original = run.model_snapshot.pricing.judge;
             if (!original) throw new Error('Missing price snapshot');
             dispatchPrice = { prompt: (nanos(latest.prompt) > nanos(original.prompt) ? latest.prompt : original.prompt), completion: (nanos(latest.completion) > nanos(original.completion) ? latest.completion : original.completion), request: (nanos(latest.request) > nanos(original.request) ? latest.request : original.request), contextLength: Math.max(latest.contextLength, original.contextLength) };
             amount = reserveAmount(dispatchPrice, assignment.maxOutputTokens);
-          } catch {
+          } catch (error) {
+            const timeout = timeoutInfo(error); if (timeout) await emit('judge', 'timeout', timeout);
             await emit('judge', 'unavailable', { reason: 'Verified paid model pricing unavailable' });
             await earlyPolicy('incomplete', 'verified_pricing_unavailable');
             return { outcome: 'incomplete' as const };
@@ -187,7 +203,7 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
         try { callId = await repo.reserveCall(run.id, generation, 'judge', assignment.provider, assignment.model, amount); }
         catch { await emit('judge', 'unavailable', { reason: 'Model budget, pricing, or lease unavailable' }); await earlyPolicy('incomplete', 'model_reservation_unavailable'); return { outcome: 'incomplete' as const }; }
         try {
-          const { result, usage } = await callJudge(assignment, input, run.definition.ollamaUrl, modelFetch, dispatchPrice);
+          const { result, usage } = await callJudge(assignment, input, run.definition.ollamaUrl, modelFetch, dispatchPrice, { runUntil });
           const settled = await repo.settleCall(run.id, generation, callId, usage);
           await emit('judge', 'model_usage', { provider: assignment.provider, model: assignment.model, role: 'judge', ...usage, reconciliation: settled ? 'settled' : 'unresolved' });
           if (!settled) { await earlyPolicy('incomplete', 'model_settlement_unresolved'); return { outcome: 'incomplete' as const }; }
@@ -199,8 +215,9 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
           await emit('judge', 'policy', { policy: recordedPolicy, routedOutcome: scoped });
           await emit('judge', 'verdict', { verdict: assessment.verdict, usage: { provider: assignment.provider, model: assignment.model, ...usage } });
           return { outcome: scoped };
-        } catch {
-          await repo.settleCall(run.id, generation, callId).catch(() => {});
+        } catch (error) {
+          const timeout = timeoutInfo(error); if (timeout) await emit('judge', 'timeout', timeout);
+          await repo.settleCall(run.id, generation, callId, timeout && !timeout.attempted ? { latencyMs: 0, chargeNanos: '0' } : undefined).catch(() => {});
           await emit('judge', 'unavailable', { reason: 'Judge response unavailable or invalid' });
           assessment = { checks, verdict: null };
           const policy = judgePolicy({ ...policyInput, verdict: null });
@@ -216,6 +233,7 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
     plannerHistory = observedHistory.map(observation => projectObservation(observation, users, session.secrets(), true));
   } catch (e) {
     outcome = await shouldStop() ? 'incomplete' : e instanceof TargetFailure ? e.kind : 'incomplete';
+    const timeout = timeoutInfo(e); if (timeout) await emit('worker', 'timeout', timeout);
     await emit('worker', 'failure', { reason: e instanceof TargetFailure ? e.message : 'Evaluation interrupted', outcome });
   } finally {
     clearInterval(heartbeat);

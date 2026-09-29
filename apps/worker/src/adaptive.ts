@@ -3,8 +3,9 @@ import { caseInput, caseProposal, category, evidenceEvent, type AttackAction, ty
 import { Repository } from '../../api/src/repository.js';
 import { catalog, callRoleJson, nanos, reserveAmount, verifiedPrice, type Price, type Role } from './models.js';
 import { scrub, scrubEvidence } from './judge.js';
-import { evaluateCase, type ClaimedRun } from './process.js';
+import { adaptiveRunUntil, evaluateCase, type ClaimedRun } from './process.js';
 import type { Identity } from './session.js';
+import { DeadlineExceeded } from './deadlines.js';
 
 const selection = z.object({ caseId: z.uuid() }).strict();
 const forbidden = /https?:\/\/|\/api\/|\/interface\/|\b(?:GET|POST|PUT|PATCH|DELETE)\s+\/|\b(?:cookie|csrf|password|authorization|bearer)\s*[:=]/i;
@@ -37,9 +38,11 @@ export function adaptiveOutcome(categories: string[], cases: { category: string;
 export async function processAdaptive(repo: Repository, run: ClaimedRun, targetFetch: typeof fetch, modelFetch: typeof fetch) {
   const plan = run.adaptive!;
   const generation = run.lease_generation;
+  const runUntil = adaptiveRunUntil(run);
   const users = await Promise.all([repo.credential<Identity>(run.target_snapshot.userARef), repo.credential<Identity>(run.target_snapshot.userBRef)]);
   const stop = () => repo.stopped(run.id, generation);
   const emit = async (kind: string, detail: Record<string, unknown>) => repo.append(run.id, generation, evidenceEvent.parse({ v: 1, agent: 'worker', kind, detail }));
+  const emitTimeout = async (error: unknown) => { if (error instanceof DeadlineExceeded) await emit('timeout', error.info); };
   const heartbeat = setInterval(() => { void repo.heartbeat(run.id, generation).catch(() => clearInterval(heartbeat)); }, 10000);
   let limited = false;
   let history: Observation[] = [];
@@ -59,7 +62,7 @@ export async function processAdaptive(repo: Repository, run: ClaimedRun, targetF
         ]);
         picked = selection.parse(choice);
         if (!seeds.some(seed => seed.id === picked.caseId)) throw new Error('Case not in selected category');
-      } catch { limited = true; await emit('limit', { reason: 'Coverage selection unavailable, invalid, stopped, or budget-limited' }); break; }
+      } catch (error) { await emitTimeout(error); limited = true; await emit('limit', { reason: 'Coverage selection unavailable, invalid, stopped, or budget-limited' }); break; }
       const seed = seeds.find(s => s.id === picked.caseId)!;
       if (await stop()) { limited = true; break; }
       currentCaseId = await repo.beginAdaptiveCase(run.id, generation, index + 1, gap, seed.id);
@@ -76,7 +79,8 @@ export async function processAdaptive(repo: Repository, run: ClaimedRun, targetF
           currentCaseId = null;
           continue;
         }
-      } catch {
+      } catch (error) {
+        await emitTimeout(error);
         const reason = await stop() ? 'Stopped or timed out' : 'Model unavailable or budget-limited';
         await repo.completeAdaptiveCase(run.id, generation, currentCaseId, 'incomplete', false, reason);
         await emit('limit', { ordinal: index + 1, category: gap, reason });
@@ -114,7 +118,7 @@ export async function processAdaptive(repo: Repository, run: ClaimedRun, targetF
     let price: Price | undefined;
     let amount = 0n;
     if (assignment.provider === 'openrouter') {
-      const latest = verifiedPrice(await catalog(modelFetch), assignment.model);
+      const latest = verifiedPrice(await catalog(modelFetch, undefined, undefined, runUntil), assignment.model);
       const original = run.model_snapshot.pricing[role];
       if (!original) throw new Error('Missing price snapshot');
       price = { prompt: nanos(latest.prompt) > nanos(original.prompt) ? latest.prompt : original.prompt, completion: nanos(latest.completion) > nanos(original.completion) ? latest.completion : original.completion, request: nanos(latest.request) > nanos(original.request) ? latest.request : original.request, contextLength: Math.max(latest.contextLength, original.contextLength) };
@@ -122,13 +126,13 @@ export async function processAdaptive(repo: Repository, run: ClaimedRun, targetF
     }
     const callId = await repo.reserveCall(run.id, generation, role as Role, assignment.provider, assignment.model, amount);
     try {
-      const result = await callRoleJson(assignment, messages, run.definition.ollamaUrl, modelFetch, price);
+      const result = await callRoleJson(assignment, messages, run.definition.ollamaUrl, modelFetch, price, { runUntil, role });
       const settled = await repo.settleCall(run.id, generation, callId, result.usage);
       await emit('model_usage', { role, provider: assignment.provider, model: assignment.model, ...result.usage, reconciliation: settled ? 'settled' : 'unresolved' });
       if (!settled || await stop()) throw new Error('Model call unresolved or run stopped');
       return result.result;
     } catch (error) {
-      await repo.settleCall(run.id, generation, callId).catch(() => {});
+      await repo.settleCall(run.id, generation, callId, error instanceof DeadlineExceeded && !error.info.attempted ? { latencyMs: 0, chargeNanos: '0' } : undefined).catch(() => {});
       throw error;
     }
   }
