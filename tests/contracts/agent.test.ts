@@ -163,7 +163,7 @@ test('adaptive model admission emits typed errors before target dispatch', async
     const events: { kind: string; detail: Record<string, unknown> }[] = [];
     let targetCalls = 0;
     const repository = { credential: async (ref: string) => ref === 'A' ? users.userA : users.userB,
-      stopped: async () => false, heartbeat: async () => {}, adaptiveCases: async () => [],
+      stopped: async () => false, heartbeat: async () => {}, adaptiveCases: async () => [], adaptiveFeedback: async () => [], explorationSignals: async () => ({ targetVersion: null, seeds: {}, categories: {} }),
       reserveCall: async () => randomUUID(), settleCall: async () => true,
       beginAdaptiveCase: async () => 'adaptive-case', completeAdaptiveCase: async () => {},
       append: async (_id: string, _generation: number, event: { kind: string; detail: Record<string, unknown> }) => { events.push(event); },

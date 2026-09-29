@@ -7,6 +7,7 @@ import { legacyRoles, nanos, projectRoles, reserveAmount, type Role, type Snapsh
 import { nextFire } from './schedule-time.js';
 import { copyPdf, verifyArtifactFile, type ArtifactFileStatus } from './artifacts.js';
 import { scopedCoverage } from './coverage.js';
+import { explorationSignals } from './exploration.js';
 import type { CoverageQuery } from '../../../packages/contracts/src/coverage.js';
 import { enqueueReportJob, releaseAllowance, ReportJobStore, snapshotReportPolicy } from './report-jobs.js';
 import { recordAutomaticDecision, recordDecision } from './findings.js';
@@ -501,15 +502,24 @@ export class Repository {
     if (!row) throw new Error('Lease lost');
     return row.stop_requested || !!row.adaptive && Date.now() >= new Date(row.started_at).getTime() + row.adaptive.maxMinutes * 60000;
   }
-  async adaptiveCases(id: string) { return (await this.pool.query('SELECT id,ordinal,category,source_case_id AS "sourceCaseId",definition,state,executed,reason FROM adaptive_cases WHERE run_id=$1 ORDER BY ordinal', [id])).rows; }
-  async beginAdaptiveCase(id: string, generation: number, ordinal: number, category: string, sourceCaseId: string) {
+  async adaptiveCases(id: string) { return (await this.pool.query('SELECT id,ordinal,category,source_case_id AS "sourceCaseId",definition,state,executed,reason,parent_execution_case_id AS "parentExecutionCaseId",selection,follow_up_turn AS "followUpTurn" FROM adaptive_cases WHERE run_id=$1 ORDER BY ordinal', [id])).rows; }
+  explorationSignals(input: Parameters<typeof explorationSignals>[1]) { return explorationSignals(this.pool, input); }
+  // Finished cases of one run with the Judge's recorded verdict, oldest first. Stored claims are already redacted; callers redact again before any model sees them.
+  async adaptiveFeedback(id: string) {
+    return (await this.pool.query(`SELECT ac.id AS "executionCaseId",ac.ordinal,ac.category,ac.source_case_id AS "seedCaseId",ac.state AS outcome,aa.verdict->>'outcome' AS verdict,
+      aa.verdict->>'claim' AS claim,COALESCE(aa.verdict->'policy'->'failed','[]'::jsonb) AS "failedGates"
+      FROM adaptive_cases ac LEFT JOIN adaptive_assessments aa ON aa.case_id=ac.id WHERE ac.run_id=$1 AND ac.state NOT IN ('proposed','executing') ORDER BY ac.ordinal`, [id])).rows;
+  }
+  async beginAdaptiveCase(id: string, generation: number, ordinal: number, category: string, sourceCaseId: string, lineage?: { parentExecutionCaseId: string | null; selection: unknown }) {
     const db = await this.pool.connect();
     try {
       await db.query('BEGIN');
       const row = (await db.query("SELECT id FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() AND stop_requested=false FOR UPDATE", [id, generation])).rows[0];
       if (!row) throw new Error('Run stopped or lease lost');
+      // A parent is always an earlier case of this same run, never a case borrowed from another run.
+      if (lineage?.parentExecutionCaseId && !(await db.query('SELECT 1 FROM adaptive_cases WHERE id=$1 AND run_id=$2 AND ordinal<$3', [lineage.parentExecutionCaseId, id, ordinal])).rowCount) throw new Error('Mutation parent is not an earlier case of this run');
       const caseId = randomUUID();
-      await db.query('INSERT INTO adaptive_cases(id,run_id,ordinal,category,source_case_id,state) VALUES ($1,$2,$3,$4,$5,$6)', [caseId, id, ordinal, category, sourceCaseId, 'proposed']);
+      await db.query('INSERT INTO adaptive_cases(id,run_id,ordinal,category,source_case_id,state,parent_execution_case_id,selection) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [caseId, id, ordinal, category, sourceCaseId, 'proposed', lineage?.parentExecutionCaseId ?? null, lineage ? JSON.stringify(lineage.selection) : null]);
       await db.query('COMMIT');
       return caseId;
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
@@ -522,6 +532,18 @@ export class Repository {
       if (!run || run.stop_requested || Date.now() >= new Date(run.started_at).getTime() + run.adaptive.maxMinutes * 60000) throw new Error('Run stopped, timed out or lease lost');
       const updated = await db.query("UPDATE adaptive_cases SET definition=$3,state='executing' WHERE id=$1 AND run_id=$2 AND state='proposed'", [caseId, id, definition]);
       if (!updated.rowCount) throw new Error('Case not proposed');
+      await db.query('COMMIT');
+    } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
+  }
+  // Persists the one admitted response-conditioned turn before it is sent, so the stored definition always covers every turn that can run.
+  async amendAdaptiveCase(id: string, generation: number, caseId: string, definition: CaseInput, followUpTurn: number) {
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const run = (await db.query("SELECT stop_requested,started_at,adaptive FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() FOR UPDATE", [id, generation])).rows[0];
+      if (!run || run.stop_requested || Date.now() >= new Date(run.started_at).getTime() + run.adaptive.maxMinutes * 60000) throw new Error('Run stopped, timed out or lease lost');
+      const updated = await db.query("UPDATE adaptive_cases SET definition=$3,follow_up_turn=$4 WHERE id=$1 AND run_id=$2 AND state='executing' AND follow_up_turn IS NULL", [caseId, id, definition, followUpTurn]);
+      if (!updated.rowCount) throw new Error('Case not executing or already amended');
       await db.query('COMMIT');
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
   }
@@ -576,6 +598,7 @@ export class Repository {
   async adaptiveCaseDetail(runId: string, executionCaseId: string) {
     const row = (await this.pool.query(`SELECT ac.id,ac.ordinal,ac.category,ac.source_case_id AS "sourceCaseId",ac.definition AS "admittedDefinition",
       ac.state,ac.executed,ac.reason,ac.created_at AS "createdAt",ac.finished_at AS "finishedAt",
+      ac.parent_execution_case_id AS "parentExecutionCaseId",ac.selection,ac.follow_up_turn AS "followUpTurn",
       c.family_id AS "familyId",c.version AS "caseVersion",r.adaptive,r.version AS "targetVersion",
       aa.checks,aa.verdict,aa.route FROM adaptive_cases ac JOIN runs r ON r.id=ac.run_id
       JOIN cases c ON c.id=ac.source_case_id LEFT JOIN adaptive_assessments aa ON aa.case_id=ac.id
