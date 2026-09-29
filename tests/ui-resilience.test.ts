@@ -15,7 +15,7 @@ const fixtureEvent = { id: 1, event: { agent: 'synthetic', kind: 'fixture_eviden
 const fixtureAdaptiveCase = { id: 'adaptive-case-fixture', ordinal: 1, category: 'prompt_injection', state: 'completed', executed: true, reason: null };
 const fixtureFinding = { id: 'finding-fixture', runId: fixtureRun.id, state: 'pending_review', title: 'Synthetic review finding', version: 'fixture-v1', decisionRoute: null, exportApprovedAt: null };
 const fixtureConfig = { ollamaUrl: 'http://127.0.0.1:11434', model: 'synthetic-local-model' };
-const fixtureCatalog = { openrouter: ['fixture/paid'], ollama: ['fixture-model'], configured: true };
+const fixtureCatalog = { openrouter: ['fixture/paid'], ollama: ['fixture-model'], configured: true, inferenceHealth: 'unverified', availability: { openrouter: 'available', ollama: 'available' } };
 
 async function revealRecordedEvidence(page: import('playwright-core').Page) {
   const history = page.locator('.run-detail > details').filter({ has: page.locator('summary').filter({ hasText: /^Uncorrelated historical/ }) });
@@ -49,7 +49,7 @@ async function fixtureRoute(page: import('playwright-core').Page, mode: { catalo
     if (path === '/findings') return reply([fixtureFinding]);
     if (path === '/regressions') return reply([]);
     if (path === '/coverage') return reply([]);
-    if (path === '/schedules') return reply([]);
+    if (path === '/schedules' || path === '/run-definitions') return reply([]);
     if (path === `/runs/${fixtureRun.id}`) return reply(mode.runMalformed ? { ...fixtureRun, modelSnapshot: { roles: {} } } : fixtureRun);
     if (path === `/runs/${fixtureRun.id}/events/page`) return reply({ items: [{ ...fixtureEvent, id: String(fixtureEvent.id) }], hasMore: false, nextCursor: String(fixtureEvent.id) });
     if (path === `/runs/${fixtureRun.id}/usage` && mode.localErrors.has('usage')) return reply({ message: 'synthetic usage offline' }, 503);
@@ -76,7 +76,7 @@ test('catalog 503 is local, recoverable, and preserves entered forms and evidenc
   page.on('pageerror', error => errors.push(error.message));
   try {
     await page.goto(`${baseUrl}/runs/new`, { waitUntil: 'networkidle' });
-    await page.getByRole('heading', { name: 'Role models & spend' }).waitFor();
+    await page.getByRole('heading', { name: 'Compose a run' }).waitFor();
     await page.getByRole('button', { name: 'Retry model catalog' }).first().waitFor();
     await page.getByRole('link', { name: 'Findings' }).click();
     await page.getByRole('button', { name: 'Inspect evidence' }).click();
@@ -86,7 +86,7 @@ test('catalog 503 is local, recoverable, and preserves entered forms and evidenc
     const targetName = page.getByLabel('Target name');
     await targetName.fill('User-entered synthetic target');
     await page.getByRole('link', { name: 'Launch' }).click();
-    const modelPanel = page.locator('.model-desk');
+    const modelPanel = page.locator('.run-composer');
     await modelPanel.scrollIntoViewIfNeeded();
     if (captureMedia) {
       await page.waitForTimeout(600);
@@ -107,9 +107,8 @@ test('catalog 503 is local, recoverable, and preserves entered forms and evidenc
     await page.getByRole('link', { name: 'Targets' }).click();
     assert.equal(await targetName.inputValue(), 'User-entered synthetic target');
     await page.getByRole('link', { name: 'Launch' }).click();
-    const provider = modelPanel.locator('.model-roles').first().getByLabel('Provider').first();
-    await provider.selectOption('openrouter');
-    assert.equal(await modelPanel.locator('input[list="openrouter-models"]').first().inputValue(), 'fixture/paid');
+    await modelPanel.getByLabel('Judge provider').selectOption('openrouter');
+    assert.equal(await modelPanel.getByLabel('Judge model').inputValue(), 'fixture/paid');
     assert.deepEqual(errors, []);
     if (captureMedia) {
       await page.waitForTimeout(600);
@@ -151,21 +150,17 @@ test('usage and adaptive progress 503 errors stay local and support retry', asyn
   try {
     await page.goto(`http://127.0.0.1:${address.port}/runs/new`, { waitUntil: 'networkidle' });
     await page.getByRole('button', { name: 'Retry model defaults' }).first().waitFor();
-    const mainUrl = page.getByLabel('Ollama endpoint');
-    const mainModel = page.getByLabel('Installed model');
-    await mainUrl.fill('http://localhost:11435');
-    await mainUrl.fill('');
-    await mainModel.fill('manually-entered-model');
-    const modelDesk = page.locator('.model-desk');
-    const roleUrl = modelDesk.getByLabel('Local model server URL');
-    await roleUrl.fill('http://localhost:11436');
-    await roleUrl.fill('');
+    const composer = page.locator('.run-composer');
+    const composerUrl = composer.getByLabel('Local model server URL');
+    const judgeModel = composer.getByLabel('Judge model');
+    await composerUrl.fill('http://localhost:11435');
+    await composerUrl.fill('');
+    await judgeModel.fill('manually-entered-model');
     mode.configOffline = false;
     await page.getByRole('button', { name: 'Retry model defaults' }).first().click();
-    assert.equal(await mainUrl.inputValue(), '');
-    assert.equal(await mainModel.inputValue(), 'manually-entered-model');
-    await modelDesk.getByRole('button', { name: 'Retry model defaults' }).click();
-    assert.equal(await roleUrl.inputValue(), '');
+    await page.getByRole('button', { name: 'Retry model defaults' }).waitFor({ state: 'detached' });
+    assert.equal(await composerUrl.inputValue(), '', 'retrying defaults keeps the operator-cleared endpoint');
+    assert.equal(await judgeModel.inputValue(), 'manually-entered-model');
     const scheduleDesk = page.locator('.schedule-desk');
     await page.getByRole('link', { name: 'Schedules' }).click();
     const scheduleUrl = scheduleDesk.getByLabel('Local model server URL');

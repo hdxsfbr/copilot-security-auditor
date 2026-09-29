@@ -170,11 +170,12 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
     const authored = (await db.repo.cases()).find(c => c.title === 'UI trust-boundary case');
     assert.ok(authored);
     await page.getByRole('link', { name: 'Launch' }).click();
-    await page.getByLabel('Saved authorized target').selectOption(target.id);
-    await page.getByLabel('Selected case').selectOption(authored.id);
-    await page.getByLabel('Ollama endpoint').fill(safeUrl);
-    await page.getByLabel('Installed model').fill('stub');
-    await page.getByRole('button', { name: /Start selected run/ }).click();
+    const composer = page.locator('.run-composer');
+    await composer.getByLabel('Saved authorized target').selectOption(target.id);
+    await composer.getByLabel('Selected case').selectOption(authored.id);
+    await composer.getByLabel('Local model server URL').fill(safeUrl);
+    await composer.getByLabel('Judge model').fill('stub');
+    await composer.getByRole('button', { name: 'Start run' }).click();
     await page.locator('.evidence .status').filter({ hasText: /running|queued|awaiting result/ }).waitFor();
     assert.equal((await processNext(db.repo))?.outcome, 'inconclusive');
     await page.locator('.evidence .status').filter({ hasText: 'finished / inconclusive' }).waitFor();
@@ -192,8 +193,8 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
     await page.getByRole('link', { name: 'Regressions' }).click();
     await page.getByRole('button', { name: 'Select for replay' }).click();
     await page.getByText(/Original case selected for a new replay/).waitFor();
-    assert.equal(await page.getByLabel('Selected case').inputValue(), authored.id);
-    await page.getByRole('button', { name: /Start selected run/ }).click();
+    assert.equal(await composer.getByLabel('Selected case').inputValue(), authored.id);
+    await composer.getByRole('button', { name: 'Start run' }).click();
     await page.locator('.evidence .status').filter({ hasText: 'queued / awaiting result' }).waitFor();
     assert.equal((await processNext(db.repo))?.outcome, 'inconclusive');
     await page.locator('.evidence .status').filter({ hasText: 'finished / inconclusive' }).waitFor();
@@ -202,13 +203,11 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
     await page.getByRole('link', { name: 'Regressions' }).click();
     await page.getByText(/toy-v1: inconclusive/).waitFor();
     await page.getByRole('link', { name: 'Launch' }).click();
-    const desk = page.locator('.model-desk');
-    await desk.getByLabel('Local model server URL').fill(safeUrl);
-    for (const input of await desk.getByLabel('Model', { exact: true }).all()) await input.fill('stub');
-    await desk.getByRole('button', { name: 'Start with assigned models' }).click();
-    await page.waitForTimeout(300);
-    assert.deepEqual(await desk.getByRole('alert').allTextContents(), []);
+    await composer.getByLabel('Judge maximum output tokens').fill('512');
+    await composer.getByRole('button', { name: 'Start run' }).click();
+    assert.deepEqual(await composer.getByRole('alert').allTextContents(), []);
     await page.locator('.evidence .status').filter({ hasText: 'queued / awaiting result' }).waitFor();
+    assert.deepEqual((await db.repo.runDefinitions()).map(item => item.revision), [2], 'a changed saved definition launches as its next revision, not a duplicate');
     assert.equal((await processNext(db.repo))?.outcome, 'inconclusive');
     await page.locator('.evidence .status').filter({ hasText: 'finished / inconclusive' }).waitFor();
     await page.getByRole('link', { name: 'Launch' }).click();
@@ -252,7 +251,7 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); await toy.close(); await safe.close(); await uncertain.close(); await db.close(); await rm(dir, { recursive: true, force: true }); delete process.env.ARTIFACT_DIR; }
 });
 
-test('operator selects a paid Judge with local companion roles and sees reported charge', async () => {
+test('operator selects a paid Judge with no local endpoint and sees reported charge', async () => {
   const db = await database(), toy = fixture(), local = modelFixture('safe');
   const targetUrl = await toy.start(), ollamaUrl = await local.start();
   const provider = createServer(async (req, res) => {
@@ -275,17 +274,19 @@ test('operator selects a paid Judge with local companion roles and sees reported
     const { target, selected } = await (async () => { const target = await db.repo.target({ name: 'Paid fixture', baseUrl: targetUrl, ...users }); const selected = await db.repo.createCase(testCase); return { target, selected }; })();
     const page = await browser.newPage();
     await page.goto(`http://127.0.0.1:${(server.address() as { port: number }).port}/runs/new`);
-    await page.getByLabel('Saved authorized target').selectOption(target.id);
-    await page.getByLabel('Selected case').selectOption(selected.id);
-    const desk = page.locator('.model-desk');
-    await desk.getByLabel('Local model server URL').fill(ollamaUrl);
-    for (const input of await desk.getByLabel('Model', { exact: true }).all()) await input.fill('stub');
-    await desk.locator('.review-item').filter({ hasText: 'judge' }).getByLabel('Provider').selectOption('openrouter');
-    await desk.locator('.review-item').filter({ hasText: 'judge' }).getByLabel('Maximum output tokens').fill('64');
-    await desk.getByLabel('Maximum OpenRouter spend (USD, this run)').fill('0.005');
-    await desk.getByRole('button', { name: 'Start with assigned models' }).click();
+    const composer = page.locator('.run-composer');
+    await composer.getByLabel('Saved authorized target').selectOption(target.id);
+    await composer.getByLabel('Selected case').selectOption(selected.id);
+    await composer.getByLabel('Judge provider').selectOption('openrouter');
+    await composer.getByLabel('Judge model').fill('test/paid');
+    await composer.getByLabel('Judge maximum output tokens').fill('64');
+    await composer.getByLabel('Maximum OpenRouter spend (USD, this run)').fill('0.005');
+    assert.equal(await composer.getByLabel('Local model server URL').count(), 0, 'an all-paid run needs no Ollama endpoint');
+    await composer.getByRole('button', { name: 'Check availability' }).click();
+    await composer.getByText(/Conservative reservation \$0\.001128/).waitFor();
+    await composer.getByRole('button', { name: 'Start run' }).click();
     await page.waitForTimeout(300);
-    assert.deepEqual(await desk.getByRole('alert').allTextContents(), []);
+    assert.deepEqual(await composer.getByRole('alert').allTextContents(), []);
     await page.locator('.evidence .status').filter({ hasText: 'queued / awaiting result' }).waitFor();
     assert.equal((await processNext(db.repo))?.outcome, 'safe');
     await page.locator('.evidence .status').filter({ hasText: 'finished / safe' }).waitFor();
@@ -324,17 +325,19 @@ test('operator starts and stops bounded exploration and sees category gaps', asy
     (model as Server & { caseId?: string }).caseId = selected.id;
     const page = await browser.newPage(); await page.goto(`http://127.0.0.1:${(server.address() as { port: number }).port}/runs/new`);
     await page.getByLabel('Saved authorized target').selectOption(target.id);
-    const desk = page.locator('.model-desk');
-    await desk.getByLabel(/Browser adaptive seed/).check();
-    await desk.getByLabel('Maximum cases').fill('1');
-    await desk.getByRole('button', { name: 'Start bounded exploration' }).click();
+    const composer = page.locator('.run-composer');
+    await composer.getByLabel('Saved authorized target').selectOption(target.id);
+    await composer.getByLabel('Adaptive exploration').check();
+    await composer.getByLabel(/Browser adaptive seed/).check();
+    await composer.getByLabel('Maximum cases').fill('1');
+    await composer.getByRole('button', { name: 'Start run' }).click();
     await page.locator('.evidence .status').filter({ hasText: 'queued / awaiting result' }).waitFor();
     assert.equal((await processNext(db.repo))?.outcome, 'safe');
     await page.locator('.evidence .status').filter({ hasText: 'finished / safe' }).waitFor();
     await page.getByRole('link', { name: 'Launch' }).click();
     await page.locator('.run-activity').getByText(/prompt injection: case 1 safe \(executed\)/).waitFor();
     assert.match(await page.locator('.run-activity').innerText(), /orchestrator: ollama \/ stub/);
-    await desk.getByRole('button', { name: 'Start bounded exploration' }).click();
+    await composer.getByRole('button', { name: 'Start run' }).click();
     await page.locator('.evidence .status').filter({ hasText: 'queued / awaiting result' }).waitFor();
     await page.locator('.run-activity').getByRole('button', { name: 'Stop after in-flight work' }).click();
     await page.locator('.evidence .status').filter({ hasText: 'finished / incomplete' }).waitFor();

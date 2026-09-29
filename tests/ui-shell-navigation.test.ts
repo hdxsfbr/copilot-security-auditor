@@ -33,7 +33,8 @@ async function fixture(page: import('playwright-core').Page) {
     if (path === '/cases') return respond([testCase]);
     if (path === '/findings' || path === '/regressions' || path === '/coverage' || path === '/schedules') return respond([]);
     if (path === '/config') return respond({ ollamaUrl: 'http://127.0.0.1:11434', model: 'synthetic-local' });
-    if (path === '/models') return respond({ openrouter: [], ollama: ['synthetic-local'], configured: false });
+    if (path === '/models') return respond({ openrouter: [], ollama: ['synthetic-local'], configured: false, inferenceHealth: 'unverified', availability: { openrouter: 'not_configured', ollama: 'available' } });
+    if (path === '/run-definitions') return respond([]);
     if (path === '/runs/synthetic-run' || path === '/runs/second-run') return respond(run(path.split('/').at(-1)!));
     if (path === '/runs/synthetic-run/events/page' || path === '/runs/second-run/events/page') return respond({ items: [event(path.split('/')[2])], hasMore: false, nextCursor: '1' });
     if (path.endsWith('/usage')) return respond([]);
@@ -69,9 +70,9 @@ test('task routes preserve drafts, support history and hard reload, and isolate 
     await page.getByLabel('Target name').fill('Draft synthetic target');
     await page.getByRole('link', { name: 'Launch' }).click();
     await page.getByLabel('Saved authorized target').selectOption(target.id);
-    await page.waitForFunction(() => (document.querySelector('.model-desk input[type="url"]') as HTMLInputElement | null)?.value === 'http://127.0.0.1:11434');
-    await page.locator('.model-desk').getByLabel('Local model server URL').fill('');
-    assert.equal(await page.locator('.model-desk').getByLabel('Local model server URL').inputValue(), '');
+    await page.waitForFunction(() => (document.querySelector('.run-composer input[type="url"]') as HTMLInputElement | null)?.value === 'http://127.0.0.1:11434');
+    await page.locator('.run-composer').getByLabel('Local model server URL').fill('');
+    assert.equal(await page.locator('.run-composer').getByLabel('Local model server URL').inputValue(), '');
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
     if (capture) await page.screenshot({ path: join(output, 'desktop-launch.png'), fullPage: true });
     await page.getByRole('link', { name: 'Schedules' }).click();
@@ -88,7 +89,7 @@ test('task routes preserve drafts, support history and hard reload, and isolate 
     assert.equal(await page.locator('.schedule-desk').getByLabel('Local model server URL').inputValue(), '');
     await page.goBack();
     await page.getByRole('heading', { name: 'Launch evaluation', level: 1 }).waitFor();
-    assert.equal(await page.locator('.model-desk').getByLabel('Local model server URL').inputValue(), '');
+    assert.equal(await page.locator('.run-composer').getByLabel('Local model server URL').inputValue(), '');
     assert.equal(await page.getByLabel('Saved authorized target').inputValue(), target.id);
     assert.equal(await page.locator('main').evaluate(element => document.activeElement === element), true);
     await page.goForward();

@@ -16,6 +16,16 @@ function responseMessage(value: unknown, status: number): string {
   return `Request failed (HTTP ${status})`;
 }
 
+export class ApiResponseError extends Error {
+  constructor(message: string, readonly status: number, readonly code?: string, readonly activeRunId?: string) { super(message); }
+}
+
+function responseError(value: unknown, status: number): ApiResponseError {
+  return new ApiResponseError(responseMessage(value, status), status,
+    isRecord(value) && typeof value.code === 'string' ? value.code : undefined,
+    isRecord(value) && typeof value.active_run_id === 'string' ? value.active_run_id : undefined);
+}
+
 async function send(path: string, init?: RequestInit): Promise<Response> {
   try {
     return await fetch(`/api${path}`, {
@@ -32,7 +42,7 @@ export async function requestJson<T>(path: string, guard: ResponseGuard<T>, init
   let payload: unknown;
   try { payload = await response.json(); }
   catch { payload = undefined; }
-  if (!response.ok) throw new Error(responseMessage(payload, response.status));
+  if (!response.ok) throw responseError(payload, response.status);
   if (!guard(payload)) throw new Error(`Unexpected response from ${path}`);
   return payload;
 }
@@ -43,5 +53,5 @@ export async function requestOk(path: string, init?: RequestInit): Promise<void>
   let payload: unknown;
   try { payload = await response.json(); }
   catch { payload = undefined; }
-  throw new Error(responseMessage(payload, response.status));
+  throw responseError(payload, response.status);
 }

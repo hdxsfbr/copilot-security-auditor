@@ -75,7 +75,6 @@ const isSavedCase = (v: unknown): v is NonNullable<Run["caseSnapshot"]> => isRec
 const isSeed = (v: unknown): v is NonNullable<Run["adaptiveSeeds"]>[number] => isRecord(v) && isString(v.id) && isNullableString(v.familyId) && (v.version === null || Number.isInteger(v.version)) && isRecord(v.definition);
 const isRun = (value: unknown): value is Run => isRecord(value) && isString(value.id) && isString(value.status) && isNullableString(value.outcome) && isNullableString(value.version) && isString(value.model) && (value.caseId === undefined || isNullableString(value.caseId)) && (value.categories === undefined || value.categories === null || (Array.isArray(value.categories) && value.categories.every(isString))) && (value.stopRequested === undefined || typeof value.stopRequested === "boolean") && (value.mode === undefined || value.mode === "selected" || value.mode === "adaptive") && (value.target === undefined || (isRecord(value.target) && isString(value.target.id) && isNullableString(value.target.name) && isNullableString(value.target.version))) && (value.caseSnapshot === undefined || value.caseSnapshot === null || isSavedCase(value.caseSnapshot)) && (value.adaptiveSeeds === undefined || value.adaptiveSeeds === null || (Array.isArray(value.adaptiveSeeds) && value.adaptiveSeeds.every(isSeed))) && (value.modelSnapshot === undefined || value.modelSnapshot === null || (isRecord(value.modelSnapshot) && isRecord(value.modelSnapshot.roles) && isRecord(value.modelSnapshot.roles.judge) && isString(value.modelSnapshot.roles.judge.provider) && isString(value.modelSnapshot.roles.judge.model)));
 const isConfig = (value: unknown): value is { ollamaUrl: string; model: string } => isRecord(value) && isString(value.ollamaUrl) && isString(value.model);
-const isId = (value: unknown): value is { id: string } => isRecord(value) && isString(value.id);
 const isSavedTarget = (value: unknown): value is Pick<Target, "id" | "name" | "baseUrl"> => isRecord(value) && isString(value.id) && isString(value.name) && isString(value.baseUrl);
 const isCaseSelection = (value: unknown): value is { caseId: string | null } => isRecord(value) && isNullableString(value.caseId);
 const isSelectedCase = (value: unknown): value is { caseId: string } => isRecord(value) && isString(value.caseId);
@@ -100,7 +99,7 @@ export function useWorkspaceController(navigate: (path: string) => void) {
   const [refreshError, setRefreshError] = useState("");
   const [configError, setConfigError] = useState("");
   const [runError, setRunError] = useState("");
-  const configEdited = useRef({ ollamaUrl: false, model: false });
+  const [caseHandoff, setCaseHandoff] = useState<{ caseId: string; sequence: number } | null>(null);
   const [loadedTargetId, setLoadedTargetId] = useState("");
   const [targetLoadFailed, setTargetLoadFailed] = useState(false);
   const [findings, setFindings] = useState<Finding[]>([]),
@@ -117,6 +116,7 @@ export function useWorkspaceController(navigate: (path: string) => void) {
     bPass: "",
     bPubpid: "",
   });
+  // Server defaults for new run definitions; the composer owns the editable draft.
   const [model, setModel] = useState(""),
     [ollamaUrl, setOllamaUrl] = useState("");
   useEffect(() => {
@@ -177,8 +177,8 @@ export function useWorkspaceController(navigate: (path: string) => void) {
   const loadConfig = async () => {
     try {
       const config = await api("/config", isConfig);
-      if (!configEdited.current.ollamaUrl) setOllamaUrl(config.ollamaUrl);
-      if (!configEdited.current.model) setModel(config.model);
+      setOllamaUrl(config.ollamaUrl);
+      setModel(config.model);
       setConfigError("");
     } catch (cause) {
       setConfigError(cause instanceof Error ? cause.message : "Model defaults unavailable");
@@ -302,12 +302,6 @@ export function useWorkspaceController(navigate: (path: string) => void) {
     if (changeRoute) navigate(`/runs/${encodeURIComponent(id)}`);
   };
   const deactivateRun = () => { runGeneration.current++; pollSequence.current++; };
-  const startSelected = async () => {
-    await submit(async () => {
-      const result = await api("/runs", isId, { method: "POST", body: JSON.stringify({ targetId, caseId, model, ollamaUrl }) });
-      openRun(result.id, model);
-    });
-  };
   const selectRegression = async (id: string, sourceRunId: string) => {
     const source = findings.find(finding => finding.runId === sourceRunId);
     if (!source) return;
@@ -316,16 +310,17 @@ export function useWorkspaceController(navigate: (path: string) => void) {
       const selected = record.caseId ?? (await api(`/regressions/${id}/select`, isSelectedCase, { method: "POST" })).caseId;
       await refresh();
       setCaseId(selected);
+      setCaseHandoff(current => ({ caseId: selected, sequence: (current?.sequence ?? 0) + 1 }));
       setNoticeKind("success");
       setNotice(record.caseId ? "Original case selected for a new replay. Choose a target and launch." : "Adaptive regression case selected for replay. Choose a target and launch.");
       navigate("/runs/new");
     } catch (error) { setNoticeKind("error"); setNotice(String(error)); }
   };
   return { targets, cases, run, events, notice, noticeKind, targetId, setTargetId, caseId, setCaseId,
-    editingTargetId, setEditingTargetId, refreshError, configError, runError, configEdited,
+    editingTargetId, setEditingTargetId, refreshError, configError, runError, caseHandoff,
     loadedTargetId, setLoadedTargetId, targetLoadFailed, setTargetLoadFailed,
     findings, regressions, coverage, exported,
-    target, setTarget, model, setModel, ollamaUrl, setOllamaUrl,
+    target, setTarget, model, ollamaUrl,
     setNotice, setNoticeKind, refresh, loadConfig, pollRun, submit, actOnFinding, saveTarget,
-    openRun, deactivateRun, selectRun: openRun, startSelected, selectRegression, navigate };
+    openRun, deactivateRun, selectRun: openRun, selectRegression, navigate };
 }
