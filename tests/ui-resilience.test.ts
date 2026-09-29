@@ -66,13 +66,16 @@ test('catalog 503 is local, recoverable, and preserves entered forms and evidenc
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   try {
-    await page.goto(baseUrl, { waitUntil: 'networkidle' });
+    await page.goto(`${baseUrl}/runs/new`, { waitUntil: 'networkidle' });
     await page.getByRole('heading', { name: 'Role models & spend' }).waitFor();
     await page.getByRole('button', { name: 'Retry model catalog' }).first().waitFor();
+    await page.getByRole('link', { name: 'Findings' }).click();
     await page.getByRole('button', { name: 'Inspect evidence' }).click();
     await page.getByText('Synthetic evidence remains visible during catalog outage').waitFor();
+    await page.getByRole('link', { name: 'Targets' }).click();
     const targetName = page.getByLabel('Target name');
     await targetName.fill('User-entered synthetic target');
+    await page.getByRole('link', { name: 'Launch' }).click();
     const modelPanel = page.locator('.model-desk');
     await modelPanel.scrollIntoViewIfNeeded();
     if (captureMedia) {
@@ -85,10 +88,14 @@ test('catalog 503 is local, recoverable, and preserves entered forms and evidenc
     await modelPanel.getByRole('button', { name: 'Retry model catalog' }).click();
     await modelPanel.locator('[role="alert"]').waitFor({ state: 'detached' });
     const schedulePanel = page.locator('.schedule-desk');
+    await page.getByRole('link', { name: 'Schedules' }).click();
     await schedulePanel.getByRole('button', { name: 'Retry model catalog' }).click();
     await schedulePanel.locator('[role="alert"]').waitFor({ state: 'detached' });
+    await page.getByRole('link', { name: 'Current run' }).click();
     await page.getByText('Synthetic evidence remains visible during catalog outage').waitFor();
+    await page.getByRole('link', { name: 'Targets' }).click();
     assert.equal(await targetName.inputValue(), 'User-entered synthetic target');
+    await page.getByRole('link', { name: 'Launch' }).click();
     const provider = modelPanel.locator('.model-roles').first().getByLabel('Provider').first();
     await provider.selectOption('openrouter');
     assert.equal(await modelPanel.locator('input[list="openrouter-models"]').first().inputValue(), 'fixture/paid');
@@ -97,6 +104,7 @@ test('catalog 503 is local, recoverable, and preserves entered forms and evidenc
       await page.waitForTimeout(600);
       await page.screenshot({ path: join(artifacts, 'after-catalog-retry.png'), fullPage: true });
       await modelPanel.screenshot({ path: join(artifacts, 'catalog-recovered-model-panel.png') });
+      await page.getByRole('link', { name: 'Current run' }).click();
       await page.locator('.evidence').scrollIntoViewIfNeeded();
       await page.waitForTimeout(700);
     }
@@ -130,7 +138,7 @@ test('usage and adaptive progress 503 errors stay local and support retry', asyn
   const mode = { catalogOffline: false, configOffline: true, runMalformed: false, localErrors: new Set(['usage', 'progress']) };
   await fixtureRoute(page, mode);
   try {
-    await page.goto(`http://127.0.0.1:${address.port}`, { waitUntil: 'networkidle' });
+    await page.goto(`http://127.0.0.1:${address.port}/runs/new`, { waitUntil: 'networkidle' });
     await page.getByRole('button', { name: 'Retry model defaults' }).first().waitFor();
     const mainUrl = page.getByLabel('Ollama endpoint');
     const mainModel = page.getByLabel('Installed model');
@@ -148,11 +156,13 @@ test('usage and adaptive progress 503 errors stay local and support retry', asyn
     await modelDesk.getByRole('button', { name: 'Retry model defaults' }).click();
     assert.equal(await roleUrl.inputValue(), '');
     const scheduleDesk = page.locator('.schedule-desk');
+    await page.getByRole('link', { name: 'Schedules' }).click();
     const scheduleUrl = scheduleDesk.getByLabel('Local model server URL');
     await scheduleUrl.fill('http://localhost:11437');
     await scheduleUrl.fill('');
     await scheduleDesk.getByRole('button', { name: 'Retry defaults' }).click();
     assert.equal(await scheduleUrl.inputValue(), '');
+    await page.getByRole('link', { name: 'Findings' }).click();
     await page.getByRole('button', { name: 'Inspect evidence' }).click();
     await page.getByText('Synthetic evidence remains visible during catalog outage').waitFor();
     mode.runMalformed = true;
@@ -160,14 +170,16 @@ test('usage and adaptive progress 503 errors stay local and support retry', asyn
     await page.getByText('Synthetic evidence remains visible during catalog outage').waitFor();
     mode.runMalformed = false;
     await page.locator('.evidence').getByRole('button', { name: 'Retry progress' }).click();
-    await modelDesk.getByRole('button', { name: 'Retry usage' }).waitFor();
-    await modelDesk.getByRole('button', { name: 'Retry progress' }).waitFor();
-    assert.equal(await page.getByText('Synthetic evidence remains visible during catalog outage').count(), 1);
+    await page.getByRole('link', { name: 'Launch' }).click();
+    const activity = page.locator('.run-activity');
+    await activity.getByRole('button', { name: 'Retry usage' }).waitFor();
+    await activity.getByRole('button', { name: 'Retry progress' }).waitFor();
     mode.localErrors.clear();
-    await modelDesk.getByRole('button', { name: 'Retry usage' }).click();
-    await modelDesk.getByRole('button', { name: 'Retry progress' }).click();
-    await modelDesk.getByRole('button', { name: 'Retry usage' }).waitFor({ state: 'detached' });
-    await modelDesk.getByRole('button', { name: 'Retry progress' }).waitFor({ state: 'detached' });
+    await activity.getByRole('button', { name: 'Retry usage' }).click();
+    await activity.getByRole('button', { name: 'Retry progress' }).click();
+    await activity.getByRole('button', { name: 'Retry usage' }).waitFor({ state: 'detached' });
+    await activity.getByRole('button', { name: 'Retry progress' }).waitFor({ state: 'detached' });
+    await page.getByRole('link', { name: 'Current run' }).click();
     assert.equal(await page.getByText('Synthetic evidence remains visible during catalog outage').count(), 1);
   } finally {
     await browser.close();
