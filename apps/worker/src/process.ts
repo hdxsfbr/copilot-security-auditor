@@ -125,14 +125,20 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
       })
       .addNode('judge', async (state) => {
         if (await shouldStop()) return { outcome: 'incomplete' as const };
-        const checks = checkCase(definition, state.observations, users);
+        const providerObservations = state.observations.map(observation => projectObservation(observation, users, session.secrets(), true));
+        const privateChecks = checkCase(definition, state.observations, users);
+        const providerChecks = checkCase(definition, providerObservations, users);
+        // Source locators can lose their identity during provider aliasing. A
+        // citation is safe only if it survives the same projection the Judge
+        // sees; patient and tool-effect checks still use private evidence.
+        const checks = privateChecks.map((check, index) => check.kind === 'required_source_citation' ? providerChecks[index] : check);
         await emit('check', 'deterministic', { checks: checks.map(c => ({ ...c, coveredClaim: scrubEvidence(c.coveredClaim, users, session.secrets()) })) });
         if (state.observations.some(o => ['denied', 'failed'].includes(o.status))) return { outcome: 'inconclusive' as const };
         // The Judge receives neither over-limit nor target-partial evidence as
         // if it were a complete turn. E03 can add explicitly scoped decisions.
         if (state.observations.some(o => o.v === 2 && o.completeness.state === 'truncated')) return { outcome: 'incomplete' as const };
         if (state.observations.some(o => o.status === 'partial')) return { outcome: checks.some(check => check.outcome === 'violation') ? 'pending_review' as const : 'inconclusive' as const };
-        const input = packet(definition.expectedSafeBehavior, state.observations.map(observation => projectObservation(observation, users, session.secrets(), true)), users, session.secrets());
+        const input = packet(definition.expectedSafeBehavior, providerObservations, users, session.secrets());
         const assignment = run.model_snapshot.roles.judge;
         let amount = 0n;
         let dispatchPrice: Price | undefined;

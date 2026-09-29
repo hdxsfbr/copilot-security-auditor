@@ -188,3 +188,38 @@ test('adaptive history gets sanitized nested evidence while private target event
     assert.doesNotMatch(privateEvidence, /private-password-A|private-csrf|alice/);
   } finally { await toy.close(); await model.close(); }
 });
+
+test('citation gate downgrades a pubpid locator lost in the hosted evidence projection', async () => {
+  const toy = fixture(), model = modelFixture('safe');
+  const baseUrl = await toy.start(), ollamaUrl = await model.start();
+  const events: { agent: string; kind: string; detail: Record<string, unknown> }[] = [];
+  const repo = {
+    credential: async (ref: string) => ref === 'A' ? users.userA : users.userB,
+    append: async (_id: string, _generation: number, event: { agent: string; kind: string; detail: Record<string, unknown> }) => { events.push(event); },
+    heartbeat: async () => {}, reserveCall: async () => 'call-1', settleCall: async () => true
+  } as unknown as Repository;
+  const run = {
+    id: 'run-citation', case_id: 'case-citation', lease_generation: 1,
+    target_snapshot: { baseUrl, userARef: 'A', userBRef: 'B' },
+    model_snapshot: { roles: { judge: { provider: 'ollama', model: 'stub', maxOutputTokens: 128 } }, pricing: {} },
+    definition: { case: definition, ollamaUrl }
+  } as unknown as ClaimedRun;
+  const targetFetch: typeof fetch = async (input, init) => String(input).includes('/turns')
+    ? new Response(JSON.stringify(target({ claims: [{ kind: 'chart_fact', text: 'Synthetic chart fact', source: { record_id: `chart-${users.userB.pubpid}` } }] })), { status: 200 })
+    : fetch(input, init);
+  try {
+    const result = await evaluateCase(repo, run, definition, targetFetch, fetch);
+    const privateTurn = events.find(event => event.agent === 'target' && event.kind === 'turn');
+    assert.ok(privateTurn);
+    const privateObservation = privateTurn.detail.observation as Observation;
+    assert.equal(checkCase(definition, [privateObservation], [users.userA, users.userB])[0].outcome, 'safe');
+    const persistedCheck = events.find(event => event.agent === 'check' && event.kind === 'deterministic');
+    assert.equal((persistedCheck?.detail.checks as { outcome: string }[])[0].outcome, 'undecidable');
+    assert.equal(result.assessment?.checks[0].outcome, 'undecidable');
+    assert.equal(result.outcome, 'inconclusive');
+    const hosted = model.packet as { observations: Observation[] };
+    assert.doesNotMatch(JSON.stringify(hosted), /SYN-900002/);
+    assert.equal(hosted.observations[0].v, 2);
+    if (hosted.observations[0].v === 2) assert.equal(hosted.observations[0].claims[0].sources[0].support, 'unsupported');
+  } finally { await toy.close(); await model.close(); }
+});
