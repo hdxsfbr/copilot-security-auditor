@@ -2,11 +2,12 @@ import express from 'express';
 import { z, ZodError } from 'zod';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { targetInput, targetUpdateInput, caseInput, caseDraftInput, startInput, adaptiveStart, runDefinition, runDefinitionInput, runDefinitionEdit, runDefinitionRef, scheduleInput, scheduleDefinitionRef, scheduleState, runHistoryQuery, type RunDefinition } from '../../../packages/contracts/src/index.js';
+import { targetInput, targetUpdateInput, caseInput, caseDraftInput, startInput, adaptiveStart, runDefinition, runDefinitionInput, runDefinitionEdit, runDefinitionRef, scheduleInput, scheduleDefinitionRef, scheduleState, runHistoryQuery, scheduleOccurrenceQuery, type RunDefinition } from '../../../packages/contracts/src/index.js';
 import { coverageQuery } from '../../../packages/contracts/src/coverage.js';
 import { DefinitionRevisionConflict, InvalidRunCursor, Repository, type CandidateIntegrity, type RunDefinitionReference } from './repository.js';
 import { auditArtifactVolume, storePdf, loadPdf } from './artifacts.js';
 import { operationsHealth } from './operations.js';
+import { listSchedules, occurrencePage, readSchedule } from './schedules.js';
 import { readEventPage } from './event-page.js';
 import { eventPageQuery } from '../../../packages/contracts/src/event-page.js';
 import { catalog, installedOllama, preflightModels } from '../../worker/src/models.js';
@@ -44,8 +45,22 @@ export function createApp(repo: Repository) {
     catch { return res.status(503).set('Cache-Control', 'no-store').json({ v: 1, code: 'unavailable', message: 'Operations status unavailable' }); }
   });
   app.get('/api/integrity', async (_req, res) => res.json(await auditArtifactVolume(repo)));
-  app.get('/api/schedules', async (_req, res) => res.json(await repo.schedules()));
+  // Active schedules keep the legacy array shape (additive fields only); archived ones are a separate, read-only list.
+  app.get('/api/schedules', async (_req, res) => res.set('Cache-Control', 'no-store').json(await listSchedules(repo.pool, false)));
+  app.get('/api/schedules/archived', async (_req, res) => res.set('Cache-Control', 'no-store').json(await listSchedules(repo.pool, true)));
+  app.get('/api/schedules/:id', async (req, res) => {
+    const found = await readSchedule(repo.pool, z.uuid().parse(req.params.id));
+    return found ? res.set('Cache-Control', 'no-store').json(found) : res.status(404).json({ v: 1, code: 'not_found', message: 'Schedule not found' });
+  });
   app.get('/api/schedules/:id/occurrences', async (req, res) => res.json(await repo.occurrences(z.uuid().parse(req.params.id))));
+  // Bounded, newest-first, cursor-paged history for active and archived schedules.
+  app.get('/api/schedules/:id/occurrences/page', async (req, res) => {
+    const id = z.uuid().parse(req.params.id), query = scheduleOccurrenceQuery.parse(req.query);
+    try {
+      const page = await occurrencePage(repo.pool, id, query.limit, query.cursor);
+      return page ? res.set('Cache-Control', 'no-store').json(page) : res.status(404).json({ v: 1, code: 'not_found', message: 'Schedule not found' });
+    } catch (error) { if (error instanceof InvalidRunCursor) return res.status(400).json({ v: 1, code: 'invalid', message: 'Invalid occurrence cursor' }); throw error; }
+  });
   const preflight = (run: RunDefinition) => preflightModels(run);
   class DefinitionSelectionError extends Error { constructor(readonly code: 'not_found' | 'conflict') { super(code); } }
   const resolveDefinition = async (id: string, revision: number) => {

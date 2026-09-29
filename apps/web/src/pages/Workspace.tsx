@@ -65,7 +65,7 @@ export function Workspace() {
       <div hidden={path !== "/findings"} className="route-panel"><FindingsPage /></div>
       <div hidden={path !== "/regressions"} className="route-panel"><RegressionsPage /></div>
       <div hidden={path !== "/coverage"} className="route-panel"><CoveragePage /></div>
-      <div hidden={path !== "/schedules"} className="route-panel"><SchedulesPage /></div>
+      <div hidden={path !== "/schedules"} className="route-panel"><SchedulesPage active={path === "/schedules"} /></div>
       {!runRouteId && !caseRouteId && !pageInfo[path] && <div className="panel" role="status">This route has no operator task yet. Use the navigation to open an available page.</div>}
     </AppShell>
   </WorkspaceContext.Provider>;

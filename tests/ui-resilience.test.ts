@@ -97,10 +97,9 @@ test('catalog 503 is local, recoverable, and preserves entered forms and evidenc
     mode.catalogOffline = false;
     await modelPanel.getByRole('button', { name: 'Retry model catalog' }).click();
     await modelPanel.locator('[role="alert"]').waitFor({ state: 'detached' });
-    const schedulePanel = page.locator('.schedule-desk');
     await page.getByRole('link', { name: 'Schedules' }).click();
-    await schedulePanel.getByRole('button', { name: 'Retry model catalog' }).click();
-    await schedulePanel.locator('[role="alert"]').waitFor({ state: 'detached' });
+    await page.locator('.schedule-desk').getByRole('heading', { name: 'New schedule' }).waitFor();
+    assert.equal(await page.locator('.schedule-desk [role="alert"]').count(), 0, 'schedules come from saved definitions and no longer depend on the model catalog');
     await page.getByRole('link', { name: 'Current run' }).click();
     await revealRecordedEvidence(page);
     await page.getByText('Synthetic evidence remains visible during catalog outage').waitFor();
@@ -161,13 +160,9 @@ test('usage and adaptive progress 503 errors stay local and support retry', asyn
     await page.getByRole('button', { name: 'Retry model defaults' }).waitFor({ state: 'detached' });
     assert.equal(await composerUrl.inputValue(), '', 'retrying defaults keeps the operator-cleared endpoint');
     assert.equal(await judgeModel.inputValue(), 'manually-entered-model');
-    const scheduleDesk = page.locator('.schedule-desk');
     await page.getByRole('link', { name: 'Schedules' }).click();
-    const scheduleUrl = scheduleDesk.getByLabel('Local model server URL');
-    await scheduleUrl.fill('http://localhost:11437');
-    await scheduleUrl.fill('');
-    await scheduleDesk.getByRole('button', { name: 'Retry defaults' }).click();
-    assert.equal(await scheduleUrl.inputValue(), '');
+    await page.locator('.schedule-desk').getByRole('heading', { name: 'New schedule' }).waitFor();
+    assert.equal(await page.locator('.schedule-desk').getByLabel('Local model server URL').count(), 0, 'schedule models come from the saved definition, not a second endpoint field');
     await page.getByRole('link', { name: 'Findings' }).click();
     await page.getByRole('button', { name: 'Inspect evidence' }).click();
     await revealRecordedEvidence(page);

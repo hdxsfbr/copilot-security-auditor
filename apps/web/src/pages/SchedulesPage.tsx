@@ -3,7 +3,7 @@ import { ErrorBoundary } from "../api/ErrorBoundary.js";
 import { ScheduleDesk } from "../ScheduleDesk.js";
 import { useWorkspace } from "./context.js";
 
-export function SchedulesPage() {
-  const { targets, cases, selectRun } = useWorkspace();
-  return <ErrorBoundary name="Scheduled evaluations"><ScheduleDesk targets={targets} cases={cases} onInspect={id => selectRun(id, "scheduled")} /></ErrorBoundary>;
+export function SchedulesPage({ active }: { active: boolean }) {
+  const { targets, cases, navigate } = useWorkspace();
+  return <ErrorBoundary name="Scheduled evaluations"><ScheduleDesk active={active} targets={targets} cases={cases} navigate={navigate} /></ErrorBoundary>;
 }
