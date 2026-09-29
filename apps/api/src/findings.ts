@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto';
 import type pg from 'pg';
 import { caseInput, observation, type CaseInput, type Observation } from '../../../packages/contracts/src/index.js';
 import { assessedChecks, assessedVerdict, rationaleFits, reportFacts, type ReportContent, type ReportFacts, type ReviewRationale } from '../../../packages/contracts/src/report.js';
 import type { z } from 'zod';
 import type { Identity } from '../../worker/src/session.js';
+import { attackFingerprint } from './regression-identity.js';
 import type { Repository } from './repository.js';
 
 type Db = pg.Pool | pg.PoolClient;
@@ -64,8 +64,8 @@ export async function loadEvidence(db: Db, id: string): Promise<FindingEvidence 
     definition: definition.success ? definition.data : null, observations, checks: checks.success ? checks.data : null, verdict: verdict.success ? verdict.data : null, missing };
 }
 
-export const sequenceFingerprint = (definition: CaseInput) => createHash('sha256').update(JSON.stringify([definition.category, definition.user,
-  definition.actions.map(action => action.kind === 'attach_pdf' ? [action.kind, action.message, action.documentType, action.artifactId] : [action.kind, action.message])])).digest('hex');
+// The same versioned normalization that groups regression identities, so "same sequence" means one thing everywhere.
+export const sequenceFingerprint = attackFingerprint;
 // One report per attack sequence, target and version: a second confirmed finding for the same sequence is a duplicate
 // once the first has a report. Earlier same-sequence findings on other versions leave the regression label unknown, never asserted.
 export async function sequenceState(db: Db, evidence: FindingEvidence, fingerprint: string) {
