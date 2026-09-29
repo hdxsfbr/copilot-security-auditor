@@ -375,7 +375,7 @@
         "tests/contracts/",
         "docs/implementation/contracts.md"
       ],
-      "scope": "Publish versioned schemas for Orchestrator→Red Team, Red Team→Judge and Judge→Documentation envelopes and known errors. Use shared runtime validators at producer/consumer boundaries, include stable evidence references and explicit compatibility/migration notes. Define the Documentation contract before its implementation; F01 must consume and test it. Cover target unreachable, budget exceeded, Judge timeout, no findings and regression outcomes. This internal work does not depend on a peer service.",
+      "scope": "Publish versioned schemas for Orchestrator\u2192Red Team, Red Team\u2192Judge and Judge\u2192Documentation envelopes and known errors. Use shared runtime validators at producer/consumer boundaries, include stable evidence references and explicit compatibility/migration notes. Define the Documentation contract before its implementation; F01 must consume and test it. Cover target unreachable, budget exceeded, Judge timeout, no findings and regression outcomes. This internal work does not depend on a peer service.",
       "accept": [
         "Published schemas and runtime definitions cannot drift silently; every implemented producing and consuming role has fixture contract checks.",
         "Malformed or incompatible messages fail with typed errors before privileged execution.",
@@ -986,7 +986,7 @@
       ],
       "scope": "Launch bounded selected suites using existing reservations/ledger, link results across explicit versions, and offer an operator-triggered new-version validation action. Preserve no-ambiguous-retry policy. Add an explicit opt-in target-version-change trigger for the Orchestrator to enqueue a bounded suite, with deduplication and the existing target reservation. Introduce selected-suite definitions/execution and composer selection here; M01/U04 initially support one selected case. Include suite persistence migrations and snapshots.",
       "accept": [
-        "A synthetic fail → fix → resurface sequence is displayed correctly.",
+        "A synthetic fail \u2192 fix \u2192 resurface sequence is displayed correctly.",
         "A suite preserves individual incomplete/blocked cases and releases its reservation.",
         "No automatic deployment, unbounded campaign or missing-result-as-safe behavior."
       ],
@@ -1241,7 +1241,7 @@
     {
       "key": "X01",
       "wave": "W3",
-      "title": "Implement optional read-only evidence adapter against an explicit contract",
+      "title": "Implement the optional read-only evidence contract and transport",
       "model": "Sol",
       "audit": [
         "A01",
@@ -1255,26 +1255,65 @@
       ],
       "locks": [
         "contracts",
-        "worker-pipeline",
         "worker-session"
       ],
       "files": [
         "packages/contracts/src/evidence-provider.ts",
         "apps/worker/src/evidence/",
-        "tests/read-only-evidence-*.test.ts",
+        "tests/read-only-evidence-transport.test.ts",
         "docs/implementation/evidence-adapter.md"
       ],
-      "scope": "Design and implement a disabled-by-default adapter for allowlisted read-only target audit events and seeded chart facts. Keep attacks user-facing; use bounded, sanitized evidence with freshness/correlation/source metadata to support chart-context and effect assertions. Build against synthetic contract fixtures; no target source inspection or invented live endpoint assumptions.",
+      "scope": "Provide a disabled-by-default strict synthetic evidence contract, trusted operator profile and bounded exact-GET transport. Bind fixed origin/path/auth reference and target/version outside model control. Reject redirects, oversized or malformed responses and unsupported requests. No worker integration, policy or outcome changes; no guessed live source endpoints.",
       "accept": [
-        "Adapter cannot emit writes or accept model-generated endpoints/identities.",
-        "Positive/negative/missing/stale/unavailable fixture evidence produces correctly scoped checks.",
-        "Black-box mode remains usable with honest unknowns; live activation requires an operator-supplied matching endpoint/auth contract."
+        "Default configuration performs no requests and cannot change run outcomes.",
+        "Only operator-configured exact read endpoint and contract-bound headers are accepted; auth never appears in output/errors.",
+        "Synthetic tests cover strict schemas, disabled mode, URL/redirect/size/deadline rejection and unavailable results. Live activation remains separately gated."
       ],
       "linear": {
         "id": "HDX-34",
         "uuid": "61d0ef3a-f7df-47ee-9390-414b827bfd29",
-        "title": "[X01] Implement optional read-only evidence adapter against an explicit contract",
+        "title": "[X01] Implement the optional read-only evidence contract and transport",
         "url": "https://linear.app/hdxsfbr/issue/HDX-34/x01-implement-optional-read-only-evidence-adapter-against-an-explicit"
+      }
+    },
+    {
+      "key": "X02",
+      "wave": "W3",
+      "title": "Integrate scoped read-only corroboration into worker outcomes",
+      "model": "Sol",
+      "audit": [
+        "A01",
+        "A02",
+        "A16"
+      ],
+      "deps": [
+        "X01",
+        "R01"
+      ],
+      "locks": [
+        "contracts",
+        "worker-pipeline",
+        "worker-session"
+      ],
+      "files": [
+        "apps/worker/src/process.ts",
+        "apps/worker/src/checks.ts",
+        "apps/worker/src/evidence/",
+        "packages/contracts/src/evidence-provider.ts",
+        "tests/read-only-evidence-integration.test.ts",
+        "docs/implementation/evidence-adapter.md"
+      ],
+      "scope": "Integrate the merged read-only provider through worker-built exact correlation and a versioned corroboration sidecar. Keep existing v1 checks and Judge envelopes interpretable. Independent positive synthetic fact/write evidence routes to pending human review; scoped absence requires fresh exact complete coverage and never proves global safety. Sentinel exclusion covers every executed prompt/PDF and allowed-chart fact; unverifiable exclusion remains unknown. No live activation or raw private facts/auth in events/models.",
+      "accept": [
+        "Disabled/unavailable/partial/stale/wrong-context evidence leaves honest black-box behavior unchanged.",
+        "Exact positive evidence remains pending human review; no automatic confirmation or global write-absence claim.",
+        "Stop, lease, bounded deadlines and redaction survive selected/adaptive integration and fixture failures."
+      ],
+      "linear": {
+        "id": "HDX-42",
+        "uuid": "e88028ca-07da-478a-a1c4-429dd0bc0983",
+        "title": "[X02] Integrate scoped read-only corroboration into worker outcomes",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-42/x02-integrate-scoped-read-only-corroboration-into-worker-outcomes"
       }
     },
     {
@@ -1296,7 +1335,7 @@
         "evals/results/live/",
         "docs/implementation/validation.md"
       ],
-      "scope": "After operator supplies runtime authorization/configuration, run the bounded three-category live matrix and report proof limitations. Optional read-only evidence adapter remains out of scope until its contract is approved. Capture at least three distinct genuine, reproducible vulnerability reports if the target yields them; never fabricate findings to satisfy the rubric. If fewer are found, record that submission requirement as incomplete. Black-box live acceptance does not depend on optional X01. Adapter-backed assertions additionally require merged X01 and an authorized matching contract; unavailable evidence remains unknown.",
+      "scope": "After operator supplies runtime authorization/configuration, run the bounded three-category live matrix and report proof limitations. Optional read-only evidence adapter remains out of scope until its contract is approved. Capture at least three distinct genuine, reproducible vulnerability reports if the target yields them; never fabricate findings to satisfy the rubric. If fewer are found, record that submission requirement as incomplete. Black-box live acceptance does not depend on optional X01. Adapter-backed assertions additionally require merged X01/X02 and an authorized matching contract; unavailable evidence remains unknown.",
       "accept": [
         "Target/versions and bounded synthetic results are recorded without credentials.",
         "No paid/live run starts solely because this issue becomes dependency-ready.",
