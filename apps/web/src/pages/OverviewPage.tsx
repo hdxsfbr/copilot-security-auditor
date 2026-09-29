@@ -16,6 +16,7 @@ export function OverviewPage() {
     <section className="panel"><div className="eyebrow">READY TO TEST</div><h2>Saved scope</h2>
       <p>{targets.length} authorized target{targets.length === 1 ? "" : "s"} · {cases.length} saved case{cases.length === 1 ? "" : "s"}</p>
       <p>{reserved.length ? `${reserved.length} target reservation${reserved.length === 1 ? "" : "s"} active.` : "No target reservation shown."}</p>
+      {reserved.map(target => <p key={target.id}><RouteLink href={`/runs/${target.activeRunId}`} navigate={navigate}>Inspect {target.name}'s active run</RouteLink></p>)}
       <RouteLink className="task-link" href="/runs/new" navigate={navigate}>Launch an evaluation</RouteLink>
     </section>
   </div>;

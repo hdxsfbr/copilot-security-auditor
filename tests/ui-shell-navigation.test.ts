@@ -12,6 +12,15 @@ const testCase = { id: 'synthetic-case', title: 'Synthetic chart-context case', 
 const run = (id: string) => ({ id, caseId: testCase.id, status: 'running', outcome: null, version: 'synthetic-v1', model: 'synthetic-local', categories: ['prompt_injection'] });
 const event = (id: string) => ({ id: '1', event: { agent: 'target', kind: 'synthetic_observation', detail: { note: `Evidence for ${id}` } }, createdAt: '2026-09-29T12:00:00.000Z' });
 
+async function revealRecordedEvidence(page: import('playwright-core').Page) {
+  const history = page.locator('.run-detail > details').filter({ has: page.locator('summary').filter({ hasText: /^Uncorrelated historical/ }) });
+  await history.waitFor();
+  if (!await history.evaluate(element => (element as HTMLDetailsElement).open)) await history.locator(':scope > summary').click();
+  const raw = page.locator('.run-evidence-list details').first();
+  await raw.waitFor();
+  if (!await raw.evaluate(element => (element as HTMLDetailsElement).open)) await raw.locator('summary').click();
+}
+
 async function fixture(page: import('playwright-core').Page) {
   const requests: string[] = [];
   await page.route('**/api/**', async route => {
@@ -89,6 +98,7 @@ test('task routes preserve drafts, support history and hard reload, and isolate 
     await page.getByRole('heading', { name: 'Launch evaluation', level: 1 }).waitFor();
 
     await page.goto(base + '/runs/synthetic-run', { waitUntil: 'networkidle' });
+    await revealRecordedEvidence(page);
     await page.getByText('Evidence for synthetic-run').waitFor();
     await page.locator('.run-activity').getByText(/prompt injection: case 1 running/).waitFor();
     await page.locator('.run-activity').getByRole('button', { name: 'Stop after in-flight work' }).click();
@@ -97,8 +107,10 @@ test('task routes preserve drafts, support history and hard reload, and isolate 
     await page.getByRole('link', { name: 'Launch' }).click();
     await page.locator('.run-activity').getByText(/prompt injection: case 1 running/).waitFor();
     await page.getByRole('link', { name: 'Current run' }).click();
+    await revealRecordedEvidence(page);
     await page.getByText('Evidence for synthetic-run').waitFor();
     await page.goto(base + '/runs/second-run', { waitUntil: 'networkidle' });
+    await revealRecordedEvidence(page);
     await page.getByText('Evidence for second-run').waitFor();
     assert.equal(await page.getByText('Evidence for synthetic-run').count(), 0);
     assert.ok(requests.includes('/runs/second-run'));
@@ -111,6 +123,7 @@ test('task routes preserve drafts, support history and hard reload, and isolate 
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     if (capture) await page.screenshot({ path: join(output, 'mobile-launch.png'), fullPage: true });
     await page.getByRole('link', { name: 'Current run' }).click();
+    await revealRecordedEvidence(page);
     await page.getByText('Evidence for second-run').waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     if (capture) await page.screenshot({ path: join(output, 'mobile-run-detail.png'), fullPage: true });

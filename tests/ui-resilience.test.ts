@@ -17,6 +17,15 @@ const fixtureFinding = { id: 'finding-fixture', runId: fixtureRun.id, state: 'pe
 const fixtureConfig = { ollamaUrl: 'http://127.0.0.1:11434', model: 'synthetic-local-model' };
 const fixtureCatalog = { openrouter: ['fixture/paid'], ollama: ['fixture-model'], configured: true };
 
+async function revealRecordedEvidence(page: import('playwright-core').Page) {
+  const history = page.locator('.run-detail > details').filter({ has: page.locator('summary').filter({ hasText: /^Uncorrelated historical/ }) });
+  await history.waitFor();
+  if (!await history.evaluate(element => (element as HTMLDetailsElement).open)) await history.locator(':scope > summary').click();
+  const raw = page.locator('.run-evidence-list details').first();
+  await raw.waitFor();
+  if (!await raw.evaluate(element => (element as HTMLDetailsElement).open)) await raw.locator('summary').click();
+}
+
 async function startWeb(): Promise<ViteDevServer> {
   const server = await createViteServer({
     configFile: resolve('apps/web/vite.config.ts'),
@@ -71,6 +80,7 @@ test('catalog 503 is local, recoverable, and preserves entered forms and evidenc
     await page.getByRole('button', { name: 'Retry model catalog' }).first().waitFor();
     await page.getByRole('link', { name: 'Findings' }).click();
     await page.getByRole('button', { name: 'Inspect evidence' }).click();
+    await revealRecordedEvidence(page);
     await page.getByText('Synthetic evidence remains visible during catalog outage').waitFor();
     await page.getByRole('link', { name: 'Targets' }).click();
     const targetName = page.getByLabel('Target name');
@@ -92,6 +102,7 @@ test('catalog 503 is local, recoverable, and preserves entered forms and evidenc
     await schedulePanel.getByRole('button', { name: 'Retry model catalog' }).click();
     await schedulePanel.locator('[role="alert"]').waitFor({ state: 'detached' });
     await page.getByRole('link', { name: 'Current run' }).click();
+    await revealRecordedEvidence(page);
     await page.getByText('Synthetic evidence remains visible during catalog outage').waitFor();
     await page.getByRole('link', { name: 'Targets' }).click();
     assert.equal(await targetName.inputValue(), 'User-entered synthetic target');
@@ -164,12 +175,15 @@ test('usage and adaptive progress 503 errors stay local and support retry', asyn
     assert.equal(await scheduleUrl.inputValue(), '');
     await page.getByRole('link', { name: 'Findings' }).click();
     await page.getByRole('button', { name: 'Inspect evidence' }).click();
+    await revealRecordedEvidence(page);
     await page.getByText('Synthetic evidence remains visible during catalog outage').waitFor();
     mode.runMalformed = true;
-    await page.locator('.evidence').getByText('Run progress could not refresh; the last saved evidence is still shown.', { exact: false }).waitFor();
+    await page.getByRole('button', { name: 'Refresh saved evidence' }).click();
+    await page.locator('.evidence').getByText('Run evidence could not refresh; the last saved evidence is retained.', { exact: false }).waitFor();
+    await revealRecordedEvidence(page);
     await page.getByText('Synthetic evidence remains visible during catalog outage').waitFor();
     mode.runMalformed = false;
-    await page.locator('.evidence').getByRole('button', { name: 'Retry progress' }).click();
+    await page.locator('.evidence').getByRole('button', { name: 'Retry', exact: true }).click();
     await page.getByRole('link', { name: 'Launch' }).click();
     const activity = page.locator('.run-activity');
     await activity.getByRole('button', { name: 'Retry usage' }).waitFor();

@@ -6,6 +6,7 @@ export const navigation = [
   { href: "/targets", label: "Targets" },
   { href: "/cases", label: "Cases" },
   { href: "/runs/new", label: "Launch" },
+  { href: "/runs", label: "Runs" },
   { href: "/findings", label: "Findings" },
   { href: "/regressions", label: "Regressions" },
   { href: "/coverage", label: "Coverage" },

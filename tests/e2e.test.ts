@@ -336,7 +336,7 @@ test('operator starts and stops bounded exploration and sees category gaps', asy
     await desk.getByRole('button', { name: 'Start bounded exploration' }).click();
     await page.locator('.evidence .status').filter({ hasText: 'queued / awaiting result' }).waitFor();
     await page.locator('.run-activity').getByRole('button', { name: 'Stop after in-flight work' }).click();
-    await page.locator('.run-activity').getByRole('button', { name: 'Stop requested' }).waitFor();
+    await page.locator('.evidence .status').filter({ hasText: 'finished / incomplete' }).waitFor();
     const priorTurns = toy.requests.filter(request => request.path.includes('/turns')).length;
     assert.equal(await processNext(db.repo), null);
     assert.equal(toy.requests.filter(request => request.path.includes('/turns')).length, priorTurns);

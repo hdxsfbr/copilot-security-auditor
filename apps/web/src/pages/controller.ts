@@ -24,7 +24,7 @@ type Case = {
     documentType?: string;
   }[];
 };
-type Run = {
+export type Run = {
   id: string;
   caseId?: string;
   status: string;
@@ -34,8 +34,13 @@ type Run = {
   modelSnapshot?: { roles: { judge: { provider: string; model: string } } };
   categories?: string[] | null;
   stopRequested?: boolean;
+  mode?: "selected" | "adaptive";
+  target?: { id: string; name: string | null; version: string | null };
+  caseSnapshot?: { id: string; familyId: string | null; version: number | null; definition: Record<string, unknown> | null } | null;
+  adaptiveSeeds?: { id: string; familyId: string | null; version: number | null; definition: Record<string, unknown> }[] | null;
+  createdAt?: string; startedAt?: string | null; finishedAt?: string | null;
 };
-type Event = {
+export type Event = {
   id: number | string;
   event: { agent: string; kind: string; detail: Record<string, unknown> };
   createdAt: string;
@@ -65,7 +70,9 @@ const isCase = (value: unknown): value is Case => isRecord(value) && isString(va
 const isFinding = (value: unknown): value is Finding => isRecord(value) && isString(value.id) && isString(value.runId) && isString(value.state) && isString(value.title) && isNullableString(value.version) && isNullableString(value.decisionRoute) && isNullableString(value.exportApprovedAt);
 const isRegression = (value: unknown): value is Regression => isRecord(value) && isString(value.id) && isString(value.sourceRunId) && isNullableString(value.version) && isRecord(value.definition) && isString(value.definition.title) && Array.isArray(value.replays) && value.replays.every(replay => isRecord(replay) && isString(replay.runId) && isNullableString(replay.version) && isString(replay.outcome));
 const isCoverage = (value: unknown): value is Coverage => isRecord(value) && isString(value.category) && isString(value.outcome) && typeof value.count === "number";
-const isRun = (value: unknown): value is Run => isRecord(value) && isString(value.id) && isString(value.status) && isNullableString(value.outcome) && isNullableString(value.version) && isString(value.model) && (value.caseId === undefined || isNullableString(value.caseId)) && (value.categories === undefined || value.categories === null || (Array.isArray(value.categories) && value.categories.every(isString))) && (value.modelSnapshot === undefined || value.modelSnapshot === null || (isRecord(value.modelSnapshot) && isRecord(value.modelSnapshot.roles) && isRecord(value.modelSnapshot.roles.judge) && isString(value.modelSnapshot.roles.judge.provider)));
+const isSavedCase = (v: unknown): v is NonNullable<Run["caseSnapshot"]> => isRecord(v) && isString(v.id) && isNullableString(v.familyId) && (v.version === null || Number.isInteger(v.version)) && (v.definition === null || isRecord(v.definition));
+const isSeed = (v: unknown): v is NonNullable<Run["adaptiveSeeds"]>[number] => isRecord(v) && isString(v.id) && isNullableString(v.familyId) && (v.version === null || Number.isInteger(v.version)) && isRecord(v.definition);
+const isRun = (value: unknown): value is Run => isRecord(value) && isString(value.id) && isString(value.status) && isNullableString(value.outcome) && isNullableString(value.version) && isString(value.model) && (value.caseId === undefined || isNullableString(value.caseId)) && (value.categories === undefined || value.categories === null || (Array.isArray(value.categories) && value.categories.every(isString))) && (value.stopRequested === undefined || typeof value.stopRequested === "boolean") && (value.mode === undefined || value.mode === "selected" || value.mode === "adaptive") && (value.target === undefined || (isRecord(value.target) && isString(value.target.id) && isNullableString(value.target.name) && isNullableString(value.target.version))) && (value.caseSnapshot === undefined || value.caseSnapshot === null || isSavedCase(value.caseSnapshot)) && (value.adaptiveSeeds === undefined || value.adaptiveSeeds === null || (Array.isArray(value.adaptiveSeeds) && value.adaptiveSeeds.every(isSeed))) && (value.modelSnapshot === undefined || value.modelSnapshot === null || (isRecord(value.modelSnapshot) && isRecord(value.modelSnapshot.roles) && isRecord(value.modelSnapshot.roles.judge) && isString(value.modelSnapshot.roles.judge.provider) && isString(value.modelSnapshot.roles.judge.model)));
 const isEvent = (value: unknown): value is Event => isRecord(value) && (typeof value.id === "number" || (typeof value.id === "string" && /^\d+$/.test(value.id))) && isRecord(value.event) && isString(value.event.agent) && isString(value.event.kind) && isRecord(value.event.detail) && isString(value.createdAt);
 const isConfig = (value: unknown): value is { ollamaUrl: string; model: string } => isRecord(value) && isString(value.ollamaUrl) && isString(value.model);
 const isId = (value: unknown): value is { id: string } => isRecord(value) && isString(value.id);
@@ -80,6 +87,8 @@ export function useWorkspaceController(navigate: (path: string) => void) {
   const [run, setRun] = useState<Run | null>(null),
     [events, setEvents] = useState<Event[]>([]);
   const activeRunId = useRef<string | null>(null);
+  const runGeneration = useRef(0);
+  const pollSequence = useRef(0);
   const [notice, setNotice] = useState(""),
     [targetId, setTargetId] = useState(
       () => localStorage.getItem("selectedTargetId") ?? "",
@@ -176,16 +185,19 @@ export function useWorkspaceController(navigate: (path: string) => void) {
   };
   const pollRun = async (id = run?.id) => {
     if (!id) return;
+    const generation = runGeneration.current;
+    const request = ++pollSequence.current;
     try {
       const [nextRun, nextEvents] = await Promise.all([
         api(`/runs/${id}`, isRun), api(`/runs/${id}/events`, eventsGuard),
       ]);
-      if (activeRunId.current !== id) return;
+      if (activeRunId.current !== id || runGeneration.current !== generation || pollSequence.current !== request) return;
+      if (nextRun.id !== id) throw new Error("Run identity does not match the requested URL");
       setRun(nextRun);
       setEvents(nextEvents);
       setRunError("");
     } catch (cause) {
-      if (activeRunId.current === id) setRunError(cause instanceof Error ? cause.message : "Run progress unavailable");
+      if (activeRunId.current === id && runGeneration.current === generation && pollSequence.current === request) setRunError(cause instanceof Error ? cause.message : "Run progress unavailable");
     }
   };
   useEffect(() => {
@@ -196,12 +208,6 @@ export function useWorkspaceController(navigate: (path: string) => void) {
     refresh();
     void loadConfig();
   }, []);
-  useEffect(() => {
-    if (!run?.id) return;
-    void pollRun(run.id);
-    const timer = setInterval(() => void pollRun(run.id), 1500);
-    return () => clearInterval(timer);
-  }, [run?.id]);
   useEffect(() => {
     if (run?.status === "finished") void refresh();
   }, [run?.status, run?.id]);
@@ -279,13 +285,16 @@ export function useWorkspaceController(navigate: (path: string) => void) {
   };
   const openRun = (id: string, label = "loading", version: string | null = null, changeRoute = true) => {
     if (activeRunId.current !== id) {
+      runGeneration.current++;
+      pollSequence.current++;
       activeRunId.current = id;
-      setRun({ id, status: "queued", outcome: null, version, model: label });
+      setRun({ id, status: "loading", outcome: null, version, model: label });
       setEvents([]);
       setRunError("");
     }
     if (changeRoute) navigate(`/runs/${encodeURIComponent(id)}`);
   };
+  const deactivateRun = () => { runGeneration.current++; pollSequence.current++; };
   const startSelected = async () => {
     await submit(async () => {
       const result = await api("/runs", isId, { method: "POST", body: JSON.stringify({ targetId, caseId, model, ollamaUrl }) });
@@ -311,5 +320,5 @@ export function useWorkspaceController(navigate: (path: string) => void) {
     findings, regressions, coverage, exported,
     target, setTarget, model, setModel, ollamaUrl, setOllamaUrl,
     setNotice, setNoticeKind, refresh, loadConfig, pollRun, submit, actOnFinding, saveTarget,
-    openRun, selectRun: openRun, startSelected, selectRegression, navigate };
+    openRun, deactivateRun, selectRun: openRun, startSelected, selectRegression, navigate };
 }
