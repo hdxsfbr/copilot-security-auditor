@@ -34,7 +34,7 @@ test('served UI and API start, poll and inspect safe, incomplete and reviewable 
     assert.deepEqual(await (await fetch(`${url}/api/config`)).json(), { ollamaUrl: process.env.OLLAMA_URL ?? '', model: process.env.OLLAMA_MODEL ?? '' });
     const health = await fetch(`${url}/api/health`);
     assert.equal(health.status, 200);
-    assert.deepEqual(await health.json(), { status: 'ok', database: 'ready', migrations: 11 });
+    assert.deepEqual(await health.json(), { status: 'ok', database: 'ready', migrations: 12 });
     assert.deepEqual(await (await fetch(`${url}/api/integrity`)).json(), { ok: true, orphaned: [], missing: [], corrupt: [] });
     const post = async (path: string, body: unknown) => {
       const response = await fetch(url + '/api' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -56,7 +56,7 @@ test('served UI and API start, poll and inspect safe, incomplete and reviewable 
     const invalid = await fetch(`${url}/api/targets/${target.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Invalid', baseUrl: targetUrl, userA: { ...users.userA, password: '' }, userB: users.userB }) });
     assert.equal(invalid.status, 400);
     const selected = (await post('/cases', testCase)).data;
-    const input = { targetId: target.id, caseId: selected.id, model: 'fixture', ollamaUrl };
+    const input = { targetId: target.id, caseId: selected.id, model: 'stub', ollamaUrl };
     const first = await post('/runs', input); assert.equal(first.status, 202);
     const conflict = await post('/runs', input); assert.equal(conflict.status, 409); assert.equal(conflict.data.active_run_id, first.data.id);
     assert.deepEqual(await processNext(db.repo), { id: first.data.id, outcome: 'safe' });

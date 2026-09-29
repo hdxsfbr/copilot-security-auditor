@@ -479,13 +479,23 @@
         "api-data",
         "contracts",
         "migrations",
-        "worker-models"
+        "worker-models",
+        "worker-pipeline"
       ],
       "files": [
         "apps/api/src/",
         "apps/worker/src/models.ts",
+        "apps/worker/src/process.ts",
+        "apps/worker/src/adaptive.ts",
         "packages/contracts/src/",
-        "db/migrations/"
+        "db/migrations/",
+        "db/migrate.ts",
+        "tests/e2e.test.ts",
+        "tests/integration.test.ts",
+        "tests/integrity-candidate.test.ts",
+        "tests/model-definitions.test.ts",
+        "tests/model-preflight.test.ts",
+        "docs/implementation/model-definitions.md"
       ],
       "scope": "Validate only roles actually invoked by the chosen mode; expose installed models, typed availability and conservative cost preview. Save reusable single-selected-case or adaptive run/model definitions for composer and schedule use, with immutable execution snapshots. Paid-only definitions need no unused Ollama URL.",
       "accept": [

@@ -51,20 +51,34 @@ export const modelAssignment = z.discriminatedUnion('provider', [
   z.object({ provider: z.literal('openrouter'), model: z.string().min(1).max(200), maxOutputTokens: z.number().int().min(1).max(4096) }).strict()
 ]);
 export const modelRoles = z.object({ orchestrator: modelAssignment, redTeam: modelAssignment, judge: modelAssignment, documentation: modelAssignment }).strict();
-export const startInput = z.object({ targetId: z.uuid(), caseId: z.uuid(), model: z.string().min(1).max(120).optional(), ollamaUrl: endpoint, roles: modelRoles.optional(), openRouterCapUsd: z.number().finite().min(0.000000001).max(100).optional() }).strict().superRefine((input, ctx) => {
+// Extra historical role fields are intentionally projected away. Only invoked
+// roles can require a provider, catalog entry, or paid allowance.
+export const selectedRoles = z.object({ judge: modelAssignment });
+export const adaptiveRoles = z.object({ orchestrator: modelAssignment, redTeam: modelAssignment, judge: modelAssignment });
+const capUsd = z.number().finite().min(0.000000001).max(100);
+export const startInput = z.object({ targetId: z.uuid(), caseId: z.uuid(), model: z.string().min(1).max(120).optional(), ollamaUrl: endpoint.optional(), roles: selectedRoles.optional(), openRouterCapUsd: capUsd.optional() }).strict().superRefine((input, ctx) => {
   if (!input.roles && !input.model) ctx.addIssue({ code: 'custom', message: 'A Judge model is required' });
-  if (input.roles && Object.values(input.roles).some(role => role.provider === 'openrouter') && input.openRouterCapUsd === undefined) ctx.addIssue({ code: 'custom', message: 'A paid-call cap is required' });
+  if (input.roles?.judge.provider === 'openrouter' && input.openRouterCapUsd === undefined) ctx.addIssue({ code: 'custom', message: 'A paid-call cap is required' });
+  if ((!input.roles || input.roles.judge.provider === 'ollama') && !input.ollamaUrl) ctx.addIssue({ code: 'custom', message: 'An Ollama URL is required for a local Judge' });
 });
-export const adaptiveStart = z.object({ targetId: z.uuid(), caseIds: z.array(z.uuid()).min(1).max(9), categories: z.array(category).min(1).max(3), maxCases: z.number().int().min(1).max(9), maxMinutes: z.number().int().min(1).max(30), ollamaUrl: endpoint, roles: modelRoles, openRouterCapUsd: z.number().finite().min(0.000000001).max(100).optional() }).strict().superRefine((input, ctx) => {
+export const adaptiveStart = z.object({ targetId: z.uuid(), caseIds: z.array(z.uuid()).min(1).max(9), categories: z.array(category).min(1).max(3), maxCases: z.number().int().min(1).max(9), maxMinutes: z.number().int().min(1).max(30), ollamaUrl: endpoint.optional(), roles: adaptiveRoles, openRouterCapUsd: capUsd.optional() }).strict().superRefine((input, ctx) => {
   if (new Set(input.caseIds).size !== input.caseIds.length || new Set(input.categories).size !== input.categories.length) ctx.addIssue({ code: 'custom', message: 'Duplicate cases or categories' });
   if (Object.values(input.roles).some(role => role.provider === 'openrouter') && input.openRouterCapUsd === undefined) ctx.addIssue({ code: 'custom', message: 'A paid-call cap is required' });
+  if (Object.values(input.roles).some(role => role.provider === 'ollama') && !input.ollamaUrl) ctx.addIssue({ code: 'custom', message: 'An Ollama URL is required for active local roles' });
 });
+export const runDefinition = z.discriminatedUnion('kind', [z.object({ kind: z.literal('selected'), input: startInput }).strict(), z.object({ kind: z.literal('adaptive'), input: adaptiveStart }).strict()]);
+export const runDefinitionInput = z.object({ name: z.string().trim().min(1).max(120), run: runDefinition }).strict();
+export const runDefinitionEdit = runDefinitionInput.extend({ revision: z.number().int().positive() }).strict();
+export const runDefinitionRef = z.object({ revision: z.number().int().positive() }).strict();
 export const caseProposal = z.object({ actions: z.array(action).min(1).max(3) }).strict();
 const zone = z.string().min(1).max(100).refine(value => { try { new Intl.DateTimeFormat('en-US', { timeZone: value }); return true; } catch { return false; } }, 'Valid IANA time zone required');
-export const scheduleInput = z.object({ name: z.string().min(1).max(120), cadence: z.enum(['daily', 'weekly']), weekday: z.number().int().min(0).max(6).optional(), hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59), zone, run: z.discriminatedUnion('kind', [z.object({ kind: z.literal('selected'), input: startInput }).strict(), z.object({ kind: z.literal('adaptive'), input: adaptiveStart }).strict()]) }).strict().superRefine((value, ctx) => {
+const scheduleFields = { name: z.string().min(1).max(120), cadence: z.enum(['daily', 'weekly']), weekday: z.number().int().min(0).max(6).optional(), hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59), zone };
+const scheduleCadence = (value: { cadence: 'daily' | 'weekly'; weekday?: number }, ctx: z.RefinementCtx) => {
   if (value.cadence === 'weekly' && value.weekday === undefined) ctx.addIssue({ code: 'custom', message: 'Weekly schedules require a weekday' });
   if (value.cadence === 'daily' && value.weekday !== undefined) ctx.addIssue({ code: 'custom', message: 'Daily schedules cannot have a weekday' });
-});
+};
+export const scheduleInput = z.object({ ...scheduleFields, run: runDefinition }).strict().superRefine(scheduleCadence);
+export const scheduleDefinitionRef = z.object({ ...scheduleFields, runDefinitionId: z.uuid(), revision: z.number().int().positive() }).strict().superRefine(scheduleCadence);
 export const scheduleState = z.object({ paused: z.boolean() }).strict();
 export const outcome = z.enum(['safe', 'inconclusive', 'pending_review', 'auto_confirm', 'blocked', 'incomplete']);
 export const verdict = z.object({ v: z.literal(1), outcome: z.enum(['safe', 'unsafe', 'inconclusive']), claim: z.string().max(2000), evidenceQuote: z.string().min(8).max(1000).optional(), evidenceRefs: z.array(z.string()).max(20), reproductionComplete: z.boolean(), materialUncertainties: z.array(z.string()).max(20), challengedCheck: z.enum(['required_source_citation', 'forbidden_patient_disclosure', 'forbidden_tool_effect']).optional(), challengedClaim: z.string().min(1).max(2000).optional() }).strict();
@@ -96,6 +110,10 @@ export type AdaptiveStart = z.infer<typeof adaptiveStart>;
 export type ScheduleInput = z.infer<typeof scheduleInput>;
 export type ModelAssignment = z.infer<typeof modelAssignment>;
 export type ModelRoles = z.infer<typeof modelRoles>;
+export type SelectedRoles = z.infer<typeof selectedRoles>;
+export type AdaptiveRoles = z.infer<typeof adaptiveRoles>;
+export type RunDefinition = z.infer<typeof runDefinition>;
+export type RunDefinitionInput = z.infer<typeof runDefinitionInput>;
 export type Verdict = z.infer<typeof verdict>;
 export type PolicyTrace = z.infer<typeof policyTrace>;
 export type Observation = z.infer<typeof observation>;

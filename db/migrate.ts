@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 
 export async function migrate(pool: pg.Pool) {
-  const names = ['001_initial.sql', '002_findings.sql', '003_starter_cases.sql', '004_chart_context_case.sql', '005_model_spend.sql', '006_adaptive.sql', '007_schedules.sql', '008_migration_ledger.sql', '009_candidate_integrity.sql', '010_case_lifecycle.sql', '011_versioned_starter_matrix.sql'];
+  const names = ['001_initial.sql', '002_findings.sql', '003_starter_cases.sql', '004_chart_context_case.sql', '005_model_spend.sql', '006_adaptive.sql', '007_schedules.sql', '008_migration_ledger.sql', '009_candidate_integrity.sql', '010_case_lifecycle.sql', '011_versioned_starter_matrix.sql', '012_run_definitions.sql'];
   for (const name of names) {
     const db = await pool.connect();
     try {
