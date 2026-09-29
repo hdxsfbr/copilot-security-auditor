@@ -178,6 +178,8 @@ One issue normally produces one bounded MR. Split an unexpectedly large or cross
 
 A failed check gets at most two focused repair rounds per attempt. Record the failure and correction. Repeated failure, unclear product policy or incompatible contract pauses the affected task and asks for the missing decision, while independent ready work may continue. Never hide a flaky test with unlimited reruns.
 
+MR evidence should identify the tested commit and scenario, give the relevant check results, and link the same evidence from the MR and Linear issue. For UI changes, attach authentic before/after screenshots of the affected state; add a short video when interaction, navigation or timing is easier to assess in motion. Use synthetic data and capture the tested build, not a mockup or unrelated revision. For backend-only changes, use API/fixture evidence when a visual capture would add no useful proof.
+
 ### Merge detection and restart
 
 `scripts/audit-coordinator.mjs` is a read-only readiness resolver. It queries this GitLab project's MRs, fetches only main's remote-tracking ref, and emits `ready`, `waiting`, `blocked`, `merged`, `active` and `warnings`. It does not write Linear, change the journal, create branches or launch agents. The root session performs those actions from a fresh snapshot.
@@ -185,7 +187,7 @@ A failed check gets at most two focused repair rounds per attempt. Record the fa
 A prerequisite unlock requires all of:
 - GitLab reports the issue's linked MR merged into main with a merge timestamp.
 - The merge/squash commit is an ancestor of freshly fetched `origin/main`.
-- Required local checks were recorded as passed for the exact MR head; a present pipeline must have a successful status, or the explicit temporary runner-unavailable policy below must apply.
+- Required local checks were recorded as passed for the exact MR head. A present GitLab pipeline succeeded for that head or its merge/squash revision; authoritative `head_pipeline: null` means no remote pipeline exists for that MR and still requires the exact-head local checks.
 - No duplicate/open competing MR or contradictory state prevents reconciliation.
 
 An open MR with no journal entry blocks duplicate dispatch. A closed unmerged MR does not satisfy its issue. A Done label or forged journal `merged` flag is insufficient. New pushes invalidate old head-specific validation. Rebases/merges that change the tested revision need relevant checks again. Before launch, the root also checks Linear for cancellation/scope changes and reviews intervening main changes, including reverts; ancestry alone cannot prove a feature was not subsequently reverted.
@@ -213,17 +215,15 @@ During this active agent session, poll at 30-second intervals, report meaningful
 
 **This session has no callable recurring-task/heartbeat tool.** The CLI watch process cannot wake a finished agent task or launch agents by itself. Automatic review-merge-dispatch therefore works while the coordinator session is active. After interruption, resume from the manifest, journal, Linear and GitLab before launching anything. No background daemon or scheduled task is claimed to have been created.
 
-### Temporary runner-unavailable policy (user decision, September 29)
+### Runner restoration and current CI policy
 
-GitLab lists project runner 281 as never contacted; shared runners are disabled and no usable group runner was demonstrated. The user explicitly authorized **verified local checks temporarily**, with runner setup tracked as [Q03 / HDX-40](https://linear.app/hdxsfbr/issue/HDX-40). D01 / HDX-41 records this limited exception. Remote CI remains a submission gap until Q03 verifies a working runner and passing pipeline. No runner settings were changed.
+On September 29, the user temporarily authorized verified local checks while GitLab had no usable runner. D01 / HDX-41 recorded an explicit pending-pipeline exception. That decision remains part of the historical record; it is no longer a policy for subsequent work. [Q03 / HDX-40](https://linear.app/hdxsfbr/issue/HDX-40) identified online runner 282 with `run_untagged` disabled for this untagged job. After the setting was enabled, [pipeline 32849](https://labs.gauntletai.com/andrebatista/copilot-security-auditor/-/pipelines/32849), job 137071, passed typecheck, build and 68 fixture tests on revision `14883c7`. See [validation.md](../validation.md) for runner diagnostics.
 
-For a pending pipeline only, the root may record `ciException: { kind: "runner_unavailable", headSha, authorizedOn: "2026-09-29", evidence }` after verifying the runner blocker and all required local checks. `validation.checks` must list successful exit codes and concrete evidence paths, bound to the same MR head. The journal exception is a trusted coordinator attestation, like the local validation record. It is never added automatically because a pipeline happens to be pending.
-
-The resolver still requires verified GitLab merge/main ancestry, exact-head local validation and a matching pipeline revision. Failed, running, canceled, skipped, stale or unavailable pipeline evidence cannot use this exception. The snapshot labels accepted local fallback explicitly. When Q03 has a merged MR (or is recorded merged), the exception stops applying; remove the policy and obsolete per-task exception records as part of that reconciliation. Null pipeline remains explicitly no remote pipeline, never claimed green.
+The resolver still requires verified merge/main ancestry and exact-head local validation. A present pipeline must be successful and revision-matched. An authoritative `head_pipeline: null` means no pipeline exists for that MR; it can rely on the same exact-head local validation but is never described as green remote CI. Missing or undefined pipeline data and pending, running, failed, canceled, skipped or stale pipelines block dependency unlocks, even if a historical journal entry still contains `ciException`. Retire obsolete exception records when reconciling the journal; do not relabel the historical local-check decision as remote CI success.
 
 ## Validation and completion
 
-Each issue specifies observable acceptance and appropriate tests. Use synthetic targets and disposable local data during routine development. Preserve the existing successful checks for reservations, credentials, leases, ambiguous delivery, spend, schedule uniqueness and DST. Q01 makes fixture setup and browser provisioning reproducible and verifies GitLab runner availability; no runner is not a green pipeline.
+Each issue specifies observable acceptance and appropriate tests. Use synthetic targets and disposable local data during routine development. Preserve the existing successful checks for reservations, credentials, leases, ambiguous delivery, spend, schedule uniqueness and DST. Q01 makes fixture setup and browser provisioning reproducible; Q03 records the restored runner and passing remote fixture pipeline. A queued or absent pipeline is not green.
 
 Evidence changes need focused transport/schema/policy and artifact-integrity regressions. UI changes need browser checks of primary paths, keyboard behavior, narrow screens and local errors. Full acceptance Q02 must reproduce and fix the audited failures, exercise the complete finding-to-regression workflow and record current revisions. Do not re-run every suite after documentation-only changes.
 

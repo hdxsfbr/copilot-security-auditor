@@ -44,8 +44,7 @@ export function validateInputs(manifest, state) {
     visiting.delete(key); visited.add(key);
   }
   for (const key of keys) visit(key);
-  const fallback = manifest.validationPolicy?.runnerUnavailable;
-  if (fallback) assert(fallback.authorized === true && string(fallback.authorizedOn) && keys.has(fallback.untilTask), 'Invalid local validation policy');
+  assert(!manifest.validationPolicy?.runnerUnavailable, 'Retired runner-unavailable policy must not be enabled');
   for (const [key, entry] of Object.entries(state.tasks)) {
     assert(keys.has(key) && entry && phases.has(entry.phase), `Malformed journal task: ${key}`);
     assert(entry.mrIid === undefined || Number.isInteger(entry.mrIid) && entry.mrIid > 0, `Malformed MR IID: ${key}`);
@@ -113,10 +112,6 @@ export function computeSnapshot(manifest, state, mergeRequests, isAncestor) {
     mrs.set(mr.iid, mr);
   }
   const snapshot = { ready: [], waiting: [], blocked: [], merged: [], active: [], warnings: [] };
-  const fallback = manifest.validationPolicy?.runnerUnavailable;
-  const runnerTask = fallback && byKey.get(fallback.untilTask);
-  const runnerRestored = runnerTask && (state.tasks[runnerTask.key]?.phase === 'merged' ||
-    mergeRequests.some(mr => mr.state === 'merged' && matches(runnerTask, state.tasks[runnerTask.key], mr)));
   const status = new Map(), held = [];
   for (const task of manifest.tasks) {
     const entry = state.tasks[task.key];
@@ -156,22 +151,13 @@ export function computeSnapshot(manifest, state, mergeRequests, isAncestor) {
       const head = linked.sha ?? linked.diff_refs?.head_sha;
       const mergeSha = linked.merge_commit_sha ?? linked.squash_commit_sha;
       // GitLab merged-results pipelines may run on the final merge/squash SHA.
-      // No pipeline (null) relies on the recorded exact-head local validation.
+      // An authoritative null means no remote pipeline exists for this MR;
+      // it still requires exact-head local validation and verified ancestry.
       const pipeline = linked.head_pipeline;
-      const exception = entry.ciException;
-      const checks = entry.validation?.checks;
-      // This is an explicit coordinator attestation of runner unavailability,
-      // not an automatic waiver for arbitrary queued or failed CI.
-      const localFallback = fallback?.authorized === true && !runnerRestored &&
-        exception?.kind === 'runner_unavailable' && exception.headSha === head &&
-        exception.authorizedOn === fallback.authorizedOn && string(exception.evidence) &&
-        Array.isArray(checks) && checks.length > 0 &&
-        checks.every(check => check.exitCode === 0 && string(check.name) && string(check.evidence));
       const pipelineHeadMatches = pipeline && shaPattern.test(pipeline.sha ?? '') &&
         [head, linked.merge_commit_sha, linked.squash_commit_sha].includes(pipeline.sha);
       const pipelineValid = Object.hasOwn(linked, 'head_pipeline') &&
-        (pipeline === null || pipelineHeadMatches && (pipeline.status === 'success' ||
-          pipeline.status === 'pending' && localFallback));
+        (pipeline === null || pipelineHeadMatches && pipeline.status === 'success');
       const valid = linked.target_branch === 'main' && mergedAt(linked.merged_at) &&
         shaPattern.test(head ?? '') && shaPattern.test(mergeSha ?? '') &&
         pipelineValid &&
@@ -179,7 +165,6 @@ export function computeSnapshot(manifest, state, mergeRequests, isAncestor) {
         (!entry.headSha || entry.headSha === head) && isAncestor(mergeSha);
       if (valid) {
         status.set(task.key, 'merged');
-        if (pipeline?.status === 'pending') snapshot.warnings.push(`${task.key}: user-authorized local validation; remote CI awaits runner`);
       }
       else { status.set(task.key, 'blocked'); held.push(task); snapshot.warnings.push(`${task.key}: merge lacks target, ancestry, or exact-head validation`); }
       continue;

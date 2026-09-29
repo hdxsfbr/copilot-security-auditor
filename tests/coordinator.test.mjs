@@ -16,7 +16,7 @@ const journal = tasks => ({ schemaVersion: 1, mode: 'active-session', tasks, upd
 const mr = (iid, key, state = 'opened', changes = {}) => ({ iid, project_id: 2059,
   state, title: `Implement ${key}`, source_branch: `codex/${key}`, target_branch: 'main',
   sha: A, merged_at: state === 'merged' ? '2026-09-29T00:00:00Z' : null,
-  merge_commit_sha: state === 'merged' ? B : null, head_pipeline: null, ...changes });
+  merge_commit_sha: state === 'merged' ? B : null, head_pipeline: state === 'merged' ? { status: 'success', sha: A } : null, ...changes });
 const checked = (mrIid, headSha = A, phase = 'in_review') => ({ phase, mrIid, headSha, validation: { passed: true, headSha } });
 const snapshot = (tasks, state = {}, mrs = [], ancestor = () => true) =>
   computeSnapshot(manifest(tasks), journal(state), mrs, ancestor);
@@ -140,7 +140,7 @@ test('missing linked MR retains active work in progress and file locks', () => {
 test('pending or failed head pipeline cannot certify a merge', () => {
   const tasks = [task('A'), task('B', ['A'])];
   const state = { A: checked(1) };
-  for (const status of ['pending', 'running', 'failed']) {
+  for (const status of ['pending', 'running', 'failed', 'canceled']) {
     const result = snapshot(tasks, state, [mr(1, 'A', 'merged', { head_pipeline: { status, sha: A } })]);
     assert.deepEqual(result.blocked, ['A']);
     assert.deepEqual(result.waiting, ['B']);
@@ -149,6 +149,16 @@ test('pending or failed head pipeline cannot certify a merge', () => {
   assert.deepEqual(snapshot(tasks, state, [mr(1, 'A', 'merged', { head_pipeline: { status: 'success', sha: B } })]).ready, ['B']);
   assert.deepEqual(snapshot(tasks, state, [mr(1, 'A', 'merged', { head_pipeline: { status: 'success', sha: C } })]).waiting, ['B']);
   assert.deepEqual(snapshot(tasks, state, [mr(1, 'A', 'merged', { head_pipeline: { status: 'skipped', sha: A } })]).waiting, ['B']);
+  assert.deepEqual(snapshot(tasks, state, [mr(1, 'A', 'merged', { head_pipeline: null })]).ready, ['B']);
+  assert.deepEqual(snapshot(tasks, state, [mr(1, 'A', 'merged', { head_pipeline: undefined })]).waiting, ['B']);
+});
+
+test('authoritative no-pipeline MR still requires exact-head local validation and ancestry', () => {
+  const tasks = [task('A'), task('B', ['A'])];
+  const noPipeline = mr(1, 'A', 'merged', { head_pipeline: null });
+  assert.deepEqual(snapshot(tasks, { A: checked(1) }, [noPipeline]).ready, ['B']);
+  assert.deepEqual(snapshot(tasks, { A: checked(1, C) }, [noPipeline]).waiting, ['B']);
+  assert.deepEqual(snapshot(tasks, { A: checked(1) }, [noPipeline], () => false).waiting, ['B']);
 });
 
 test('linked MR hydration requires authoritative pipeline detail', () => {
@@ -160,26 +170,20 @@ test('linked MR hydration requires authoritative pipeline detail', () => {
   assert.throws(() => hydrateLinkedMrs(state, list, () => { throw new Error('GitLab unavailable'); }), /GitLab unavailable/);
 });
 
-test('runner exception permits only pending CI with authorized current-head local evidence', () => {
-  const m = manifest([task('A'), task('B', ['A']), task('Q03', [], [], 'runner')]);
-  m.validationPolicy = { runnerUnavailable: { authorized: true, authorizedOn: '2026-09-29', untilTask: 'Q03' } };
+test('retired runner exception cannot waive a present pending or failed pipeline', () => {
+  const m = manifest([task('A'), task('B', ['A'])]);
   const entry = { ...checked(1), ciException: { kind: 'runner_unavailable', authorizedOn: '2026-09-29', headSha: A, evidence: 'test-results/runner.json' } };
   entry.validation.checks = [{ name: 'fixture pipeline', exitCode: 0, evidence: 'test-results/fixtures.txt' }];
-  const run = (candidate = entry, status = 'pending', sha = A, extraState = {}, extraMrs = []) =>
-    computeSnapshot(m, journal({ A: candidate, ...extraState }),
-      [mr(1, 'A', 'merged', { head_pipeline: { status, sha } }), ...extraMrs], () => true);
-  assert.deepEqual(run().ready, ['B']);
-  assert.match(run().warnings.join(' '), /remote CI awaits runner/);
-  for (const status of ['failed', 'running', 'canceled', 'skipped']) assert.deepEqual(run(entry, status).ready, []);
-  assert.deepEqual(run(entry, 'pending', C).ready, []);
-  assert.deepEqual(run({ ...entry, ciException: undefined }).ready, []);
-  assert.deepEqual(run({ ...entry, ciException: { ...entry.ciException, headSha: C } }).ready, []);
-  assert.deepEqual(run({ ...entry, validation: { ...entry.validation, checks: [] } }).ready, []);
-  assert.deepEqual(run({ ...entry, validation: { ...entry.validation, passed: false } }).ready, []);
-  assert.deepEqual(run({ ...entry, validation: { ...entry.validation, checks: [{ name: 'fixtures', exitCode: 1, evidence: 'test-results/failed.txt' }] } }).ready, []);
-  assert.deepEqual(run(entry, 'pending', A, { Q03: checked(3) }, [mr(3, 'Q03', 'merged')]).ready, []);
-  delete m.validationPolicy;
-  assert.deepEqual(run().ready, []);
+  const run = (pipeline, candidate = entry) => computeSnapshot(m, journal({ A: candidate }),
+    [mr(1, 'A', 'merged', { head_pipeline: pipeline })], () => true);
+  for (const pipeline of [undefined, { status: 'pending', sha: A }, { status: 'failed', sha: A }, { status: 'canceled', sha: A }, { status: 'skipped', sha: A }, { status: 'success', sha: C }]) {
+    assert.deepEqual(run(pipeline).ready, []);
+  }
+  assert.deepEqual(run(null).ready, ['B']);
+  assert.deepEqual(run({ status: 'success', sha: A }).ready, ['B']);
+  assert.deepEqual(run({ status: 'success', sha: A }, { ...entry, validation: { ...entry.validation, headSha: C } }).ready, []);
+  m.validationPolicy = { runnerUnavailable: { authorized: true, authorizedOn: '2026-09-29', untilTask: 'A' } };
+  assert.throws(() => run({ status: 'success', sha: A }), /Retired runner-unavailable policy/);
 });
 
 test('dependency IDs in an MR description do not claim that dependency', () => {
