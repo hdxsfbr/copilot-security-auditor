@@ -57,12 +57,26 @@ export const modelRoles = z.object({ orchestrator: modelAssignment, redTeam: mod
 export const selectedRoles = z.object({ judge: modelAssignment });
 export const adaptiveRoles = z.object({ orchestrator: modelAssignment, redTeam: modelAssignment, judge: modelAssignment });
 const capUsd = z.number().finite().min(0.000000001).max(100);
-export const startInput = z.object({ targetId: z.uuid(), caseId: z.uuid(), model: z.string().min(1).max(120).optional(), ollamaUrl: endpoint.optional(), roles: selectedRoles.optional(), openRouterCapUsd: capUsd.optional() }).strict().superRefine((input, ctx) => {
+// Disabled unless a run supplies it. Roles never enable reports: a stored Documentation role assignment alone is inert.
+// A paid Documentation model draws only this aggregate allowance, which is reserved inside the run's openRouterCapUsd.
+export const runReportPolicy = z.object({ model: modelAssignment, allowanceUsd: capUsd.optional(), reviewWindowMinutes: z.number().int().min(1).max(10080) }).strict().superRefine((policy, ctx) => {
+  if (policy.model.provider === 'openrouter' && policy.allowanceUsd === undefined) ctx.addIssue({ code: 'custom', message: 'A report allowance is required for a paid Documentation model' });
+  if (policy.model.provider === 'ollama' && policy.allowanceUsd !== undefined) ctx.addIssue({ code: 'custom', message: 'A local Documentation model has no paid allowance' });
+});
+const reportPolicyBounds = (input: { reportPolicy?: z.infer<typeof runReportPolicy>; openRouterCapUsd?: number; ollamaUrl?: string }, ctx: z.RefinementCtx) => {
+  const policy = input.reportPolicy;
+  if (!policy) return;
+  if (policy.model.provider === 'ollama' && !input.ollamaUrl) ctx.addIssue({ code: 'custom', message: 'An Ollama URL is required for a local Documentation model' });
+  if (policy.allowanceUsd !== undefined && (input.openRouterCapUsd === undefined || policy.allowanceUsd > input.openRouterCapUsd)) ctx.addIssue({ code: 'custom', message: 'The report allowance must fit inside the run paid-call cap' });
+};
+export const startInput = z.object({ targetId: z.uuid(), caseId: z.uuid(), model: z.string().min(1).max(120).optional(), ollamaUrl: endpoint.optional(), roles: selectedRoles.optional(), openRouterCapUsd: capUsd.optional(), reportPolicy: runReportPolicy.optional() }).strict().superRefine((input, ctx) => {
+  reportPolicyBounds(input, ctx);
   if (!input.roles && !input.model) ctx.addIssue({ code: 'custom', message: 'A Judge model is required' });
   if (input.roles?.judge.provider === 'openrouter' && input.openRouterCapUsd === undefined) ctx.addIssue({ code: 'custom', message: 'A paid-call cap is required' });
   if ((!input.roles || input.roles.judge.provider === 'ollama') && !input.ollamaUrl) ctx.addIssue({ code: 'custom', message: 'An Ollama URL is required for a local Judge' });
 });
-export const adaptiveStart = z.object({ targetId: z.uuid(), caseIds: z.array(z.uuid()).min(1).max(9), categories: z.array(category).min(1).max(3), maxCases: z.number().int().min(1).max(9), maxMinutes: z.number().int().min(1).max(30), ollamaUrl: endpoint.optional(), roles: adaptiveRoles, openRouterCapUsd: capUsd.optional() }).strict().superRefine((input, ctx) => {
+export const adaptiveStart = z.object({ targetId: z.uuid(), caseIds: z.array(z.uuid()).min(1).max(9), categories: z.array(category).min(1).max(3), maxCases: z.number().int().min(1).max(9), maxMinutes: z.number().int().min(1).max(30), ollamaUrl: endpoint.optional(), roles: adaptiveRoles, openRouterCapUsd: capUsd.optional(), reportPolicy: runReportPolicy.optional() }).strict().superRefine((input, ctx) => {
+  reportPolicyBounds(input, ctx);
   if (new Set(input.caseIds).size !== input.caseIds.length || new Set(input.categories).size !== input.categories.length) ctx.addIssue({ code: 'custom', message: 'Duplicate cases or categories' });
   if (Object.values(input.roles).some(role => role.provider === 'openrouter') && input.openRouterCapUsd === undefined) ctx.addIssue({ code: 'custom', message: 'A paid-call cap is required' });
   if (Object.values(input.roles).some(role => role.provider === 'ollama') && !input.ollamaUrl) ctx.addIssue({ code: 'custom', message: 'An Ollama URL is required for active local roles' });
@@ -116,6 +130,7 @@ export type SelectedRoles = z.infer<typeof selectedRoles>;
 export type AdaptiveRoles = z.infer<typeof adaptiveRoles>;
 export type RunDefinition = z.infer<typeof runDefinition>;
 export type RunDefinitionInput = z.infer<typeof runDefinitionInput>;
+export type RunReportPolicy = z.infer<typeof runReportPolicy>;
 export type Verdict = z.infer<typeof verdict>;
 export type PolicyTrace = z.infer<typeof policyTrace>;
 export type Observation = z.infer<typeof observation>;

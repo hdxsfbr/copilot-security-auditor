@@ -221,6 +221,10 @@ export function createApp(repo: Repository) {
     return run ? res.json(run) : res.status(404).json({ v: 1, code: 'not_found', message: 'Run not found' });
   });
   app.get('/api/runs/:id/events', async (req, res) => res.json(await repo.events(z.uuid().parse(req.params.id))));
+  app.get('/api/runs/:id/report-jobs', async (req, res) => {
+    const id = z.uuid().parse(req.params.id);
+    return await repo.run(id) ? res.set('Cache-Control', 'no-store').json(await repo.reports.accounting(id)) : res.status(404).json({ v: 1, code: 'not_found', message: 'Run not found' });
+  });
   app.get('/api/runs/:id/usage', async (req, res) => res.json(await repo.usage(z.uuid().parse(req.params.id))));
   app.get('/api/candidates', async (_req, res) => res.json(await repo.candidates()));
   app.get('/api/findings', async (_req, res) => res.json(await repo.findings()));

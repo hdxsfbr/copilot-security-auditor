@@ -47,12 +47,14 @@ export type ModelPreflight = {
   issues: { code: 'local_catalog_unavailable' | 'local_model_missing' | 'paid_catalog_or_pricing_unavailable'; role?: Role }[];
   local: { status: 'not_required' | 'available' | 'unavailable'; installed: string[] };
   paid: { status: 'not_required' | 'available' | 'unavailable'; configured: boolean };
-  preview: { reservationNanos: string; capNanos: string | null; attempts: number; basis: 'one_call_per_active_role_per_attempt' } | null;
+  // Report figures appear only when the run opts in. The allowance is inside capNanos, so execution headroom is capNanos minus it.
+  preview: { reservationNanos: string; capNanos: string | null; attempts: number; basis: 'one_call_per_active_role_per_attempt'; reportAllowanceNanos?: string; reportJobReservationNanos?: string } | null;
   models?: Snapshot;
 };
 export async function preflightModels(run: RunDefinition, transport: typeof fetch = fetch): Promise<ModelPreflight> {
-  const assigned = runRoles(run), mode = run.kind;
-  const active = activeRoleNames(mode);
+  const reportModel = run.input.reportPolicy?.model, mode = run.kind;
+  const assigned: ActiveRoles = { ...runRoles(run), ...(reportModel ? { documentation: reportModel } : {}) };
+  const active: readonly Role[] = [...activeRoleNames(mode), ...(reportModel ? ['documentation' as const] : [])];
   const localRoles = active.filter(role => assigned[role]?.provider === 'ollama');
   const paidRoles = active.filter(role => assigned[role]?.provider === 'openrouter');
   const issues: ModelPreflight['issues'] = [];
@@ -67,7 +69,8 @@ export async function preflightModels(run: RunDefinition, transport: typeof fetc
   try { models = await snapshot(assigned, transport); }
   catch { paid.status = 'unavailable'; issues.push({ code: 'paid_catalog_or_pricing_unavailable' }); }
   const attempts = mode === 'adaptive' ? run.input.maxCases : 1;
-  const preview = models ? { reservationNanos: reservationPreview(models, mode, attempts).toString(), capNanos: run.input.openRouterCapUsd === undefined ? null : nanos(run.input.openRouterCapUsd).toString(), attempts, basis: 'one_call_per_active_role_per_attempt' as const } : null;
+  const preview = models ? { reservationNanos: reservationPreview(models, mode, attempts).toString(), capNanos: run.input.openRouterCapUsd === undefined ? null : nanos(run.input.openRouterCapUsd).toString(), attempts, basis: 'one_call_per_active_role_per_attempt' as const,
+    ...(reportModel ? { reportAllowanceNanos: run.input.reportPolicy!.allowanceUsd === undefined ? '0' : nanos(run.input.reportPolicy!.allowanceUsd).toString(), reportJobReservationNanos: reportModel.provider === 'openrouter' && models.pricing.documentation ? reserveAmount(models.pricing.documentation, reportModel.maxOutputTokens).toString() : '0' } : {}) } : null;
   return { status: issues.length ? 'unavailable' : 'available', inferenceHealth: 'unverified', issues, local, paid, preview, ...(models ? { models } : {}) };
 }
 
