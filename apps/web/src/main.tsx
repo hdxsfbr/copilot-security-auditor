@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 import { ModelDesk } from "./ModelDesk.js";
+import { ScheduleDesk } from "./ScheduleDesk.js";
 
 type Target = {
   id: string;
@@ -778,6 +779,7 @@ function App() {
             setEvents([]);
           }}
         />
+        <ScheduleDesk targets={targets} cases={cases} onInspect={id => { setRun({ id, status: "queued", outcome: null, version: null, model: "scheduled" }); setEvents([]); }} />
         <section className="evidence">
           <div className="evidence-top">
             <div>

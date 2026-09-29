@@ -2,16 +2,45 @@ import express from 'express';
 import { z, ZodError } from 'zod';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { targetInput, targetUpdateInput, caseInput, startInput, adaptiveStart } from '../../../packages/contracts/src/index.js';
+import { targetInput, targetUpdateInput, caseInput, startInput, adaptiveStart, scheduleInput, scheduleState } from '../../../packages/contracts/src/index.js';
 import { Repository } from './repository.js';
 import { storePdf, loadPdf } from './artifacts.js';
-import { catalog, installedOllama, snapshot } from '../../worker/src/models.js';
+import { catalog, installedOllama, legacyRoles, snapshot } from '../../worker/src/models.js';
 
 export function createApp(repo: Repository) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '32kb' }));
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+  app.get('/api/schedules', async (_req, res) => res.json(await repo.schedules()));
+  app.get('/api/schedules/:id/occurrences', async (req, res) => res.json(await repo.occurrences(z.uuid().parse(req.params.id))));
+  const saveSchedule = async (body: unknown, id?: string) => {
+    const definition = scheduleInput.parse(body);
+    const run = definition.run.input;
+    const roles = definition.run.kind === 'selected' ? definition.run.input.roles ?? legacyRoles(definition.run.input.model!) : definition.run.input.roles;
+    if (!roles) throw new Error('Invalid role selection');
+    if (Object.values(roles).some(role => role.provider === 'ollama')) {
+      const installed = await installedOllama(run.ollamaUrl);
+      if (Object.values(roles).some(role => role.provider === 'ollama' && !installed.includes(role.model))) throw new Error('Ollama model unavailable');
+    }
+    const models = await snapshot(roles);
+    return repo.saveSchedule(definition, models, new Date(), id);
+  };
+  app.post('/api/schedules', async (req, res) => {
+    try { return res.status(201).json(await saveSchedule(req.body)); }
+    catch (error) { if (error instanceof ZodError) throw error; return res.status(400).json({ message: 'Target, case, model or pricing unavailable' }); }
+  });
+  app.put('/api/schedules/:id', async (req, res) => {
+    try {
+      const result = await saveSchedule(req.body, z.uuid().parse(req.params.id));
+      return result ? res.json(result) : res.status(404).json({ message: 'Schedule not found' });
+    } catch (error) { if (error instanceof ZodError) throw error; return res.status(400).json({ message: 'Target, case, model or pricing unavailable' }); }
+  });
+  app.patch('/api/schedules/:id', async (req, res) => {
+    const result = await repo.scheduleState(z.uuid().parse(req.params.id), scheduleState.parse(req.body).paused);
+    return result ? res.json(result) : res.status(404).json({ message: 'Schedule not found' });
+  });
+  app.delete('/api/schedules/:id', async (req, res) => (await repo.deleteSchedule(z.uuid().parse(req.params.id))) ? res.status(204).end() : res.status(404).json({ message: 'Schedule not found' }));
   app.get('/api/config', (_req, res) => res.json({ ollamaUrl: process.env.OLLAMA_URL ?? '', model: process.env.OLLAMA_MODEL ?? '' }));
   app.get('/api/models', async (_req, res) => {
     const models = process.env.OPENROUTER_API_KEY ? await catalog() : [];

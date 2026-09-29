@@ -1,9 +1,10 @@
 import { randomUUID, createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { caseInput } from '../../../packages/contracts/src/index.js';
-import type { AdaptiveStart, CaseInput, EvidenceEvent, Outcome, StartInput, TargetInput, TargetUpdateInput, Verdict } from '../../../packages/contracts/src/index.js';
+import type { AdaptiveStart, CaseInput, EvidenceEvent, Outcome, ScheduleInput, StartInput, TargetInput, TargetUpdateInput, Verdict } from '../../../packages/contracts/src/index.js';
 import type { CheckResult } from '../../worker/src/checks.js';
 import { legacyRoles, nanos, reserveAmount, type Role, type Snapshot, type ModelUsage } from '../../worker/src/models.js';
+import { nextFire } from './schedule-time.js';
 
 function key() {
   const value = process.env.CREDENTIAL_KEY;
@@ -25,6 +26,80 @@ export function decrypt<T>(value: string): T {
 
 export class Repository {
   constructor(readonly pool: pg.Pool) {}
+  async schedules() { return (await this.pool.query('SELECT id,definition,next_fire_at AS "nextFireAt",paused,created_at AS "createdAt" FROM schedules WHERE NOT deleted ORDER BY created_at DESC')).rows; }
+  async occurrences(scheduleId: string) { return (await this.pool.query('SELECT id,scheduled_for AS "scheduledFor",run_id AS "runId",state,reason FROM schedule_occurrences WHERE schedule_id=$1 ORDER BY scheduled_for DESC LIMIT 100', [scheduleId])).rows; }
+  async isScheduled(runId: string) { return !!(await this.pool.query('SELECT 1 FROM schedule_occurrences WHERE run_id=$1', [runId])).rowCount; }
+  async saveSchedule(input: ScheduleInput, models: Snapshot, now = new Date(), id?: string) {
+    const run = input.run.input;
+    const assigned = input.run.kind === 'selected' ? input.run.input.roles ?? legacyRoles(input.run.input.model!) : input.run.input.roles;
+    if (!assigned || JSON.stringify(models.roles) !== JSON.stringify(assigned)) throw new Error('Model snapshot mismatch');
+    for (const [role, selection] of Object.entries(assigned)) if (selection.provider === 'openrouter') {
+      const price = models.pricing[role as Role];
+      if (!price || !run.openRouterCapUsd) throw new Error('Verified pricing and paid cap required');
+      reserveAmount(price, selection.maxOutputTokens);
+    }
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      if (id && !(await db.query('SELECT 1 FROM schedules WHERE id=$1 AND NOT deleted FOR UPDATE', [id])).rowCount) { await db.query('ROLLBACK'); return null; }
+      if (!(await db.query('SELECT 1 FROM targets WHERE id=$1', [run.targetId])).rowCount) throw new Error('Target unavailable');
+      const ids = input.run.kind === 'selected' ? [input.run.input.caseId] : input.run.input.caseIds;
+      const saved = await db.query('SELECT id,definition FROM cases WHERE id=ANY($1::uuid[])', [ids]);
+      if (saved.rowCount !== ids.length) throw new Error('Case unavailable');
+      if (input.run.kind === 'adaptive' && input.run.input.categories.some(c => !saved.rows.some(row => (row.definition.category ?? 'prompt_injection') === c))) throw new Error('Category has no seed case');
+      for (const row of saved.rows) for (const action of (row.definition as CaseInput).actions) if (action.kind === 'attach_pdf' && !(await db.query('SELECT 1 FROM artifacts WHERE id=$2 AND document_type=$3 AND (case_id=$1 OR EXISTS (SELECT 1 FROM case_artifact_links WHERE case_id=$1 AND artifact_id=$2))', [row.id, action.artifactId, action.documentType])).rowCount) throw new Error('Artifact unavailable');
+      const prepared = input.run.kind === 'selected' ? { ...input.run.input, case: saved.rows[0].definition } : { ollamaUrl: run.ollamaUrl, adaptive: { categories: input.run.input.categories, maxCases: input.run.input.maxCases, maxMinutes: input.run.input.maxMinutes, seeds: ids.map(caseId => ({ id: caseId, definition: saved.rows.find(row => row.id === caseId)!.definition })) } };
+      const next = nextFire(input, now);
+      const scheduleId = id ?? randomUUID();
+      if (id) await db.query('UPDATE schedules SET definition=$2,run_snapshot=$3,model_snapshot=$4,next_fire_at=$5 WHERE id=$1', [id, input, prepared, models, next]);
+      else await db.query('INSERT INTO schedules(id,definition,run_snapshot,model_snapshot,next_fire_at) VALUES ($1,$2,$3,$4,$5)', [scheduleId, input, prepared, models, next]);
+      await db.query('COMMIT');
+      return { id: scheduleId, nextFireAt: next.toISOString() };
+    } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
+  }
+  async scheduleState(id: string, paused: boolean, now = new Date()) {
+    const db = await this.pool.connect();
+    try {
+      await db.query('BEGIN');
+      const row = (await db.query('SELECT definition,next_fire_at FROM schedules WHERE id=$1 AND NOT deleted FOR UPDATE', [id])).rows[0];
+      if (!row) { await db.query('ROLLBACK'); return null; }
+      const next = !paused && new Date(row.next_fire_at) <= now ? nextFire(row.definition as ScheduleInput, now) : new Date(row.next_fire_at);
+      await db.query('UPDATE schedules SET paused=$2,next_fire_at=$3 WHERE id=$1', [id, paused, next]);
+      await db.query('COMMIT');
+      return { id, paused, nextFireAt: next.toISOString() };
+    } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
+  }
+  async deleteSchedule(id: string) { return (await this.pool.query('UPDATE schedules SET deleted=true WHERE id=$1 AND NOT deleted RETURNING id', [id])).rowCount !== 0; }
+  async tick(now = new Date()) {
+    const processed: { id: string; state: string; runId?: string }[] = [];
+    for (;;) {
+      const db = await this.pool.connect();
+      try {
+        await db.query('BEGIN');
+        const schedule = (await db.query('SELECT * FROM schedules WHERE NOT paused AND NOT deleted AND next_fire_at<=$1 AND NOT (id=ANY($2::uuid[])) ORDER BY next_fire_at FOR UPDATE SKIP LOCKED LIMIT 1', [now, processed.map(p => p.id)])).rows[0];
+        if (!schedule) { await db.query('COMMIT'); break; }
+        const due = new Date(schedule.next_fire_at);
+        const next = nextFire(schedule.definition as ScheduleInput, now);
+        const input = (schedule.definition as ScheduleInput).run.input;
+        const target = (await db.query('SELECT id,name,base_url,active_run_id,user_a_credential,user_b_credential FROM targets WHERE id=$1 FOR UPDATE', [input.targetId])).rows[0];
+        let state = 'queued', reason: string | null = null, runId: string | null = null;
+        if (!target) { state = 'blocked'; reason = 'Target unavailable'; }
+        else if (target.active_run_id) { state = 'skipped'; reason = `Target reserved by run ${target.active_run_id}`; }
+        else {
+          runId = randomUUID();
+          const selected = (schedule.run_snapshot as { case?: CaseInput; adaptive?: unknown; ollamaUrl: string });
+          await db.query('INSERT INTO runs(id,target_id,case_id,definition,target_snapshot,model_snapshot,paid_cap_nanos,adaptive) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [runId, target.id, selected.case ? (input as StartInput).caseId : null, selected.case ? selected : { ollamaUrl: selected.ollamaUrl }, { name: target.name, baseUrl: target.base_url, userARef: target.user_a_credential, userBRef: target.user_b_credential }, schedule.model_snapshot, input.openRouterCapUsd === undefined ? null : nanos(input.openRouterCapUsd).toString(), selected.adaptive ?? null]);
+          await db.query('INSERT INTO jobs(run_id) VALUES ($1)', [runId]);
+          await db.query('UPDATE targets SET active_run_id=$1 WHERE id=$2', [runId, target.id]);
+        }
+        await db.query('INSERT INTO schedule_occurrences(id,schedule_id,scheduled_for,run_id,state,reason) VALUES ($1,$2,$3,$4,$5,$6)', [randomUUID(), schedule.id, due, runId, state, reason]);
+        await db.query('UPDATE schedules SET next_fire_at=$2 WHERE id=$1', [schedule.id, next]);
+        await db.query('COMMIT');
+        processed.push({ id: schedule.id, state, ...(runId ? { runId } : {}) });
+      } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
+    }
+    return processed;
+  }
   async target(input: TargetInput) {
     const db = await this.pool.connect();
     try {
@@ -241,6 +316,7 @@ export class Repository {
       const row = (await db.query("SELECT id FROM runs WHERE status='queued' ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1")).rows[0];
       if (!row) { await db.query('COMMIT'); return null; }
       const run = (await db.query("UPDATE runs SET status='running',started_at=now(), lease_owner=$2,lease_generation=lease_generation+1,lease_until=now()+interval '60 seconds' WHERE id=$1 RETURNING *", [row.id, owner])).rows[0];
+      await db.query("UPDATE schedule_occurrences SET state='running' WHERE run_id=$1 AND state='queued'", [row.id]);
       await db.query('COMMIT');
       return run as { id: string; target_id: string; case_id: string | null; lease_generation: number; definition: StartInput & { case: CaseInput }; adaptive: { categories: NonNullable<CaseInput['category']>[]; maxCases: number; maxMinutes: number; seeds: { id: string; definition: CaseInput }[] } | null; model_snapshot: Snapshot; target_snapshot: { baseUrl: string; userARef: string; userBRef: string }; started_at: Date };
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
@@ -276,6 +352,7 @@ export class Repository {
         await db.query('INSERT INTO candidates(id,run_id,state,decision_route,decided_at) VALUES ($1,$2,$3,$4,$5)', [candidate, id, result === 'auto_confirm' ? 'confirmed' : 'pending_review', result === 'auto_confirm' ? 'automatic' : null, result === 'auto_confirm' ? new Date() : null]);
         if (result === 'auto_confirm') await this.insertRegression(db, candidate, id);
       }
+      await db.query("UPDATE schedule_occurrences SET state=CASE WHEN $2='blocked' THEN 'blocked' ELSE 'finished' END,reason=CASE WHEN $2='blocked' THEN 'Target/login/chart preflight unavailable' ELSE NULL END WHERE run_id=$1", [id, row.outcome]);
       await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [row.target_id, id]);
       await db.query('COMMIT');
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
@@ -336,6 +413,7 @@ export class Repository {
       for (const row of rows) {
         await db.query("UPDATE model_calls SET status='unresolved' WHERE run_id=$1 AND status='reserved'", [row.id]);
         await db.query("UPDATE adaptive_cases SET state='incomplete',finished_at=now(),reason='Lease expired' WHERE run_id=$1 AND state IN ('proposed','executing')", [row.id]);
+        await db.query("UPDATE schedule_occurrences SET state='blocked',reason='Worker lease expired; execution uncertain' WHERE run_id=$1", [row.id]);
         await db.query('UPDATE targets SET active_run_id=NULL WHERE id=$1 AND active_run_id=$2', [row.target_id, row.id]);
       }
       await db.query('COMMIT');

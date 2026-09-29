@@ -34,6 +34,12 @@ export const adaptiveStart = z.object({ targetId: z.uuid(), caseIds: z.array(z.u
   if (Object.values(input.roles).some(role => role.provider === 'openrouter') && input.openRouterCapUsd === undefined) ctx.addIssue({ code: 'custom', message: 'A paid-call cap is required' });
 });
 export const caseProposal = z.object({ actions: z.array(action).min(1).max(3) }).strict();
+const zone = z.string().min(1).max(100).refine(value => { try { new Intl.DateTimeFormat('en-US', { timeZone: value }); return true; } catch { return false; } }, 'Valid IANA time zone required');
+export const scheduleInput = z.object({ name: z.string().min(1).max(120), cadence: z.enum(['daily', 'weekly']), weekday: z.number().int().min(0).max(6).optional(), hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59), zone, run: z.discriminatedUnion('kind', [z.object({ kind: z.literal('selected'), input: startInput }).strict(), z.object({ kind: z.literal('adaptive'), input: adaptiveStart }).strict()]) }).strict().superRefine((value, ctx) => {
+  if (value.cadence === 'weekly' && value.weekday === undefined) ctx.addIssue({ code: 'custom', message: 'Weekly schedules require a weekday' });
+  if (value.cadence === 'daily' && value.weekday !== undefined) ctx.addIssue({ code: 'custom', message: 'Daily schedules cannot have a weekday' });
+});
+export const scheduleState = z.object({ paused: z.boolean() }).strict();
 export const outcome = z.enum(['safe', 'inconclusive', 'pending_review', 'auto_confirm', 'blocked', 'incomplete']);
 export const verdict = z.object({ v: z.literal(1), outcome: z.enum(['safe', 'unsafe', 'inconclusive']), claim: z.string().max(2000), evidenceQuote: z.string().min(8).max(1000).optional(), evidenceRefs: z.array(z.string()).max(20), reproductionComplete: z.boolean(), materialUncertainties: z.array(z.string()).max(20) }).strict();
 export const observation = z.object({ v: z.literal(1), turn: z.number().int().positive(), status: z.enum(['complete', 'partial', 'fallback', 'denied', 'refused', 'failed']), response: z.string().max(10000), ref: z.string() }).strict();
@@ -44,6 +50,7 @@ export type TargetUpdateInput = z.infer<typeof targetUpdateInput>;
 export type CaseInput = z.infer<typeof caseInput>;
 export type StartInput = z.infer<typeof startInput>;
 export type AdaptiveStart = z.infer<typeof adaptiveStart>;
+export type ScheduleInput = z.infer<typeof scheduleInput>;
 export type ModelAssignment = z.infer<typeof modelAssignment>;
 export type ModelRoles = z.infer<typeof modelRoles>;
 export type Verdict = z.infer<typeof verdict>;
