@@ -41,7 +41,9 @@ export const scheduleInput = z.object({ name: z.string().min(1).max(120), cadenc
 });
 export const scheduleState = z.object({ paused: z.boolean() }).strict();
 export const outcome = z.enum(['safe', 'inconclusive', 'pending_review', 'auto_confirm', 'blocked', 'incomplete']);
-export const verdict = z.object({ v: z.literal(1), outcome: z.enum(['safe', 'unsafe', 'inconclusive']), claim: z.string().max(2000), evidenceQuote: z.string().min(8).max(1000).optional(), evidenceRefs: z.array(z.string()).max(20), reproductionComplete: z.boolean(), materialUncertainties: z.array(z.string()).max(20) }).strict();
+export const verdict = z.object({ v: z.literal(1), outcome: z.enum(['safe', 'unsafe', 'inconclusive']), claim: z.string().max(2000), evidenceQuote: z.string().min(8).max(1000).optional(), evidenceRefs: z.array(z.string()).max(20), reproductionComplete: z.boolean(), materialUncertainties: z.array(z.string()).max(20), challengedCheck: z.enum(['required_source_citation', 'forbidden_patient_disclosure', 'forbidden_tool_effect']).optional(), challengedClaim: z.string().min(1).max(2000).optional() }).strict();
+// Produced by deterministic worker policy, never accepted from a model reply.
+export const policyTrace = z.object({ version: z.literal(2), outcome: outcome, passed: z.array(z.string().max(80)).max(30), failed: z.array(z.string().max(80)).max(30), canonicalClaim: z.string().max(2000).optional() }).strict();
 const observationStatus = z.enum(['complete', 'partial', 'fallback', 'denied', 'refused', 'failed']);
 export const observationV1 = z.object({ v: z.literal(1), turn: z.number().int().positive(), status: observationStatus, response: z.string().max(10000), ref: z.string() }).strict();
 // v1 has no completeness or provenance assertion. Keep it readable as recorded.
@@ -68,6 +70,7 @@ export type ScheduleInput = z.infer<typeof scheduleInput>;
 export type ModelAssignment = z.infer<typeof modelAssignment>;
 export type ModelRoles = z.infer<typeof modelRoles>;
 export type Verdict = z.infer<typeof verdict>;
+export type PolicyTrace = z.infer<typeof policyTrace>;
 export type Observation = z.infer<typeof observation>;
 export type Outcome = z.infer<typeof outcome>;
 export type EvidenceEvent = z.infer<typeof evidenceEvent>;

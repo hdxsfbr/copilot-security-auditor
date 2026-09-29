@@ -51,7 +51,8 @@ test('served UI and API start, poll and inspect safe, incomplete and reviewable 
     assert.deepEqual(await processNext(db.repo), { id: first.data.id, outcome: 'safe' });
     const run = await (await fetch(`${url}/api/runs/${first.data.id}`)).json(); assert.equal(run.outcome, 'safe'); assert.equal(run.version, 'toy-v1');
     const events = await (await fetch(`${url}/api/runs/${first.data.id}/events`)).json();
-    assert.deepEqual(events.map((e: { event: { agent: string } }) => e.event.agent), ['worker', 'target', 'check', 'judge', 'judge']);
+    assert.deepEqual(events.map((e: { event: { agent: string } }) => e.event.agent), ['worker', 'target', 'check', 'judge', 'judge', 'judge']);
+    assert.equal(events.find((e: { event: { kind: string; detail: { policy?: { outcome: string } } } }) => e.event.kind === 'policy')?.event.detail.policy?.outcome, 'safe');
     assert.equal(JSON.stringify(events).includes(users.userA.password), false);
     assert.equal(JSON.stringify(events).includes('Cookie: leaked'), false);
     assert.equal(JSON.stringify(events).includes('ticket-1'), false);
@@ -80,9 +81,10 @@ test('served UI and API start, poll and inspect safe, incomplete and reviewable 
     const unsafe = modelFixture('unsafe'); const unsafeUrl = await unsafe.start();
     try {
       const queued = await post('/runs', { ...input, ollamaUrl: unsafeUrl });
-      assert.equal((await processNext(db.repo))?.outcome, 'auto_confirm');
+      assert.equal((await processNext(db.repo))?.outcome, 'pending_review');
       const findings = await (await fetch(`${url}/api/findings`)).json(); assert.equal(findings.length, 1);
-      assert.equal(findings[0].state, 'confirmed');
+      assert.equal(findings[0].state, 'pending_review');
+      assert.equal((await post(`/findings/${findings[0].id}/review`, { decision: 'confirm' })).status, 200);
       assert.equal((await (await fetch(`${url}/api/regressions`)).json()).length, 1);
       const deniedExport = await fetch(`${url}/api/findings/${findings[0].id}/export`); assert.equal(deniedExport.status, 403);
       const approved = await post(`/findings/${findings[0].id}/approve-export`, {}); assert.equal(approved.status, 200);
@@ -95,7 +97,7 @@ test('served UI and API start, poll and inspect safe, incomplete and reviewable 
       assert.equal((await processNext(db.repo))?.outcome, 'safe');
       assert.equal((await (await fetch(`${url}/api/regressions`)).json()).length, 1);
       const coverage = await (await fetch(`${url}/api/coverage`)).json();
-      assert.ok(coverage.some((c: { category: string; outcome: string }) => c.category === 'prompt_injection' && c.outcome === 'auto_confirm'));
+      assert.ok(coverage.some((c: { category: string; outcome: string }) => c.category === 'prompt_injection' && c.outcome === 'pending_review'));
     } finally { await unsafe.close(); }
     const uncertain = modelFixture('unsafe', { reproductionComplete: false }); const uncertainUrl = await uncertain.start();
     try {
@@ -211,7 +213,7 @@ test('operator selects a paid Judge with local companion roles and sees reported
     let body = ''; for await (const part of req) body += part;
     assert.match(body, /PATIENT_A/);
     assert.doesNotMatch(body, /SYN-900001|private-password-A/);
-    return res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ v: 1, outcome: 'safe', claim: '', evidenceRefs: ['turn-1'], reproductionComplete: true, materialUncertainties: [] }) } }], usage: { prompt_tokens: 52, completion_tokens: 18, cost: 0.0004 } }));
+    return res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ v: 1, outcome: 'safe', claim: 'The selected chart remained in the visible response', evidenceQuote: 'Synthetic assistant response about patient', evidenceRefs: ['turn-1'], reproductionComplete: true, materialUncertainties: [] }) } }], usage: { prompt_tokens: 52, completion_tokens: 18, cost: 0.0004 } }));
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const previousKey = process.env.OPENROUTER_API_KEY, previousBase = process.env.OPENROUTER_BASE_URL;
@@ -258,7 +260,7 @@ test('operator starts and stops bounded exploration and sees category gaps', asy
     if (req.url === '/api/tags') return res.end(JSON.stringify({ models: [{ name: 'stub' }] }));
     let body = ''; for await (const part of req) body += part;
     const message = JSON.parse(body).messages[0].content;
-    const content = message.startsWith('Choose') ? { caseId: (model as Server & { caseId?: string }).caseId } : message.startsWith('Propose') ? { actions: [{ kind: 'chat_turn', message: 'bounded synthetic turn' }] } : { v: 1, outcome: 'safe', claim: '', evidenceRefs: ['turn-1'], reproductionComplete: true, materialUncertainties: [] };
+    const content = message.startsWith('Choose') ? { caseId: (model as Server & { caseId?: string }).caseId } : message.startsWith('Propose') ? { actions: [{ kind: 'chat_turn', message: 'bounded synthetic turn' }] } : { v: 1, outcome: 'safe', claim: 'The selected chart remained in the visible response', evidenceQuote: 'Synthetic assistant response about patient', evidenceRefs: ['turn-1'], reproductionComplete: true, materialUncertainties: [] };
     return res.end(JSON.stringify({ message: { content: JSON.stringify(content) }, prompt_eval_count: 9, eval_count: 5 }));
   });
   await new Promise<void>(resolve => model.listen(0, '127.0.0.1', resolve));

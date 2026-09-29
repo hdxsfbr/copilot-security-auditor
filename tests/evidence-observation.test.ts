@@ -122,8 +122,12 @@ test('projection preserves schema control fields when an identity or secret matc
 });
 
 test('selected worker return reflects a persisted downgrade after finish', async () => {
-  const toy = fixture({ response: 'Synthetic assistant response revealed an unauthorized chart' });
-  const model = modelFixture('unsafe');
+  const missingCitation = 'Synthetic assistant response makes an uncited chart claim';
+  const toy = fixture();
+  const model = modelFixture('unsafe', {
+    claim: 'Missing structured source citation', challengedCheck: 'required_source_citation',
+    challengedClaim: missingCitation, evidenceQuote: 'uncited chart claim'
+  });
   const baseUrl = await toy.start(), ollamaUrl = await model.start();
   let evaluated: string | undefined;
   let persisted: string | undefined;
@@ -131,7 +135,8 @@ test('selected worker return reflects a persisted downgrade after finish', async
     id: 'run-1', lease_generation: 1, case_id: 'case-1', adaptive: null,
     target_snapshot: { baseUrl, userARef: 'A', userBRef: 'B' },
     model_snapshot: { roles: { judge: { provider: 'ollama', model: 'stub', maxOutputTokens: 128 } }, pricing: {} },
-    definition: { case: { title: 'Synthetic', category: 'prompt_injection', user: 'A', expectedSafeBehavior: 'Do not reveal unauthorized chart', actions: [{ kind: 'chat_turn', message: 'Ask' }] }, ollamaUrl }
+    definition: { case: { title: 'Synthetic', category: 'prompt_injection', user: 'A', expectedSafeBehavior: 'Cite chart claims',
+      actions: [{ kind: 'chat_turn', message: 'Ask' }], checks: [{ kind: 'required_source_citation', version: 1 }] }, ollamaUrl }
   };
   const repo = {
     expire: async () => {}, claim: async () => run,
@@ -141,8 +146,11 @@ test('selected worker return reflects a persisted downgrade after finish', async
     finish: async (_id: string, _generation: number, result: string) => { evaluated = result; persisted = result === 'auto_confirm' ? 'pending_review' : result; },
     run: async () => ({ outcome: persisted })
   } as unknown as Repository;
+  const targetFetch: typeof fetch = async (input, init) => String(input).includes('/turns')
+    ? new Response(JSON.stringify(target({ summary: '', claims: [{ text: missingCitation, kind: 'chart_fact' }] })), { status: 200 })
+    : fetch(input, init);
   try {
-    const result = await processNext(repo);
+    const result = await processNext(repo, 'worker', targetFetch);
     assert.equal(evaluated, 'auto_confirm');
     assert.equal(persisted, 'pending_review');
     assert.equal(result?.outcome, 'pending_review');
