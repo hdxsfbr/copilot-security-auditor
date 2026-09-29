@@ -40,6 +40,23 @@ test('a confirmed exploit drafts a redacted report with reproducible steps and s
   } finally { await db.close(); }
 });
 
+test('a human-confirmed finding whose stored policy predates the review reaches Documentation as pending_review, and a truncated reply is held, not drafted', async () => {
+  const db = await database();
+  try {
+    const found = await finding(db, { human: true, staleAutoPolicy: true });
+    const model = documentationModel();
+    assert.equal((await run(db, model.transport))!.state, 'completed');
+    const handoff = JSON.parse(model.requests[0].body.messages[1].content).handoff;
+    assert.deepEqual([handoff.basis, handoff.sourceOutcome, handoff.policy.outcome, handoff.policy.failed], ['human_confirmed', 'pending_review', 'pending_review', ['routed_to_human_review']]);
+    const [revision] = await revisions(db, found.candidateId);
+    assert.deepEqual([revision.content.facts.basis, revision.content.facts.policy.outcome], ['human_confirmed', 'auto_confirm']);
+    const truncated = await finding(db, { message: 'Truncated reply' });
+    const cut = (async () => new Response(JSON.stringify({ message: { content: '{"v":1,"title":' }, prompt_eval_count: 1, eval_count: 1 }))) as unknown as typeof fetch;
+    assert.equal((await run(db, cut))!.state, 'failed');
+    assert.deepEqual([(await job(db, truncated.jobId)).reason, (await revisions(db, truncated.candidateId)).length], ['invalid_output:unparseable', 0]);
+  } finally { await db.close(); }
+});
+
 test('invalid model output never creates a finding, a revision or unrecorded evidence, and the call stays attributed', async () => {
   const db = await database();
   try {

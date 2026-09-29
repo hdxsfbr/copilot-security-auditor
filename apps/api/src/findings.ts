@@ -94,7 +94,7 @@ export function buildFacts(evidence: FindingEvidence, redact: Redactor, extra: {
     rubric: definition.rubric ? { severity: definition.rubric.severity, severityRationale: definition.rubric.severityRationale, exploitabilityRationale: definition.rubric.exploitabilityRationale } : null,
     expectedSafeBehavior: definition.expectedSafeBehavior,
     reproduction: definition.actions.map((action, index) => ({ step: index + 1, kind: action.kind, instruction: action.message.replaceAll('{{OTHER_PATIENT_ID}}', otherPatient), ...(action.kind === 'attach_pdf' ? { attachment: { documentType: action.documentType, artifactId: action.artifactId } } : {}) })),
-    evidence: evidence.observations.map(item => ({ ref: item.ref, turn: item.turn, status: item.status, excerpt: item.response.slice(0, 3000) })),
+    evidence: evidence.observations.map(item => ({ ref: item.ref, turn: item.turn, status: item.status, excerpt: redact.text(item.response).slice(0, 3000) })),
     checks: (evidence.checks ?? []).map((check, index) => ({ ref: `check-${index + 1}`, kind: check.kind, outcome: check.outcome, coveredClaim: check.coveredClaim })),
     verdict: { outcome: verdict.outcome, claim: verdict.claim, evidenceQuote: verdict.evidenceQuote, evidenceRefs: verdict.evidenceRefs, reproductionComplete: verdict.reproductionComplete, materialUncertainties: verdict.materialUncertainties },
     policy: verdict.policy, status: 'open', validationHistory: extra.validationHistory }));

@@ -55,7 +55,8 @@ export function createDocumentationHandler(repo: Repository, modelFetch: typeof 
     catch (error) {
       // Only a provably unsent request settles at zero; a sent request with unknown outcome stays held as unresolved.
       if (error instanceof DeadlineExceeded && !error.info.attempted) await settleCall(callId, { latencyMs: 0, chargeNanos: '0' });
-      return failed(signal.aborted ? 'lease_lost' : error instanceof DeadlineExceeded ? 'model_timeout' : 'model_unavailable');
+      // A reply that arrived but is not JSON (for example truncated by the output bound) stays held like any sent request.
+      return failed(signal.aborted ? 'lease_lost' : error instanceof DeadlineExceeded ? 'model_timeout' : error instanceof SyntaxError || error instanceof Error && error.message === 'Model response invalid' ? 'invalid_output:unparseable' : 'model_unavailable');
     }
     if (!(await settleCall(callId, call.usage))) return failed('model_settlement_unresolved');
     // Never trust the model to redact: alias and scrub the reply, then validate the strict schema and every citation and quote.
