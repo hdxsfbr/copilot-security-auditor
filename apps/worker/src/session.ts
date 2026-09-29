@@ -1,4 +1,5 @@
 import type { Observation } from '../../../packages/contracts/src/index.js';
+import { createHash } from 'node:crypto';
 
 export type Identity = { username: string; password: string; pubpid: string };
 export class TargetFailure extends Error {
@@ -15,6 +16,7 @@ export class Session {
   private conversation = '';
   private issuedTickets: string[] = [];
   version = 'unknown';
+  assignedPid: number | null = null;
   constructor(readonly baseUrl: string, readonly user: Identity, readonly transport: typeof fetch = fetch) {}
   secrets() { return [this.user.password, this.csrf, ...this.cookies.values(), ...this.issuedTickets].filter(Boolean); }
   private url(path: string) { return new URL(path, this.baseUrl.replace(/\/?$/, '/')).toString(); }
@@ -32,11 +34,11 @@ export class Session {
   }
   private form(fields: Record<string, string>) { return new URLSearchParams(fields); }
   private jsonBody(fields: Record<string, string>): RequestInit { return { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(fields) }; }
-  private async resolvePid(): Promise<number> {
-    if (!/^[A-Za-z0-9-]{1,64}$/.test(this.user.pubpid)) throw new TargetFailure('blocked', 'Invalid external patient ID');
+  private async resolvePid(pubpid = this.user.pubpid): Promise<number> {
+    if (!/^[A-Za-z0-9-]{1,64}$/.test(pubpid)) throw new TargetFailure('blocked', 'Invalid external patient ID');
     // OpenEMR's authenticated patient finder: searchType=true uses LIKE without
     // a suffix; restrict sColumns to pubpid and require the full filtered count.
-    const query = new URLSearchParams({ sColumns: 'pubpid', sSearch: this.user.pubpid, searchType: 'true', iDisplayStart: '0', iDisplayLength: '2', sEcho: '1' });
+    const query = new URLSearchParams({ sColumns: 'pubpid', sSearch: pubpid, searchType: 'true', iDisplayStart: '0', iDisplayLength: '2', sEcho: '1' });
     const response = await this.request(`interface/main/finder/dynamic_finder_ajax.php?${query}`);
     if (!response.ok) throw new TargetFailure('blocked', 'External patient ID lookup unavailable');
     let data: Record<string, unknown>;
@@ -51,8 +53,23 @@ export class Session {
     const fields = row as Record<string, unknown>;
     const match = typeof fields.DT_RowId === 'string' ? /^pid_([1-9][0-9]*)$/.exec(fields.DT_RowId) : null;
     const pid = match ? Number(match[1]) : NaN;
-    if (fields['0'] !== this.user.pubpid || !Number.isSafeInteger(pid)) throw new TargetFailure('blocked', 'External patient ID lookup mismatch');
+    if (fields['0'] !== pubpid || !Number.isSafeInteger(pid)) throw new TargetFailure('blocked', 'External patient ID lookup mismatch');
     return pid;
+  }
+  async cannotAccess(pubpid: string) {
+    try { await this.resolvePid(pubpid); return false; }
+    catch (e) { if (e instanceof TargetFailure && e.message === 'External patient ID not uniquely resolved') return true; throw e; }
+  }
+  async chartReportFingerprint(): Promise<string | null> {
+    if (this.assignedPid === null) return null;
+    try {
+      const response = await this.request('interface/patient_file/report/patient_report.php');
+      if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) return null;
+      if (Number(response.headers.get('content-length') ?? 0) > 2_000_000) return null;
+      const html = await response.text();
+      if (!html || html.length > 2_000_000 || !/\border(?:s|ing)?\b/i.test(html)) return null;
+      return createHash('sha256').update(html).digest('hex');
+    } catch { return null; }
   }
   private async json(response: Response): Promise<Record<string, unknown>> {
     try { const value: unknown = await response.json(); if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>; }
@@ -68,6 +85,7 @@ export class Session {
       });
       if (login.status !== 302) throw new TargetFailure('blocked', 'Test user login failed');
       const pid = await this.resolvePid();
+      this.assignedPid = pid;
       const chart = await this.request(`interface/patient_file/summary/demographics.php?set_pid=${pid}`);
       if (!chart.ok) throw new TargetFailure('blocked', 'Assigned chart unavailable');
       const session = await this.request('interface/modules/custom_modules/oe-module-copilot/public/api/session.php');
@@ -92,7 +110,24 @@ export class Session {
     this.issuedTickets.push(data.token);
     return data.token;
   }
-  async turn(message: string, turn: number): Promise<{ observation: Observation; attempts: Attempt[] }> {
+  async upload(documentType: 'lab_pdf' | 'intake_form', bytes: Buffer) {
+    const base = 'interface/modules/custom_modules/oe-module-copilot/public/api/';
+    const intent = await this.request(`${base}document_intent.php`, this.jsonBody({ csrf_token: this.csrf, document_type: documentType }));
+    if (!intent.ok) throw new TargetFailure('incomplete', 'Document intent rejected');
+    const data = await this.json(intent);
+    if (typeof data.intent_id !== 'string' || !/^[a-f0-9]{32}$/.test(data.intent_id)) throw new TargetFailure('incomplete', 'Invalid document intent');
+    const form = new FormData(); form.set('csrf_token', this.csrf); form.set('intent_id', data.intent_id);
+    form.set('document', new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }), 'synthetic.pdf');
+    let response: Response;
+    try { response = await this.request(`${base}document_upload.php`, { method: 'POST', body: form }); }
+    catch { throw new TargetFailure('incomplete', 'Document upload delivery uncertain'); }
+    if (response.status !== 200 && response.status !== 201) throw new TargetFailure('incomplete', 'Document upload rejected');
+    const uploaded = await this.json(response);
+    const source = uploaded.source;
+    if (!source || typeof source !== 'object' || !('source_id' in source) || typeof source.source_id !== 'string' || !/^[\w-]{1,120}$/.test(source.source_id)) throw new TargetFailure('incomplete', 'Invalid document source');
+    return source.source_id;
+  }
+  async turn(message: string, turn: number, sourceId?: string): Promise<{ observation: Observation; attempts: Attempt[] }> {
     if (!this.conversation || message.length < 1 || message.length > 1000) throw new TargetFailure('incomplete', 'Invalid turn');
     const attempts: Attempt[] = [];
     for (let number = 1; number <= 2; number++) {
@@ -101,7 +136,7 @@ export class Session {
       try {
         response = await this.request(`copilot-api/v1/conversations/${this.conversation}/turns`, {
           method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Copilot-Token': token },
-          body: JSON.stringify({ message, stream: false })
+          body: JSON.stringify({ message, ...(sourceId ? { attachment: { source_id: sourceId } } : {}), stream: false })
         });
       } catch { attempts.push({ number, outcome: 'ambiguous' }); throw new TurnFailure(attempts); }
       if (!response.ok) {
@@ -128,6 +163,6 @@ export class Session {
       try { await this.request('interface/modules/custom_modules/oe-module-copilot/public/api/conversation.php', this.jsonBody({ action: 'end', csrf_token: this.csrf, conversation_id: this.conversation })); }
       catch { /* best-effort cleanup; caller records case outcome separately */ }
     }
-    this.cookies.clear(); this.csrf = ''; this.conversation = ''; this.issuedTickets = [];
+    this.cookies.clear(); this.csrf = ''; this.conversation = ''; this.assignedPid = null; this.issuedTickets = [];
   }
 }

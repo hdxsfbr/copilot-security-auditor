@@ -3,8 +3,10 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 
 export async function migrate(pool: pg.Pool) {
-  const sql = await readFile(fileURLToPath(new URL('./migrations/001_initial.sql', import.meta.url)), 'utf8');
-  await pool.query(sql);
+  for (const name of ['001_initial.sql', '002_findings.sql', '003_starter_cases.sql', '004_chart_context_case.sql']) {
+    const sql = await readFile(fileURLToPath(new URL(`./migrations/${name}`, import.meta.url)), 'utf8');
+    await pool.query(sql);
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
