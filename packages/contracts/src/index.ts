@@ -1,6 +1,7 @@
 import { z } from 'zod';
 export * from './coverage.js';
 export * from './regressions.js';
+export * from './spend.js';
 
 const identityFields = { username: z.string().min(1).max(100), pubpid: z.string().regex(/^[A-Za-z0-9-]{1,64}$/, 'Use the exact external patient ID without search wildcards') };
 export const identity = z.object({ ...identityFields, password: z.string().min(1) }).strict();

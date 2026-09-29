@@ -14,6 +14,7 @@ import { ReportRevisions } from './report-revisions.js';
 import { backfillRegressionIdentities, linkRegressionIdentity, recordReplayLaunch, settleReplay } from './regression-identity.js';
 import type { ReviewRationale } from '../../../packages/contracts/src/report.js';
 import type { ReplayTrigger } from '../../../packages/contracts/src/regressions.js';
+import { SpendStore } from './spend.js';
 
 export type CandidateIntegrity = {
   status: 'complete' | 'missing' | 'corrupt' | 'unlinked' | 'invalid_definition' | 'unavailable';
@@ -87,7 +88,8 @@ export function decrypt<T>(value: string): T {
 export class Repository {
   readonly reports: ReportJobStore;
   readonly reportRevisions: ReportRevisions;
-  constructor(readonly pool: pg.Pool) { this.reports = new ReportJobStore(pool); this.reportRevisions = new ReportRevisions(this); }
+  readonly spend: SpendStore;
+  constructor(readonly pool: pg.Pool) { this.reports = new ReportJobStore(pool); this.reportRevisions = new ReportRevisions(this); this.spend = new SpendStore(pool); }
   async runHistory(limit = 25, cursor?: string) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid run history limit');
     const after = decodeRunCursor(cursor);
@@ -581,7 +583,7 @@ export class Repository {
       eventIds: events.map(event => event.id as string), eventLinkage: events.length ? 'tagged' as const : 'unknown' as const };
   }
   async usage(id: string) {
-    return (await this.pool.query('SELECT id,role,provider,model,status,reserved_nanos::text AS "reservedNanos",charge_nanos::text AS "chargeNanos",input_tokens AS "inputTokens",output_tokens AS "outputTokens",latency_ms AS "latencyMs" FROM model_calls WHERE run_id=$1 ORDER BY created_at,id', [id])).rows;
+    return (await this.pool.query('SELECT m.id,m.role,m.provider,m.model,m.status,m.reserved_nanos::text AS "reservedNanos",m.charge_nanos::text AS "chargeNanos",m.input_tokens AS "inputTokens",m.output_tokens AS "outputTokens",m.latency_ms AS "latencyMs",m.provider_generation_id AS "providerGenerationId",m.report_job_id AS "reportJobId",(x.id IS NOT NULL) AS reconciled FROM model_calls m LEFT JOIN spend_reconciliations x ON x.call_id=m.id WHERE m.run_id=$1 ORDER BY m.created_at,m.id', [id])).rows;
   }
   async reserveCall(id: string, generation: number, role: Role, provider: 'ollama' | 'openrouter', model: string, amount: bigint) {
     const db = await this.pool.connect();
@@ -611,7 +613,7 @@ export class Repository {
       if (!call) throw new Error('Call not reserved');
       const measured = usage?.chargeNanos;
       const resolved = !!usage && (call.provider === 'ollama' || measured !== null && measured !== undefined && BigInt(measured) <= BigInt(call.reserved_nanos));
-      await db.query('UPDATE model_calls SET status=$2,charge_nanos=$3,input_tokens=$4,output_tokens=$5,latency_ms=$6,completed_at=now() WHERE id=$1', [callId, resolved ? 'settled' : 'unresolved', call.provider === 'ollama' ? null : measured ?? null, usage?.inputTokens ?? null, usage?.outputTokens ?? null, usage?.latencyMs ?? null]);
+      await db.query('UPDATE model_calls SET status=$2,charge_nanos=$3,input_tokens=$4,output_tokens=$5,latency_ms=$6,provider_generation_id=$7,completed_at=now() WHERE id=$1', [callId, resolved ? 'settled' : 'unresolved', call.provider === 'ollama' ? null : measured ?? null, usage?.inputTokens ?? null, usage?.outputTokens ?? null, usage?.latencyMs ?? null, call.provider === 'ollama' ? null : usage?.generationId ?? null]);
       await db.query('COMMIT');
       return resolved;
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }

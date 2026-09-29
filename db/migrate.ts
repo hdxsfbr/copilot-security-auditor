@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 
-export const migrationNames = ['001_initial.sql', '002_findings.sql', '003_starter_cases.sql', '004_chart_context_case.sql', '005_model_spend.sql', '006_adaptive.sql', '007_schedules.sql', '008_migration_ledger.sql', '009_candidate_integrity.sql', '010_case_lifecycle.sql', '011_versioned_starter_matrix.sql', '012_run_definitions.sql', '013_run_history_index.sql', '014_worker_instances.sql', '015_report_jobs.sql', '018_finding_reports.sql', '019_regression_identities.sql', '022_schedule_archive_source.sql'];
+export const migrationNames = ['001_initial.sql', '002_findings.sql', '003_starter_cases.sql', '004_chart_context_case.sql', '005_model_spend.sql', '006_adaptive.sql', '007_schedules.sql', '008_migration_ledger.sql', '009_candidate_integrity.sql', '010_case_lifecycle.sql', '011_versioned_starter_matrix.sql', '012_run_definitions.sql', '013_run_history_index.sql', '014_worker_instances.sql', '015_report_jobs.sql', '017_spend_reconciliation.sql', '018_finding_reports.sql', '019_regression_identities.sql', '022_schedule_archive_source.sql'];
 
 export async function migrate(pool: pg.Pool) {
   for (const name of migrationNames) {
