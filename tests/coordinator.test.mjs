@@ -160,6 +160,28 @@ test('linked MR hydration requires authoritative pipeline detail', () => {
   assert.throws(() => hydrateLinkedMrs(state, list, () => { throw new Error('GitLab unavailable'); }), /GitLab unavailable/);
 });
 
+test('runner exception permits only pending CI with authorized current-head local evidence', () => {
+  const m = manifest([task('A'), task('B', ['A']), task('Q03', [], [], 'runner')]);
+  m.validationPolicy = { runnerUnavailable: { authorized: true, authorizedOn: '2026-09-29', untilTask: 'Q03' } };
+  const entry = { ...checked(1), ciException: { kind: 'runner_unavailable', authorizedOn: '2026-09-29', headSha: A, evidence: 'test-results/runner.json' } };
+  entry.validation.checks = [{ name: 'fixture pipeline', exitCode: 0, evidence: 'test-results/fixtures.txt' }];
+  const run = (candidate = entry, status = 'pending', sha = A, extraState = {}, extraMrs = []) =>
+    computeSnapshot(m, journal({ A: candidate, ...extraState }),
+      [mr(1, 'A', 'merged', { head_pipeline: { status, sha } }), ...extraMrs], () => true);
+  assert.deepEqual(run().ready, ['B']);
+  assert.match(run().warnings.join(' '), /remote CI awaits runner/);
+  for (const status of ['failed', 'running', 'canceled', 'skipped']) assert.deepEqual(run(entry, status).ready, []);
+  assert.deepEqual(run(entry, 'pending', C).ready, []);
+  assert.deepEqual(run({ ...entry, ciException: undefined }).ready, []);
+  assert.deepEqual(run({ ...entry, ciException: { ...entry.ciException, headSha: C } }).ready, []);
+  assert.deepEqual(run({ ...entry, validation: { ...entry.validation, checks: [] } }).ready, []);
+  assert.deepEqual(run({ ...entry, validation: { ...entry.validation, passed: false } }).ready, []);
+  assert.deepEqual(run({ ...entry, validation: { ...entry.validation, checks: [{ name: 'fixtures', exitCode: 1, evidence: 'test-results/failed.txt' }] } }).ready, []);
+  assert.deepEqual(run(entry, 'pending', A, { Q03: checked(3) }, [mr(3, 'Q03', 'merged')]).ready, []);
+  delete m.validationPolicy;
+  assert.deepEqual(run().ready, []);
+});
+
 test('dependency IDs in an MR description do not claim that dependency', () => {
   const tasks = [task('A'), task('B', ['A'])];
   const result = snapshot(tasks, {}, [mr(2, 'B', 'opened', { description: 'Depends on AUD-A' })]);

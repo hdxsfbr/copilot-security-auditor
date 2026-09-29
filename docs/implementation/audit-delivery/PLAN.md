@@ -144,8 +144,10 @@ Waves group outcomes. **Dependencies and locks control dispatch; a whole wave is
 | [L01 · HDX-35](https://linear.app/hdxsfbr/issue/HDX-35/l01-run-explicitly-authorized-live-synthetic-acceptance) | W6 | Run explicitly authorized live synthetic acceptance | Sol | Q02 |
 | [I01 · HDX-36](https://linear.app/hdxsfbr/issue/HDX-36/i01-complete-peer-integration-proof-and-security-review-evidence) | W6 | Complete peer integration proof and security-review evidence packet | Sol | Q02, B02, B01, K01 |
 | [L02 · HDX-37](https://linear.app/hdxsfbr/issue/HDX-37/l02-run-explicitly-authorized-100-case-live-performance-acceptance) | W6 | Run explicitly authorized 100-case live performance acceptance | Sol | L01, P01 |
+| [Q03 · HDX-40](https://linear.app/hdxsfbr/issue/HDX-40/q03-provide-a-working-gitlab-runner-and-verify-the-fixture-pipeline) | W2 | Provide a working GitLab runner and verify the fixture pipeline | Sol | Q01 |
+| [D01 · HDX-41](https://linear.app/hdxsfbr/issue/HDX-41/d01-record-temporary-local-validation-policy-and-runner-blocker) | W0 | Record temporary local validation policy and runner blocker | coordinator | D00 |
 
-External gates L01, I01 and L02 are not automatically dispatchable merely because code dependencies merge. Prepare reusable documentation/contracts through B01, K01 and D02 while those requirements await operator input. B01's rubric register also tracks demo, deployed-target evidence, actual dev spend, social/interview and submission logistics; those are not silently treated as completed implementation tasks.
+External gates Q03, L01, I01 and L02 are not automatically dispatchable merely because code dependencies merge. Prepare reusable documentation/contracts through B01, K01 and D02 while those requirements await operator input. B01's rubric register also tracks demo, deployed-target evidence, actual dev spend, social/interview and submission logistics; those are not silently treated as completed implementation tasks.
 
 The initial sequence is:
 1. D00 publishes this baseline and monitor for user review.
@@ -183,7 +185,7 @@ A failed check gets at most two focused repair rounds per attempt. Record the fa
 A prerequisite unlock requires all of:
 - GitLab reports the issue's linked MR merged into main with a merge timestamp.
 - The merge/squash commit is an ancestor of freshly fetched `origin/main`.
-- Required local checks were recorded as passed for the exact MR head; a present pipeline must have a successful status.
+- Required local checks were recorded as passed for the exact MR head; a present pipeline must have a successful status, or the explicit temporary runner-unavailable policy below must apply.
 - No duplicate/open competing MR or contradictory state prevents reconciliation.
 
 An open MR with no journal entry blocks duplicate dispatch. A closed unmerged MR does not satisfy its issue. A Done label or forged journal `merged` flag is insufficient. New pushes invalidate old head-specific validation. Rebases/merges that change the tested revision need relevant checks again. Before launch, the root also checks Linear for cancellation/scope changes and reviews intervening main changes, including reverts; ancestry alone cannot prove a feature was not subsequently reverted.
@@ -210,6 +212,14 @@ node scripts/audit-coordinator.mjs --watch --interval 30
 During this active agent session, poll at 30-second intervals, report meaningful changes and dispatch newly eligible work. The resolver is quiet while state is unchanged. Reconcile Linear to Done only after verified merge/validation. Hold locks through review; release after verified merge or an explicitly reconciled cancellation/closure.
 
 **This session has no callable recurring-task/heartbeat tool.** The CLI watch process cannot wake a finished agent task or launch agents by itself. Automatic review-merge-dispatch therefore works while the coordinator session is active. After interruption, resume from the manifest, journal, Linear and GitLab before launching anything. No background daemon or scheduled task is claimed to have been created.
+
+### Temporary runner-unavailable policy (user decision, September 29)
+
+GitLab lists project runner 281 as never contacted; shared runners are disabled and no usable group runner was demonstrated. The user explicitly authorized **verified local checks temporarily**, with runner setup tracked as [Q03 / HDX-40](https://linear.app/hdxsfbr/issue/HDX-40). D01 / HDX-41 records this limited exception. Remote CI remains a submission gap until Q03 verifies a working runner and passing pipeline. No runner settings were changed.
+
+For a pending pipeline only, the root may record `ciException: { kind: "runner_unavailable", headSha, authorizedOn: "2026-09-29", evidence }` after verifying the runner blocker and all required local checks. `validation.checks` must list successful exit codes and concrete evidence paths, bound to the same MR head. The journal exception is a trusted coordinator attestation, like the local validation record. It is never added automatically because a pipeline happens to be pending.
+
+The resolver still requires verified GitLab merge/main ancestry, exact-head local validation and a matching pipeline revision. Failed, running, canceled, skipped, stale or unavailable pipeline evidence cannot use this exception. The snapshot labels accepted local fallback explicitly. When Q03 has a merged MR (or is recorded merged), the exception stops applying; remove the policy and obsolete per-task exception records as part of that reconciliation. Null pipeline remains explicitly no remote pipeline, never claimed green.
 
 ## Validation and completion
 

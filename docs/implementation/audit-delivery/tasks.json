@@ -1342,6 +1342,79 @@
         "title": "[L02] Run explicitly authorized 100-case live performance acceptance",
         "url": "https://linear.app/hdxsfbr/issue/HDX-37/l02-run-explicitly-authorized-100-case-live-performance-acceptance"
       }
+    },
+    {
+      "key": "Q03",
+      "wave": "W2",
+      "title": "Provide a working GitLab runner and verify the fixture pipeline",
+      "model": "Sol",
+      "audit": [
+        "A15",
+        "A16"
+      ],
+      "deps": [
+        "Q01"
+      ],
+      "locks": [
+        "ci-harness"
+      ],
+      "files": [
+        ".gitlab-ci.yml",
+        "docs/implementation/validation.md"
+      ],
+      "gate": "Requires operator-provided or approved runner infrastructure. Only listed project runner 281 has never contacted GitLab; shared runners are disabled. Do not create infrastructure or use runner registration secrets without the required environment details.",
+      "scope": "Restore executable remote CI, then demonstrate the complete fixture pipeline on a known revision. User authorized verified local checks temporarily on 2026-09-29; this issue records the independent infrastructure gap and ends that exception when verified. Do not represent queued CI as successful or disable failing tests.",
+      "accept": [
+        "An online runner picks up this project's jobs and the full required pipeline passes on a known revision.",
+        "Validation docs and coordinator policy/journal remove the temporary runner-unavailable exception for subsequent work.",
+        "No real target or paid provider is invoked by CI."
+      ],
+      "linear": {
+        "id": "HDX-40",
+        "uuid": "fd924631-d77e-4e20-889d-aee0fba165b9",
+        "title": "[Q03] Provide a working GitLab runner and verify the fixture pipeline",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-40/q03-provide-a-working-gitlab-runner-and-verify-the-fixture-pipeline"
+      }
+    },
+    {
+      "key": "D01",
+      "wave": "W0",
+      "title": "Record temporary local validation policy and runner blocker",
+      "model": "coordinator",
+      "audit": [
+        "A15"
+      ],
+      "deps": [
+        "D00"
+      ],
+      "locks": [
+        "delivery-plan"
+      ],
+      "files": [
+        "docs/implementation/audit-delivery/",
+        "scripts/audit-coordinator.mjs",
+        "tests/coordinator.test.mjs"
+      ],
+      "scope": "Implement the user's explicit temporary local-check authorization while tracking unavailable GitLab runner infrastructure separately. Permit only an explicitly recorded runner-unavailable exception at the exact validated MR head, with concrete local-check evidence; failed/running/canceled/stale pipelines still block. Keep the ordinary strict rule after Q03 verification.",
+      "accept": [
+        "Missing/stale exception or failed local validation cannot unlock a task.",
+        "Pending CI due unavailable runner can use the user-authorized exact-head local evidence; failed CI cannot.",
+        "All tasks and native Linear dependencies remain reconciled; no automatic merge or runner-setting changes."
+      ],
+      "linear": {
+        "id": "HDX-41",
+        "uuid": "be175af3-e644-424d-8ae2-b291d41b6d01",
+        "title": "[D01] Record temporary local validation policy and runner blocker",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-41/d01-record-temporary-local-validation-policy-and-runner-blocker"
+      }
     }
-  ]
+  ],
+  "validationPolicy": {
+    "runnerUnavailable": {
+      "authorized": true,
+      "authorizedOn": "2026-09-29",
+      "untilTask": "Q03",
+      "reason": "User explicitly chose verified local checks temporarily while runner setup is tracked separately."
+    }
+  }
 }
