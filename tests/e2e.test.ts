@@ -180,7 +180,9 @@ test('operator UI authors a case, replays it, reviews a finding and sees its rep
     assert.equal((await processNext(db.repo))?.outcome, 'inconclusive');
     await page.locator('.evidence .status').filter({ hasText: 'finished / inconclusive' }).waitFor();
     await page.getByRole('link', { name: 'Coverage' }).click();
-    await page.getByText('Untested / coverage gap').first().waitFor();
+    // The scoped coverage page names the inconclusive run's gap and keeps the never-attempted categories as untested gaps.
+    await page.locator('.cov-scope .cov-gap', { hasText: 'Inconclusive' }).first().waitFor();
+    await page.locator('.cov-scope .cov-gap', { hasText: 'Untested' }).first().waitFor();
     const pending = await db.repo.start({ targetId: target.id, caseId: authored.id, model: 'stub', ollamaUrl: uncertainUrl });
     assert.ok(pending && 'id' in pending);
     assert.equal((await processNext(db.repo))?.outcome, 'pending_review');

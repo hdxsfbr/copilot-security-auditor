@@ -62,7 +62,6 @@ type Regression = {
   definition: { title: string };
   replays: { runId: string; version: string | null; outcome: string }[];
 };
-type Coverage = { category: string; outcome: string; count: number };
 const isString = (value: unknown): value is string => typeof value === "string";
 const isNullableString = (value: unknown): value is string | null => value === null || isString(value);
 const isTarget = (value: unknown): value is Target => isRecord(value) && isString(value.id) && isString(value.name) && isString(value.baseUrl) && isNullableString(value.activeRunId);
@@ -70,7 +69,6 @@ const isEditableTarget = (value: unknown): value is EditableTarget => isRecord(v
 const isCase = (value: unknown): value is Case => isRecord(value) && isString(value.id) && isString(value.title) && isString(value.user) && isString(value.expectedSafeBehavior) && Array.isArray(value.actions) && value.actions.every(action => isRecord(action) && isString(action.kind) && isString(action.message));
 const isFinding = (value: unknown): value is Finding => isRecord(value) && isString(value.id) && isString(value.runId) && isString(value.state) && isString(value.title) && isNullableString(value.version) && isNullableString(value.decisionRoute) && isNullableString(value.exportApprovedAt);
 const isRegression = (value: unknown): value is Regression => isRecord(value) && isString(value.id) && isString(value.sourceRunId) && isNullableString(value.version) && isRecord(value.definition) && isString(value.definition.title) && Array.isArray(value.replays) && value.replays.every(replay => isRecord(replay) && isString(replay.runId) && isNullableString(replay.version) && isString(replay.outcome));
-const isCoverage = (value: unknown): value is Coverage => isRecord(value) && isString(value.category) && isString(value.outcome) && typeof value.count === "number";
 const isSavedCase = (v: unknown): v is NonNullable<Run["caseSnapshot"]> => isRecord(v) && isString(v.id) && isNullableString(v.familyId) && (v.version === null || Number.isInteger(v.version)) && (v.definition === null || isRecord(v.definition));
 const isSeed = (v: unknown): v is NonNullable<Run["adaptiveSeeds"]>[number] => isRecord(v) && isString(v.id) && isNullableString(v.familyId) && (v.version === null || Number.isInteger(v.version)) && isRecord(v.definition);
 const isRun = (value: unknown): value is Run => isRecord(value) && isString(value.id) && isString(value.status) && isNullableString(value.outcome) && isNullableString(value.version) && isString(value.model) && (value.caseId === undefined || isNullableString(value.caseId)) && (value.categories === undefined || value.categories === null || (Array.isArray(value.categories) && value.categories.every(isString))) && (value.stopRequested === undefined || typeof value.stopRequested === "boolean") && (value.mode === undefined || value.mode === "selected" || value.mode === "adaptive") && (value.target === undefined || (isRecord(value.target) && isString(value.target.id) && isNullableString(value.target.name) && isNullableString(value.target.version))) && (value.caseSnapshot === undefined || value.caseSnapshot === null || isSavedCase(value.caseSnapshot)) && (value.adaptiveSeeds === undefined || value.adaptiveSeeds === null || (Array.isArray(value.adaptiveSeeds) && value.adaptiveSeeds.every(isSeed))) && (value.modelSnapshot === undefined || value.modelSnapshot === null || (isRecord(value.modelSnapshot) && isRecord(value.modelSnapshot.roles) && isRecord(value.modelSnapshot.roles.judge) && isString(value.modelSnapshot.roles.judge.provider) && isString(value.modelSnapshot.roles.judge.model)));
@@ -78,7 +76,7 @@ const isConfig = (value: unknown): value is { ollamaUrl: string; model: string }
 const isSavedTarget = (value: unknown): value is Pick<Target, "id" | "name" | "baseUrl"> => isRecord(value) && isString(value.id) && isString(value.name) && isString(value.baseUrl);
 const isCaseSelection = (value: unknown): value is { caseId: string | null } => isRecord(value) && isNullableString(value.caseId);
 const isSelectedCase = (value: unknown): value is { caseId: string } => isRecord(value) && isString(value.caseId);
-const targetsGuard = isRecordArray(isTarget), casesGuard = isRecordArray(isCase), findingsGuard = isRecordArray(isFinding), regressionsGuard = isRecordArray(isRegression), coverageGuard = isRecordArray(isCoverage);
+const targetsGuard = isRecordArray(isTarget), casesGuard = isRecordArray(isCase), findingsGuard = isRecordArray(isFinding), regressionsGuard = isRecordArray(isRegression);
 const api = requestJson;
 export function useWorkspaceController(navigate: (path: string) => void) {
   const [targets, setTargets] = useState<Target[]>([]),
@@ -103,8 +101,7 @@ export function useWorkspaceController(navigate: (path: string) => void) {
   const [loadedTargetId, setLoadedTargetId] = useState("");
   const [targetLoadFailed, setTargetLoadFailed] = useState(false);
   const [findings, setFindings] = useState<Finding[]>([]),
-    [regressions, setRegressions] = useState<Regression[]>([]),
-    [coverage, setCoverage] = useState<Coverage[]>([]);
+    [regressions, setRegressions] = useState<Regression[]>([]);
   const [exported, setExported] = useState("");
   const [target, setTarget] = useState({
     name: "Toy Co-Pilot",
@@ -151,18 +148,16 @@ export function useWorkspaceController(navigate: (path: string) => void) {
   }, [editingTargetId]);
   const refresh = async () => {
     try {
-      const [t, c, f, r, gaps] = await Promise.all([
+      const [t, c, f, r] = await Promise.all([
         api("/targets", targetsGuard),
         api("/cases", casesGuard),
         api("/findings", findingsGuard),
         api("/regressions", regressionsGuard),
-        api("/coverage", coverageGuard),
       ]);
       setTargets(t);
       setCases(c);
       setFindings(f);
       setRegressions(r);
-      setCoverage(gaps);
       setRefreshError("");
       setTargetId((v) => (t.some((target) => target.id === v) ? v : ""));
       setCaseId((v) =>
@@ -319,7 +314,7 @@ export function useWorkspaceController(navigate: (path: string) => void) {
   return { targets, cases, run, events, notice, noticeKind, targetId, setTargetId, caseId, setCaseId,
     editingTargetId, setEditingTargetId, refreshError, configError, runError, caseHandoff,
     loadedTargetId, setLoadedTargetId, targetLoadFailed, setTargetLoadFailed,
-    findings, regressions, coverage, exported,
+    findings, regressions, exported,
     target, setTarget, model, ollamaUrl,
     setNotice, setNoticeKind, refresh, loadConfig, pollRun, submit, actOnFinding, saveTarget,
     openRun, deactivateRun, selectRun: openRun, selectRegression, navigate };
