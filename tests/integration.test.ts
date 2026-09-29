@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { migrate } from '../db/migrate.js';
 import { caseInput } from '../packages/contracts/src/index.js';
+import { legacyRoles, nanos, type Snapshot } from '../apps/worker/src/models.js';
 
 test('starter cases are valid, bounded, and idempotently installed', async () => {
   const db = await database();
@@ -194,4 +195,86 @@ test('target updates preserve historical credentials and reject changes while re
     assert.deepEqual(await repo.credential(refs.user_b_credential), { ...noPassword.userB, password: replacement.userB.password });
     assert.deepEqual((await repo.targetForEdit(target.id))?.userA, noPassword.userA);
   } finally { await db.close(); }
+});
+
+test('paid holds serialize under one cap; ambiguous billing blocks new paid calls', async () => {
+  const db = await database();
+  try {
+    const { input } = await seed(db.repo, 'http://example.test/', 'http://ollama.test/');
+    const roles = { ...legacyRoles('stub'), judge: { provider: 'openrouter' as const, model: 'test/paid', maxOutputTokens: 64 } };
+    const snapshot: Snapshot = { roles, pricing: { judge: { prompt: '0.000001', completion: '0.000002', request: '0', contextLength: 1000 } } };
+    const start = await db.repo.start({ targetId: input.targetId, caseId: input.caseId, ollamaUrl: input.ollamaUrl, roles, openRouterCapUsd: 0.002 }, snapshot);
+    assert.ok(start && 'id' in start);
+    const claimed = await db.repo.claim('paid-test'); assert.ok(claimed);
+    assert.deepEqual((await db.repo.run(start.id)).modelSnapshot, snapshot);
+    const attempts = await Promise.allSettled(Array.from({ length: 4 }, () => db.repo.reserveCall(start.id, claimed.lease_generation, 'judge', 'openrouter', 'test/paid', nanos('0.0012'))));
+    const allowed = attempts.filter(a => a.status === 'fulfilled');
+    assert.equal(allowed.length, 1);
+    assert.equal((await db.repo.usage(start.id))[0].status, 'reserved');
+    const callId = (allowed[0] as PromiseFulfilledResult<string>).value;
+    assert.equal(await db.repo.settleCall(start.id, claimed.lease_generation, callId, { inputTokens: 50, outputTokens: 20, latencyMs: 12, chargeNanos: nanos('0.0003').toString() }), true);
+    assert.equal((await db.repo.usage(start.id))[0].chargeNanos, nanos('0.0003').toString());
+    const second = await db.repo.reserveCall(start.id, claimed.lease_generation, 'judge', 'openrouter', 'test/paid', nanos('0.0012'));
+    assert.equal(await db.repo.settleCall(start.id, claimed.lease_generation, second, { latencyMs: 10, chargeNanos: null }), false);
+    await assert.rejects(db.repo.reserveCall(start.id, claimed.lease_generation, 'judge', 'openrouter', 'test/paid', 1n), /billing unresolved/);
+    await assert.rejects(db.repo.reserveCall(start.id, claimed.lease_generation + 1, 'judge', 'openrouter', 'test/paid', 1n), /Lease lost/);
+    await db.repo.finish(start.id, claimed.lease_generation, 'incomplete');
+    const records = await db.repo.usage(start.id);
+    assert.deepEqual(records.map(r => r.status).sort(), ['settled', 'unresolved']);
+    assert.equal(records.filter(r => r.status === 'unresolved')[0].reservedNanos, nanos('0.0012').toString());
+  } finally { await db.close(); }
+});
+
+test('mixed-role fixture run charges only the selected paid Judge and keeps hosted packet scrubbed', async () => {
+  const db = await database(), toy = fixture(), model = modelFixture('safe');
+  const targetUrl = await toy.start(), ollamaUrl = await model.start();
+  const previousKey = process.env.OPENROUTER_API_KEY, previousBase = process.env.OPENROUTER_BASE_URL;
+  process.env.OPENROUTER_API_KEY = 'fixture-key'; process.env.OPENROUTER_BASE_URL = 'http://model.test/api/v1/';
+  try {
+    const { input } = await seed(db.repo, targetUrl, ollamaUrl);
+    const roles = { ...legacyRoles('stub'), judge: { provider: 'openrouter' as const, model: 'test/paid', maxOutputTokens: 64 } };
+    const snapshot: Snapshot = { roles, pricing: { judge: { prompt: '0.000001', completion: '0.000002', request: '0', contextLength: 1000 } } };
+    const start = await db.repo.start({ targetId: input.targetId, caseId: input.caseId, ollamaUrl, roles, openRouterCapUsd: 0.005 }, snapshot); assert.ok(start && 'id' in start);
+    let dispatches = 0;
+    const transport: typeof fetch = async (url, init) => {
+      if (String(url).endsWith('/models')) return new Response(JSON.stringify({ data: [{ id: 'test/paid', context_length: 1000, pricing: { prompt: '0.000001', completion: '0.000002', request: '0' } }] }), { status: 200 });
+      dispatches++;
+      const body = init?.body as string;
+      assert.match(body, /PATIENT_A/); assert.doesNotMatch(body, /SYN-900001|private-password-A|Cookie: leaked/);
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ v: 1, outcome: 'safe', claim: '', evidenceRefs: ['turn-1'], reproductionComplete: true, materialUncertainties: [] }) } }], usage: { prompt_tokens: 55, completion_tokens: 19, cost: 0.0005 } }), { status: 200 });
+    };
+    assert.equal((await processNext(db.repo, 'paid-worker', fetch, transport))?.outcome, 'safe');
+    assert.equal(dispatches, 1);
+    const calls = await db.repo.usage(start.id);
+    assert.equal(calls.length, 1); assert.equal(calls[0].provider, 'openrouter'); assert.equal(calls[0].chargeNanos, nanos('0.0005').toString());
+    assert.equal(JSON.stringify(await db.repo.events(start.id)).includes('fixture-key'), false);
+  } finally {
+    if (previousKey === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = previousKey;
+    if (previousBase === undefined) delete process.env.OPENROUTER_BASE_URL; else process.env.OPENROUTER_BASE_URL = previousBase;
+    await toy.close(); await model.close(); await db.close();
+  }
+});
+
+test('missing paid charge leaves a hold and never classifies a safe verdict', async () => {
+  const db = await database(), toy = fixture(), local = modelFixture('safe');
+  const baseUrl = await toy.start(), ollamaUrl = await local.start();
+  const previousKey = process.env.OPENROUTER_API_KEY, previousBase = process.env.OPENROUTER_BASE_URL;
+  process.env.OPENROUTER_API_KEY = 'fixture-key'; process.env.OPENROUTER_BASE_URL = 'http://model.test/api/v1/';
+  try {
+    const { input } = await seed(db.repo, baseUrl, ollamaUrl);
+    const roles = { ...legacyRoles('stub'), judge: { provider: 'openrouter' as const, model: 'test/paid', maxOutputTokens: 64 } };
+    const run = await db.repo.start({ targetId: input.targetId, caseId: input.caseId, ollamaUrl, roles, openRouterCapUsd: 0.005 }, { roles, pricing: { judge: { prompt: '0.000001', completion: '0.000002', request: '0', contextLength: 1000 } } });
+    assert.ok(run && 'id' in run);
+    const transport: typeof fetch = async (url) => String(url).endsWith('/models')
+      ? new Response(JSON.stringify({ data: [{ id: 'test/paid', context_length: 1000, pricing: { prompt: '0.000001', completion: '0.000002', request: '0' } }] }), { status: 200 })
+      : new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ v: 1, outcome: 'safe', claim: '', evidenceRefs: ['turn-1'], reproductionComplete: true, materialUncertainties: [] }) } }], usage: { prompt_tokens: 45, completion_tokens: 20 } }), { status: 200 });
+    assert.equal((await processNext(db.repo, 'ambiguous-worker', fetch, transport))?.outcome, 'incomplete');
+    assert.equal((await db.repo.usage(run.id))[0].status, 'unresolved');
+    assert.equal((await db.repo.findings()).length, 0);
+    assert.equal((await db.repo.events(run.id)).some(e => e.event.kind === 'verdict'), false);
+  } finally {
+    if (previousKey === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = previousKey;
+    if (previousBase === undefined) delete process.env.OPENROUTER_BASE_URL; else process.env.OPENROUTER_BASE_URL = previousBase;
+    await toy.close(); await local.close(); await db.close();
+  }
 });

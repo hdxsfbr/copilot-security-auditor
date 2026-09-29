@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { targetInput, targetUpdateInput, caseInput, startInput } from '../../../packages/contracts/src/index.js';
 import { Repository } from './repository.js';
 import { storePdf, loadPdf } from './artifacts.js';
+import { catalog, installedOllama, snapshot } from '../../worker/src/models.js';
 
 export function createApp(repo: Repository) {
   const app = express();
@@ -12,6 +13,11 @@ export function createApp(repo: Repository) {
   app.use(express.json({ limit: '32kb' }));
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
   app.get('/api/config', (_req, res) => res.json({ ollamaUrl: process.env.OLLAMA_URL ?? '', model: process.env.OLLAMA_MODEL ?? '' }));
+  app.get('/api/models', async (_req, res) => {
+    const models = process.env.OPENROUTER_API_KEY ? await catalog() : [];
+    const ollama = process.env.OLLAMA_URL ? await installedOllama(process.env.OLLAMA_URL).catch(() => []) : [];
+    return res.json({ openrouter: models.filter(m => !!m && typeof m === 'object' && 'id' in m && typeof m.id === 'string').map(m => (m as { id: string }).id), ollama, configured: !!process.env.OPENROUTER_API_KEY });
+  });
   app.get('/api/targets', async (_req, res) => res.json(await repo.targets()));
   app.post('/api/targets', async (req, res) => res.status(201).json(await repo.target(targetInput.parse(req.body))));
   app.get('/api/targets/:id/edit', async (req, res) => {
@@ -45,7 +51,16 @@ export function createApp(repo: Repository) {
     catch { return res.status(404).json({ message: 'Artifact unavailable or integrity failed' }); }
   });
   app.post('/api/runs', async (req, res) => {
-    const result = await repo.start(startInput.parse(req.body));
+    const input = startInput.parse(req.body);
+    if (input.roles && Object.values(input.roles).some(role => role.provider === 'ollama')) {
+      const installed = await installedOllama(input.ollamaUrl).catch(() => null);
+      if (!installed) return res.status(503).json({ v: 1, code: 'unavailable', message: 'Ollama model catalog unavailable' });
+      if (Object.values(input.roles).some(role => role.provider === 'ollama' && !installed.includes(role.model))) return res.status(400).json({ v: 1, code: 'invalid', message: 'Selected Ollama model is not installed' });
+    }
+    let models;
+    try { models = input.roles ? await snapshot(input.roles) : undefined; }
+    catch { return res.status(400).json({ v: 1, code: 'invalid', message: 'OpenRouter model or verified pricing unavailable; check output bounds and provider configuration' }); }
+    const result = await repo.start(input, models);
     if (!result) return res.status(404).json({ v: 1, code: 'not_found', message: 'Target or case not found' });
     if ('active_run_id' in result) return res.status(409).json({ v: 1, code: 'conflict', message: 'Target already reserved', active_run_id: result.active_run_id });
     return res.status(202).json(result);
@@ -55,6 +70,7 @@ export function createApp(repo: Repository) {
     return run ? res.json(run) : res.status(404).json({ v: 1, code: 'not_found', message: 'Run not found' });
   });
   app.get('/api/runs/:id/events', async (req, res) => res.json(await repo.events(z.uuid().parse(req.params.id))));
+  app.get('/api/runs/:id/usage', async (req, res) => res.json(await repo.usage(z.uuid().parse(req.params.id))));
   app.get('/api/candidates', async (_req, res) => res.json(await repo.candidates()));
   app.get('/api/findings', async (_req, res) => res.json(await repo.findings()));
   app.get('/api/regressions', async (_req, res) => res.json(await repo.regressions()));

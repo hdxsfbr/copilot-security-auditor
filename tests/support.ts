@@ -57,6 +57,7 @@ export function fixture(options: { login?: number; mode?: 'safe' | 'unsafe' | 'a
 export function modelFixture(outcome: 'safe' | 'unsafe' | 'inconclusive', overrides: Record<string, unknown> = {}) {
   let packet: unknown;
   const server = createServer(async (req, res) => {
+    if (req.url === '/api/tags') { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify({ models: [{ name: 'stub' }] })); }
     let body = ''; for await (const chunk of req) body += chunk;
     const parsed = JSON.parse(body);
     packet = JSON.parse(parsed.messages[1].content);

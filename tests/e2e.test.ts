@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Server } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import { createApp } from '../apps/api/src/app.js';
 import { processNext } from '../apps/worker/src/process.js';
 import { database, fixture, modelFixture, users, testCase } from './support.js';
@@ -9,6 +9,7 @@ import { PDFDocument } from 'pdf-lib';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { snapshot, legacyRoles } from '../apps/worker/src/models.js';
 
 test('served UI and API start, poll and inspect safe, incomplete and reviewable fixture runs', async () => {
   const db = await database(), toy = fixture(), model = modelFixture('safe');
@@ -44,7 +45,7 @@ test('served UI and API start, poll and inspect safe, incomplete and reviewable 
     assert.deepEqual(await processNext(db.repo), { id: first.data.id, outcome: 'safe' });
     const run = await (await fetch(`${url}/api/runs/${first.data.id}`)).json(); assert.equal(run.outcome, 'safe'); assert.equal(run.version, 'toy-v1');
     const events = await (await fetch(`${url}/api/runs/${first.data.id}/events`)).json();
-    assert.deepEqual(events.map((e: { event: { agent: string } }) => e.event.agent), ['worker', 'target', 'check', 'judge']);
+    assert.deepEqual(events.map((e: { event: { agent: string } }) => e.event.agent), ['worker', 'target', 'check', 'judge', 'judge']);
     assert.equal(JSON.stringify(events).includes(users.userA.password), false);
     assert.equal(JSON.stringify(events).includes('Cookie: leaked'), false);
     assert.equal(JSON.stringify(events).includes('ticket-1'), false);
@@ -168,6 +169,17 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
     await page.getByText('finished / inconclusive').waitFor();
     await page.getByRole('button', { name: 'Refresh decisions' }).click();
     await page.getByText(/toy-v1: inconclusive/).waitFor();
+    const desk = page.locator('.model-desk');
+    await desk.getByLabel('Local model server URL').fill(safeUrl);
+    for (const input of await desk.getByLabel('Model', { exact: true }).all()) await input.fill('stub');
+    await desk.getByRole('button', { name: 'Start with assigned models' }).click();
+    await page.waitForTimeout(300);
+    assert.deepEqual(await desk.getByRole('alert').allTextContents(), []);
+    await page.getByText('queued / awaiting result').waitFor();
+    assert.equal((await processNext(db.repo))?.outcome, 'inconclusive');
+    await page.getByText('finished / inconclusive').waitFor();
+    await desk.getByText(/judge: ollama \/ stub/).waitFor();
+    assert.match(await desk.innerText(), /local, unpriced/);
     const document = await PDFDocument.create(); document.addPage();
     await page.getByLabel('Case title').fill('Indirect PDF boundary');
     await page.getByLabel('Category').selectOption('prompt_injection');
@@ -182,4 +194,53 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
       assert.equal(response.headers.get('content-type'), 'application/pdf');
     }
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); await toy.close(); await safe.close(); await uncertain.close(); await db.close(); await rm(dir, { recursive: true, force: true }); delete process.env.ARTIFACT_DIR; }
+});
+
+test('operator selects a paid Judge with local companion roles and sees reported charge', async () => {
+  const db = await database(), toy = fixture(), local = modelFixture('safe');
+  const targetUrl = await toy.start(), ollamaUrl = await local.start();
+  const provider = createServer(async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url === '/api/v1/models') return res.end(JSON.stringify({ data: [{ id: 'test/paid', context_length: 1000, pricing: { prompt: '0.000001', completion: '0.000002', request: '0' } }] }));
+    let body = ''; for await (const part of req) body += part;
+    assert.match(body, /PATIENT_A/);
+    assert.doesNotMatch(body, /SYN-900001|private-password-A/);
+    return res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ v: 1, outcome: 'safe', claim: '', evidenceRefs: ['turn-1'], reproductionComplete: true, materialUncertainties: [] }) } }], usage: { prompt_tokens: 52, completion_tokens: 18, cost: 0.0004 } }));
+  });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const previousKey = process.env.OPENROUTER_API_KEY, previousBase = process.env.OPENROUTER_BASE_URL;
+  process.env.OPENROUTER_API_KEY = 'fixture-key';
+  process.env.OPENROUTER_BASE_URL = `http://127.0.0.1:${(provider.address() as { port: number }).port}/api/v1/`;
+  assert.equal((await snapshot({ ...legacyRoles('stub'), judge: { provider: 'openrouter', model: 'test/paid', maxOutputTokens: 64 } })).pricing.judge?.contextLength, 1000);
+  const server = createApp(db.repo).listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  try {
+    const { target, selected } = await (async () => { const target = await db.repo.target({ name: 'Paid fixture', baseUrl: targetUrl, ...users }); const selected = await db.repo.createCase(testCase); return { target, selected }; })();
+    const page = await browser.newPage();
+    await page.goto(`http://127.0.0.1:${(server.address() as { port: number }).port}`);
+    await page.getByLabel('Saved authorized target').selectOption(target.id);
+    await page.getByLabel('Selected case').selectOption(selected.id);
+    const desk = page.locator('.model-desk');
+    await desk.getByLabel('Local model server URL').fill(ollamaUrl);
+    for (const input of await desk.getByLabel('Model', { exact: true }).all()) await input.fill('stub');
+    await desk.locator('.review-item').filter({ hasText: 'judge' }).getByLabel('Provider').selectOption('openrouter');
+    await desk.locator('.review-item').filter({ hasText: 'judge' }).getByLabel('Maximum output tokens').fill('64');
+    await desk.getByLabel('Maximum OpenRouter spend (USD, this run)').fill('0.005');
+    await desk.getByRole('button', { name: 'Start with assigned models' }).click();
+    await page.waitForTimeout(300);
+    assert.deepEqual(await desk.getByRole('alert').allTextContents(), []);
+    await page.getByText('queued / awaiting result').waitFor();
+    assert.equal((await processNext(db.repo))?.outcome, 'safe');
+    await page.getByText('finished / safe').waitFor();
+    await desk.getByText(/judge: openrouter \/ test\/paid/).waitFor();
+    assert.match(await desk.innerText(), /\$0\.000400/);
+    assert.doesNotMatch(await desk.innerText(), /fixture-key/);
+  } finally {
+    await browser.close(); await new Promise<void>(resolve => server.close(() => resolve()));
+    await new Promise<void>(resolve => provider.close(() => resolve()));
+    if (previousKey === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = previousKey;
+    if (previousBase === undefined) delete process.env.OPENROUTER_BASE_URL; else process.env.OPENROUTER_BASE_URL = previousBase;
+    await toy.close(); await local.close(); await db.close();
+  }
 });
