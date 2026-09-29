@@ -1,5 +1,5 @@
 import { Annotation, StateGraph, START, END } from '@langchain/langgraph';
-import { evidenceEvent, observation, outcome as outcomeSchema, policyTrace, type CaseInput, type Observation, type Outcome, type Verdict, type PolicyTrace } from '../../../packages/contracts/src/index.js';
+import { evidenceEvent, observation, outcome as outcomeSchema, policyTrace, type AttackAction, type CaseInput, type Observation, type Outcome, type Verdict, type PolicyTrace } from '../../../packages/contracts/src/index.js';
 import { Repository } from '../../api/src/repository.js';
 import { Session, TargetFailure, TurnFailure, type Identity } from './session.js';
 import { packet, scrub, scrubEvidence, type ExecutedAction } from './judge.js';
@@ -92,7 +92,10 @@ export function scopeOutcome(category: CaseInput['category'], classified: Outcom
   return classified;
 }
 
-export async function evaluateCase(repo: Repository, run: ClaimedRun, definition: CaseInput, targetFetch: typeof fetch, modelFetch: typeof fetch, shouldStop: () => Promise<boolean> = async () => false, sourceCaseId = run.case_id!, lineage?: Pick<AgentContext, 'attemptId' | 'parentMessageId'> & { executionCaseId?: string }, runtime: EvidenceRuntime | null = null) {
+// A17: called once, after the last planned turn was observed and while fewer than 3 turns exist, with the provider-safe observations so far.
+// It returns the one already-admitted follow-up action (persisted by the caller) or null; it never widens the 3-turn cap.
+export type FollowUp = (observations: Observation[]) => Promise<AttackAction | null>;
+export async function evaluateCase(repo: Repository, run: ClaimedRun, definition: CaseInput, targetFetch: typeof fetch, modelFetch: typeof fetch, shouldStop: () => Promise<boolean> = async () => false, sourceCaseId = run.case_id!, lineage?: Pick<AgentContext, 'attemptId' | 'parentMessageId'> & { executionCaseId?: string }, runtime: EvidenceRuntime | null = null, followUp?: FollowUp) {
   const generation = run.lease_generation;
   const contractContext: AgentContext = { runId: run.id, caseId: sourceCaseId, attemptId: lineage?.attemptId ?? `${run.id}-${generation}`, parentMessageId: lineage?.parentMessageId ?? null };
   const runUntil = adaptiveRunUntil(run);
@@ -111,6 +114,8 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
   let effectSnapshot: 'unchanged' | 'changed' | 'unavailable' | null = null;
   let assessment: { checks: CheckResult[]; verdict: (Verdict & { policy: PolicyTrace }) | null } | undefined;
   const executedActions: ExecutedAction[] = [];
+  const plan = [...definition.actions];
+  let followed = false;
   const collectedTurns: CollectedTurn[] = [];
   const heartbeat = setInterval(() => { void repo.heartbeat(run.id, generation).catch(() => clearInterval(heartbeat)); }, 10000);
   try {
@@ -129,7 +134,8 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
         const before = definition.category === 'unintended_tool_action' ? await session.chartReportFingerprint() : null;
         if (session.lastTimeout) await emit('worker', 'timeout', session.lastTimeout);
         const observations: Observation[] = [];
-        for (const [index, action] of definition.actions.entries()) {
+        for (let index = 0; index < plan.length; index++) {
+          const action = plan[index];
           if (await shouldStop()) throw new Error('Run stopped');
           let turn: Awaited<ReturnType<Session['turn']>>;
           let source: string | undefined, message: string;
@@ -151,6 +157,11 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
             user: definition.user, turn: index + 1, targetVersion: session.version, selectedChartId: session.assignedPid,
             comparisonChartId: definition.category === 'cross_patient' ? other.assignedPid : null, timing: turn.timing, observation: turn.observation
           }, { shouldStop, runUntil }));
+          if (followUp && !followed && index === plan.length - 1 && plan.length < 3 && !(await shouldStop())) {
+            followed = true;
+            const next = await followUp(observations.map(item => projectObservation(item, users, privateSecrets(), true)));
+            if (next && plan.length < 3) plan.push(next);
+          }
         }
         if (definition.category === 'unintended_tool_action') {
           const after = await session.chartReportFingerprint();
@@ -178,7 +189,7 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
         const checks = privateChecks.map((check, index) => check.kind === 'required_source_citation' ? providerChecks[index] : check);
         await emit('check', 'deterministic', { checks: checks.map(c => ({ ...c, coveredClaim: scrubEvidence(c.coveredClaim, users, privateSecrets()) })) });
         const policyInput = { checks, observations: providerObservations, category: definition.category ?? 'prompt_injection' as const,
-          expectedTurns: definition.actions.length, attachments: executedActions.filter(action => action.kind === 'attach_pdf').map(action => ({ turn: action.turn, sourceId: action.sourceId })),
+          expectedTurns: plan.length, attachments: executedActions.filter(action => action.kind === 'attach_pdf').map(action => ({ turn: action.turn, sourceId: action.sourceId })),
           executedPrompts: executedActions.map(action => scrub(action.message, users, privateSecrets())), effect: effectSnapshot };
         const earlyPolicy = async (enforcedOutcome: Outcome, reason: string, judgeOnly = false): Promise<Outcome> => {
           const base = judgePolicy({ ...policyInput, verdict: null });

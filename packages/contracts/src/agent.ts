@@ -24,7 +24,21 @@ function envelope<S extends string, P extends z.ZodType>(channel: S, payload: P)
     z.object({ channel: z.literal(channel), status: z.literal('error'), header, error: agentFailure }).strict()
   ]);
 }
-export const orchestratorToRedTeam = envelope('orchestrator_to_red_team', z.object({ selectedSeedCaseId: stableId, category, bounds: z.object({ maxActions: z.number().int().min(1).max(3), remainingCases: z.number().int().min(1).max(9), remainingMs: z.number().int().nonnegative().nullable() }).strict(), historyRefs: z.array(agentEvidenceRef).max(3) }).strict());
+// A17 optional v1 fields. `selection` says why the seed was chosen; `feedback` is the sanitized outcome of earlier cases in this run;
+// `mutation` records what this proposal derives from (the seed and, when one exists, the earlier execution it was shown).
+export const explorationBasis = z.object({
+  reason: z.enum(['regression_resurfaced', 'regression_recurring', 'unresolved_severity', 'coverage_untested', 'coverage_inconclusive', 'coverage_incomplete', 'coverage_blocked', 'least_executed']),
+  regression: z.enum(['resurfaced', 'recurring']).optional(), severity: z.enum(['critical', 'high', 'medium', 'low', 'unknown']).optional(),
+  gap: z.enum(['untested', 'blocked', 'inconclusive', 'incomplete']).optional(), targetVersion: z.string().max(200).nullable()
+}).strict();
+export const priorVerdict = z.object({
+  executionCaseId: z.uuid(), ordinal: z.number().int().positive(), seedCaseId: stableId,
+  outcome: z.enum(['safe', 'inconclusive', 'pending_review', 'auto_confirm', 'blocked', 'incomplete', 'rejected']),
+  verdict: z.enum(['safe', 'unsafe', 'inconclusive']).optional(), claim: z.string().max(500).optional(), failedGates: z.array(z.string().max(80)).max(10)
+}).strict();
+export const mutationParent = z.object({ seedCaseId: stableId, parentExecutionCaseId: z.uuid().nullable() }).strict();
+export const orchestratorToRedTeam = envelope('orchestrator_to_red_team', z.object({ selectedSeedCaseId: stableId, category, bounds: z.object({ maxActions: z.number().int().min(1).max(3), remainingCases: z.number().int().min(1).max(9), remainingMs: z.number().int().nonnegative().nullable() }).strict(), historyRefs: z.array(agentEvidenceRef).max(3),
+  selection: explorationBasis.optional(), feedback: z.array(priorVerdict).max(3).optional(), mutation: mutationParent.optional() }).strict());
 export const redTeamToJudge = envelope('red_team_to_judge', z.object({ packet: agentJudgePacket, evidenceRefs: z.array(agentEvidenceRef).min(1).max(3), policyVersion: z.literal(2) }).strict());
 const regressionStatus = z.enum(['new', 'recurring', 'fixed', 'resurfaced', 'unknown', 'not_applicable']);
 export const judgeToDocumentation = z.discriminatedUnion('status', [
@@ -44,6 +58,8 @@ export type AgentFailure = z.infer<typeof agentFailure>;
 export type AgentFailureCode = z.infer<typeof agentFailureCode>;
 export type AgentJudgePacket = z.infer<typeof agentJudgePacket>;
 export type OrchestratorToRedTeam = z.infer<typeof orchestratorToRedTeam>;
+export type ExplorationBasis = z.infer<typeof explorationBasis>;
+export type PriorVerdict = z.infer<typeof priorVerdict>;
 export type RedTeamToJudge = z.infer<typeof redTeamToJudge>;
 export type JudgeToDocumentation = z.infer<typeof judgeToDocumentation>;
 
@@ -68,6 +84,10 @@ export function parseAgentMessage<S extends z.ZodType<{ header: AgentHeader; sta
   if (value.channel === 'orchestrator_to_red_team' && value.status === 'ok') {
     const handoff = value as OrchestratorToRedTeam & { status: 'ok' };
     if (handoff.payload.selectedSeedCaseId !== context.caseId || handoff.payload.historyRefs.some(ref => ref.runId !== context.runId || ref.attemptId !== context.attemptId)) throw new AgentContractError('context_mismatch', value.channel);
+    const { mutation, feedback } = handoff.payload;
+    if (mutation && mutation.seedCaseId !== context.caseId) throw new AgentContractError('context_mismatch', value.channel);
+    // The parent must be traceable: it has to be one of the prior verdicts the Red Team was actually shown.
+    if (mutation?.parentExecutionCaseId && !feedback?.some(item => item.executionCaseId === mutation.parentExecutionCaseId) || feedback && new Set(feedback.map(item => item.executionCaseId)).size !== feedback.length) throw new AgentContractError('evidence_mismatch', value.channel);
   }
   if (value.channel === 'red_team_to_judge' && value.status === 'ok') {
     const handoff = value as RedTeamToJudge & { status: 'ok' };

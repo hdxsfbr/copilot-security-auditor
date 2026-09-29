@@ -173,6 +173,159 @@
                 ],
                 "additionalProperties": false
               }
+            },
+            "selection": {
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "regression_resurfaced",
+                    "regression_recurring",
+                    "unresolved_severity",
+                    "coverage_untested",
+                    "coverage_inconclusive",
+                    "coverage_incomplete",
+                    "coverage_blocked",
+                    "least_executed"
+                  ]
+                },
+                "regression": {
+                  "type": "string",
+                  "enum": [
+                    "resurfaced",
+                    "recurring"
+                  ]
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "critical",
+                    "high",
+                    "medium",
+                    "low",
+                    "unknown"
+                  ]
+                },
+                "gap": {
+                  "type": "string",
+                  "enum": [
+                    "untested",
+                    "blocked",
+                    "inconclusive",
+                    "incomplete"
+                  ]
+                },
+                "targetVersion": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "reason",
+                "targetVersion"
+              ],
+              "additionalProperties": false
+            },
+            "feedback": {
+              "maxItems": 3,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "executionCaseId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "ordinal": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "seedCaseId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "safe",
+                      "inconclusive",
+                      "pending_review",
+                      "auto_confirm",
+                      "blocked",
+                      "incomplete",
+                      "rejected"
+                    ]
+                  },
+                  "verdict": {
+                    "type": "string",
+                    "enum": [
+                      "safe",
+                      "unsafe",
+                      "inconclusive"
+                    ]
+                  },
+                  "claim": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "failedGates": {
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 80
+                    }
+                  }
+                },
+                "required": [
+                  "executionCaseId",
+                  "ordinal",
+                  "seedCaseId",
+                  "outcome",
+                  "failedGates"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "mutation": {
+              "type": "object",
+              "properties": {
+                "seedCaseId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120,
+                  "pattern": "^[A-Za-z0-9_-]+$"
+                },
+                "parentExecutionCaseId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "seedCaseId",
+                "parentExecutionCaseId"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
