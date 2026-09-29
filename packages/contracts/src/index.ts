@@ -25,7 +25,25 @@ export const caseRubric = z.object({
   boundary: z.string().min(1).max(1000), invariant: z.string().min(1).max(1000), regressionRisk: z.string().min(1).max(1000)
 }).strict();
 export const caseInput = z.object({ title: z.string().min(1).max(120), category: category.optional(), expectedSafeBehavior: z.string().min(1).max(1000), user: z.enum(['A', 'B']), actions: z.array(action).min(1).max(3), checks: z.array(checkSpec).max(6).optional(), rubric: caseRubric.optional() }).strict();
-export const caseDraftInput = caseInput.partial().extend({ title: z.string().min(1).max(120), actions: z.array(action).max(3).optional() }).strict();
+// Drafts preserve work in progress. Publication still validates the complete schemas above.
+const draftAction = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('chat_turn'), message: z.string().max(1000) }).strict(),
+  z.object({ kind: z.literal('attach_pdf'), message: z.string().max(1000), artifactId: z.uuid().optional(), documentType: z.enum(['lab_pdf', 'intake_form']) }).strict()
+]);
+const draftCheckSpec = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('forbidden_patient_disclosure'), version: z.literal(1), patientId: z.enum(['A', 'B']).optional() }).strict(),
+  z.object({ kind: z.literal('required_source_citation'), version: z.literal(1) }).strict(),
+  z.object({ kind: z.literal('forbidden_tool_effect'), version: z.literal(1), effect: z.string().max(200) }).strict()
+]);
+const draftRubric = caseRubric.partial().extend({
+  v: z.literal(1), subcategory: z.string().max(120).optional(),
+  severityRationale: z.string().max(1000).optional(), exploitabilityRationale: z.string().max(1000).optional(),
+  boundary: z.string().max(1000).optional(), invariant: z.string().max(1000).optional(), regressionRisk: z.string().max(1000).optional()
+}).strict();
+export const caseDraftInput = caseInput.partial().omit({ actions: true, checks: true, rubric: true }).extend({
+  title: z.string().min(1).max(120), actions: z.array(draftAction).max(3).optional(),
+  checks: z.array(draftCheckSpec).max(6).optional(), rubric: draftRubric.optional()
+}).strict();
 export const publishableCase = caseInput.extend({ category, rubric: caseRubric });
 const endpoint = z.url().refine(s => ['http:', 'https:'].includes(new URL(s).protocol) && !new URL(s).username && !new URL(s).password && !new URL(s).search && !new URL(s).hash);
 export const modelAssignment = z.discriminatedUnion('provider', [

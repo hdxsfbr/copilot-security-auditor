@@ -1,6 +1,6 @@
 import { randomUUID, createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import pg from 'pg';
-import { caseInput, publishableCase } from '../../../packages/contracts/src/index.js';
+import { caseInput, caseRubric, category, publishableCase } from '../../../packages/contracts/src/index.js';
 import type { AdaptiveStart, CaseDraftInput, CaseInput, EvidenceEvent, Outcome, ScheduleInput, StartInput, TargetInput, TargetUpdateInput, Verdict } from '../../../packages/contracts/src/index.js';
 import type { CheckResult } from '../../worker/src/checks.js';
 import { legacyRoles, nanos, reserveAmount, type Role, type Snapshot, type ModelUsage } from '../../worker/src/models.js';
@@ -23,6 +23,12 @@ type CandidateEvidenceRow = {
   definition: unknown;
   source_case_id: string | null;
 };
+
+function caseMetadataStatus(definition: unknown, state: string) {
+  const fields = definition && typeof definition === 'object' && !Array.isArray(definition) ? definition as Record<string, unknown> : {};
+  return category.safeParse(fields.category).success && caseRubric.safeParse(fields.rubric).success
+    ? 'complete' : state === 'draft' ? 'incomplete_draft' : 'unknown_legacy';
+}
 
 function key() {
   const value = process.env.CREDENTIAL_KEY;
@@ -170,18 +176,18 @@ export class Repository {
   async createDraft(input: CaseDraftInput) {
     const id = randomUUID();
     await this.pool.query("INSERT INTO cases(id,family_id,definition,state,authoring_mode,published_at) VALUES ($1,$1,$2,'draft','versioned',NULL)", [id, input]);
-    return { id, familyId: id, version: 1, state: 'draft' as const, ...input };
+    return { id, familyId: id, version: 1, state: 'draft' as const, ...input, metadataStatus: caseMetadataStatus(input, 'draft') };
   }
   async caseRecord(id: string) {
     const row = (await this.pool.query('SELECT id,family_id AS "familyId",version,state,authoring_mode AS "authoringMode",definition,created_at AS "createdAt",published_at AS "publishedAt",archived_at AS "archivedAt" FROM cases WHERE id=$1', [id])).rows[0];
-    return row ? { ...row, ...row.definition, metadataStatus: row.definition.category && row.definition.rubric ? 'complete' : row.state === 'draft' ? 'incomplete_draft' : 'unknown_legacy' } : null;
+    return row ? { ...row, ...row.definition, metadataStatus: caseMetadataStatus(row.definition, row.state) } : null;
   }
   async canUploadArtifact(id: string) {
     return !!(await this.pool.query("SELECT 1 FROM cases WHERE id=$1 AND (state='draft' OR (state='published' AND authoring_mode='legacy'))", [id])).rowCount;
   }
   async caseVersions(id: string) {
     const rows = (await this.pool.query('SELECT id,family_id AS "familyId",version,state,authoring_mode AS "authoringMode",definition,created_at AS "createdAt",published_at AS "publishedAt",archived_at AS "archivedAt" FROM cases WHERE family_id=(SELECT family_id FROM cases WHERE id=$1) ORDER BY version', [id])).rows;
-    return rows.length ? rows.map(row => ({ ...row, ...row.definition, metadataStatus: row.definition.category && row.definition.rubric ? 'complete' : row.state === 'draft' ? 'incomplete_draft' : 'unknown_legacy' })) : null;
+    return rows.length ? rows.map(row => ({ ...row, ...row.definition, metadataStatus: caseMetadataStatus(row.definition, row.state) })) : null;
   }
   async caseExecutions(id: string) {
     return (await this.pool.query(`
@@ -194,11 +200,18 @@ export class Repository {
       ORDER BY "createdAt" DESC`, [id])).rows;
   }
   async drafts() {
-    return (await this.pool.query("SELECT id,family_id AS \"familyId\",version,state,authoring_mode AS \"authoringMode\",definition,created_at AS \"createdAt\" FROM cases WHERE state='draft' ORDER BY created_at DESC")).rows.map(row => ({ ...row, ...row.definition }));
+    return (await this.pool.query("SELECT id,family_id AS \"familyId\",version,state,authoring_mode AS \"authoringMode\",definition,created_at AS \"createdAt\" FROM cases WHERE state='draft' ORDER BY created_at DESC")).rows.map(row => ({ ...row, ...row.definition, metadataStatus: caseMetadataStatus(row.definition, row.state) }));
+  }
+  async archivedCases() {
+    return (await this.pool.query("SELECT id,family_id AS \"familyId\",version,state,definition FROM cases WHERE state='archived' ORDER BY archived_at DESC")).rows.map(row => ({
+      id: row.id as string, familyId: row.familyId as string, version: row.version as number, state: 'archived' as const,
+      title: String(row.definition.title ?? ''), category: row.definition.category as string | undefined,
+      metadataStatus: caseMetadataStatus(row.definition, row.state)
+    }));
   }
   async updateDraft(id: string, definition: CaseDraftInput, expectedDefinition?: CaseDraftInput) {
     const row = (await this.pool.query("UPDATE cases SET definition=$2 WHERE id=$1 AND state='draft' AND authoring_mode='versioned' AND ($3::jsonb IS NULL OR definition=$3::jsonb) RETURNING family_id,version", [id, definition, expectedDefinition ?? null])).rows[0];
-    return row ? { id, familyId: row.family_id as string, version: row.version as number, state: 'draft' as const, ...definition } : null;
+    return row ? { id, familyId: row.family_id as string, version: row.version as number, state: 'draft' as const, ...definition, metadataStatus: caseMetadataStatus(definition, 'draft') } : null;
   }
   async publishDraft(id: string) {
     const db = await this.pool.connect();
@@ -217,7 +230,7 @@ export class Repository {
       }
       await db.query("UPDATE cases SET state='published',definition=$2,published_at=now() WHERE id=$1", [id, parsed.data]);
       await db.query('COMMIT');
-      return { id, familyId: row.family_id as string, version: row.version as number, state: 'published' as const, ...parsed.data };
+      return { id, familyId: row.family_id as string, version: row.version as number, state: 'published' as const, ...parsed.data, metadataStatus: caseMetadataStatus(parsed.data, 'published') };
     } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
   }
   async cloneCase(id: string) {

@@ -76,7 +76,7 @@ test('cloned published versions copy PDFs and leave run snapshots and legacy unk
   process.env.ARTIFACT_DIR = dir;
   const db = await database();
   try {
-    const legacy = (await db.repo.cases()).find(row => row.title.startsWith('Starter:'))!;
+    const legacy = (await db.repo.cases()).find(row => row.id === 'c0000000-0000-4000-8000-000000000001')!;
     const legacyRecord = await db.repo.caseRecord(legacy.id);
     assert.equal(legacyRecord?.rubric, undefined);
     assert.equal(legacyRecord?.metadataStatus, 'unknown_legacy');
