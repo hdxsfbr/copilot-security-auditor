@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { isRecord, isRecordArray, requestJson } from "../api/client.js";
+import { appendNewerEvents, drainEventPages } from "./run-events.js";
 
 type Target = {
   id: string;
@@ -73,13 +74,12 @@ const isCoverage = (value: unknown): value is Coverage => isRecord(value) && isS
 const isSavedCase = (v: unknown): v is NonNullable<Run["caseSnapshot"]> => isRecord(v) && isString(v.id) && isNullableString(v.familyId) && (v.version === null || Number.isInteger(v.version)) && (v.definition === null || isRecord(v.definition));
 const isSeed = (v: unknown): v is NonNullable<Run["adaptiveSeeds"]>[number] => isRecord(v) && isString(v.id) && isNullableString(v.familyId) && (v.version === null || Number.isInteger(v.version)) && isRecord(v.definition);
 const isRun = (value: unknown): value is Run => isRecord(value) && isString(value.id) && isString(value.status) && isNullableString(value.outcome) && isNullableString(value.version) && isString(value.model) && (value.caseId === undefined || isNullableString(value.caseId)) && (value.categories === undefined || value.categories === null || (Array.isArray(value.categories) && value.categories.every(isString))) && (value.stopRequested === undefined || typeof value.stopRequested === "boolean") && (value.mode === undefined || value.mode === "selected" || value.mode === "adaptive") && (value.target === undefined || (isRecord(value.target) && isString(value.target.id) && isNullableString(value.target.name) && isNullableString(value.target.version))) && (value.caseSnapshot === undefined || value.caseSnapshot === null || isSavedCase(value.caseSnapshot)) && (value.adaptiveSeeds === undefined || value.adaptiveSeeds === null || (Array.isArray(value.adaptiveSeeds) && value.adaptiveSeeds.every(isSeed))) && (value.modelSnapshot === undefined || value.modelSnapshot === null || (isRecord(value.modelSnapshot) && isRecord(value.modelSnapshot.roles) && isRecord(value.modelSnapshot.roles.judge) && isString(value.modelSnapshot.roles.judge.provider) && isString(value.modelSnapshot.roles.judge.model)));
-const isEvent = (value: unknown): value is Event => isRecord(value) && (typeof value.id === "number" || (typeof value.id === "string" && /^\d+$/.test(value.id))) && isRecord(value.event) && isString(value.event.agent) && isString(value.event.kind) && isRecord(value.event.detail) && isString(value.createdAt);
 const isConfig = (value: unknown): value is { ollamaUrl: string; model: string } => isRecord(value) && isString(value.ollamaUrl) && isString(value.model);
 const isId = (value: unknown): value is { id: string } => isRecord(value) && isString(value.id);
 const isSavedTarget = (value: unknown): value is Pick<Target, "id" | "name" | "baseUrl"> => isRecord(value) && isString(value.id) && isString(value.name) && isString(value.baseUrl);
 const isCaseSelection = (value: unknown): value is { caseId: string | null } => isRecord(value) && isNullableString(value.caseId);
 const isSelectedCase = (value: unknown): value is { caseId: string } => isRecord(value) && isString(value.caseId);
-const targetsGuard = isRecordArray(isTarget), casesGuard = isRecordArray(isCase), findingsGuard = isRecordArray(isFinding), regressionsGuard = isRecordArray(isRegression), coverageGuard = isRecordArray(isCoverage), eventsGuard = isRecordArray(isEvent);
+const targetsGuard = isRecordArray(isTarget), casesGuard = isRecordArray(isCase), findingsGuard = isRecordArray(isFinding), regressionsGuard = isRecordArray(isRegression), coverageGuard = isRecordArray(isCoverage);
 const api = requestJson;
 export function useWorkspaceController(navigate: (path: string) => void) {
   const [targets, setTargets] = useState<Target[]>([]),
@@ -89,6 +89,7 @@ export function useWorkspaceController(navigate: (path: string) => void) {
   const activeRunId = useRef<string | null>(null);
   const runGeneration = useRef(0);
   const pollSequence = useRef(0);
+  const eventCursor = useRef<string | null>(null);
   const [notice, setNotice] = useState(""),
     [targetId, setTargetId] = useState(
       () => localStorage.getItem("selectedTargetId") ?? "",
@@ -187,14 +188,19 @@ export function useWorkspaceController(navigate: (path: string) => void) {
     if (!id) return;
     const generation = runGeneration.current;
     const request = ++pollSequence.current;
+    const current = () => activeRunId.current === id && runGeneration.current === generation && pollSequence.current === request;
     try {
-      const [nextRun, nextEvents] = await Promise.all([
-        api(`/runs/${id}`, isRun), api(`/runs/${id}/events`, eventsGuard),
-      ]);
-      if (activeRunId.current !== id || runGeneration.current !== generation || pollSequence.current !== request) return;
+      // Status is read before evidence: a run seen as finished has already committed its final events, so draining afterwards cannot miss them.
+      const nextRun = await api(`/runs/${id}`, isRun);
+      if (!current()) return;
       if (nextRun.id !== id) throw new Error("Run identity does not match the requested URL");
+      // Each accepted page is committed immediately, so a failure on a later page keeps earlier evidence and the cursor for the next attempt.
+      await drainEventPages(id, eventCursor.current, (items, cursor) => {
+        eventCursor.current = cursor;
+        setEvents(shown => appendNewerEvents(shown, items));
+      }, current);
+      if (!current()) return;
       setRun(nextRun);
-      setEvents(nextEvents);
       setRunError("");
     } catch (cause) {
       if (activeRunId.current === id && runGeneration.current === generation && pollSequence.current === request) setRunError(cause instanceof Error ? cause.message : "Run progress unavailable");
@@ -288,6 +294,7 @@ export function useWorkspaceController(navigate: (path: string) => void) {
       runGeneration.current++;
       pollSequence.current++;
       activeRunId.current = id;
+      eventCursor.current = null;
       setRun({ id, status: "loading", outcome: null, version, model: label });
       setEvents([]);
       setRunError("");
