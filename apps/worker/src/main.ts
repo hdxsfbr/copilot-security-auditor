@@ -4,13 +4,15 @@ import { Repository } from '../../api/src/repository.js';
 import { workerCycleErrorCode } from '../../api/src/operations.js';
 import { startWorkerHeartbeat } from './heartbeat.js';
 import { processNext } from './process.js';
-import { processNextReportJob } from './report-jobs.js';
+import { processNextReportJob, registerReportJobHandler } from './report-jobs.js';
+import { createDocumentationHandler } from './reports.js';
 import { loadEvidenceRuntime } from './evidence/runtime.js';
 
 if (!process.env.CREDENTIAL_KEY) throw new Error('CREDENTIAL_KEY required');
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const repo = new Repository(pool);
 const evidenceRuntime = loadEvidenceRuntime();
+registerReportJobHandler(createDocumentationHandler(repo));
 // One random identity per process start; it is also the run lease owner.
 const workerId = randomUUID();
 const heartbeat = startWorkerHeartbeat(pool, workerId);
