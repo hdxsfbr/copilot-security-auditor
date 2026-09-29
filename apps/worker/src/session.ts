@@ -231,7 +231,7 @@ export class Session {
     if (!source || typeof source !== 'object' || !('source_id' in source) || typeof source.source_id !== 'string' || !/^[\w-]{1,120}$/.test(source.source_id)) throw new TargetFailure('incomplete', 'Invalid document source');
     return source.source_id;
   }
-  async turn(message: string, turn: number, sourceId?: string): Promise<{ observation: Observation; attempts: Attempt[] }> {
+  async turn(message: string, turn: number, sourceId?: string): Promise<{ observation: Observation; attempts: Attempt[]; timing: { sentAt: string; receivedAt: string } }> {
     if (!this.conversation || message.length < 1 || message.length > 1000) throw new TargetFailure('incomplete', 'Invalid turn');
     const attempts: Attempt[] = [];
     for (let number = 1; number <= 2; number++) {
@@ -239,14 +239,17 @@ export class Session {
       const requestCorrelationId = randomUUID();
       let response: Response;
       let data: Record<string, unknown> | undefined;
+      let sentAt: string, receivedAt: string;
       try {
-        ({ response, data } = await this.timed('target.turn', 'turn', async signal => {
+        ({ response, data, sentAt, receivedAt } = await this.timed('target.turn', 'turn', async signal => {
+          const sentAt = new Date().toISOString();
           const response = await this.request(`copilot-api/v1/conversations/${this.conversation}/turns`, {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Copilot-Token': token },
             body: JSON.stringify({ message, correlation_id: requestCorrelationId, ...(sourceId ? { attachment: { source_id: sourceId } } : {}), stream: false })
           }, signal);
-          if (!response.ok) { discardResponse(response); return { response, data: undefined }; }
-          return { response, data: await boundedTurnJson(response, signal) };
+          if (!response.ok) { discardResponse(response); return { response, data: undefined, sentAt, receivedAt: new Date().toISOString() }; }
+          const data = await boundedTurnJson(response, signal);
+          return { response, data, sentAt, receivedAt: new Date().toISOString() };
         }));
       } catch (error) {
         if (error instanceof DeadlineExceeded && !error.info.attempted) throw new TargetFailure('incomplete', error.message, error.info);
@@ -285,7 +288,7 @@ export class Session {
         });
       } catch { attempts.push({ number, outcome: 'ambiguous', status: response.status }); throw new TurnFailure(attempts); }
       attempts.push({ number, outcome: 'observed', status: response.status });
-      return { observation, attempts };
+      return { observation, attempts, timing: { sentAt, receivedAt } };
     }
     throw new TurnFailure(attempts);
   }

@@ -9,6 +9,8 @@ import { loadPdf } from '../../api/src/artifacts.js';
 import { processAdaptive } from './adaptive.js';
 import { DeadlineExceeded, type DeadlineInfo } from './deadlines.js';
 import { agentErrorMessage, agentFailure, agentMessageHeader, agentRefs, parseAgentMessage, redTeamToJudge, type AgentContext, type AgentFailureCode } from '../../../packages/contracts/src/agent.js';
+import type { EvidenceRuntime } from './evidence/runtime.js';
+import { classifyCaseCorroboration, collectTurnEvidence, CORROBORATION_REVIEW_CLAIM, routeCorroboration, type CollectedTurn } from './evidence/corroborate.js';
 
 export function adaptiveRunUntil(run: ClaimedRun): number | undefined {
   return run.adaptive ? new Date(run.started_at).getTime() + run.adaptive.maxMinutes * 60_000 : undefined;
@@ -23,7 +25,7 @@ function targetFailureCode(error: unknown): AgentFailureCode {
   return error instanceof TargetFailure && /^(Target not ready|Target handshake failed)$/.test(error.message) ? 'target_unreachable' : 'target_boundary_unavailable';
 }
 
-export async function processNext(repo: Repository, owner = 'worker', targetFetch: typeof fetch = fetch, modelFetch: typeof fetch = fetch) {
+export async function processNext(repo: Repository, owner = 'worker', targetFetch: typeof fetch = fetch, modelFetch: typeof fetch = fetch, runtime: EvidenceRuntime | null = null) {
   await repo.expire();
   const run = await repo.claim(owner);
   if (!run) return null;
@@ -47,9 +49,9 @@ export async function processNext(repo: Repository, owner = 'worker', targetFetc
         return { id: run.id, outcome };
       }
     }
-    return processAdaptive(repo, run, targetFetch, modelFetch);
+    return processAdaptive(repo, run, targetFetch, modelFetch, runtime);
   }
-  const evaluated = await evaluateCase(repo, run, run.definition.case, targetFetch, modelFetch, () => repo.stopped(run.id, run.lease_generation));
+  const evaluated = await evaluateCase(repo, run, run.definition.case, targetFetch, modelFetch, () => repo.stopped(run.id, run.lease_generation), run.case_id!, undefined, runtime);
   await repo.finish(run.id, run.lease_generation, evaluated.outcome, evaluated.assessment);
   return { id: run.id, outcome: outcomeSchema.parse((await repo.run(run.id))?.outcome) };
 }
@@ -90,7 +92,7 @@ export function scopeOutcome(category: CaseInput['category'], classified: Outcom
   return classified;
 }
 
-export async function evaluateCase(repo: Repository, run: ClaimedRun, definition: CaseInput, targetFetch: typeof fetch, modelFetch: typeof fetch, shouldStop: () => Promise<boolean> = async () => false, sourceCaseId = run.case_id!, lineage?: Pick<AgentContext, 'attemptId' | 'parentMessageId'> & { executionCaseId?: string }) {
+export async function evaluateCase(repo: Repository, run: ClaimedRun, definition: CaseInput, targetFetch: typeof fetch, modelFetch: typeof fetch, shouldStop: () => Promise<boolean> = async () => false, sourceCaseId = run.case_id!, lineage?: Pick<AgentContext, 'attemptId' | 'parentMessageId'> & { executionCaseId?: string }, runtime: EvidenceRuntime | null = null) {
   const generation = run.lease_generation;
   const contractContext: AgentContext = { runId: run.id, caseId: sourceCaseId, attemptId: lineage?.attemptId ?? `${run.id}-${generation}`, parentMessageId: lineage?.parentMessageId ?? null };
   const runUntil = adaptiveRunUntil(run);
@@ -101,6 +103,7 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
   const selected = definition.user === 'A' ? users[0] : users[1];
   const session = new Session(run.target_snapshot.baseUrl, selected, targetFetch, { runUntil });
   const other = new Session(run.target_snapshot.baseUrl, definition.user === 'A' ? users[1] : users[0], targetFetch, { runUntil });
+  const privateSecrets = () => [...session.secrets(), ...(runtime?.redactionValues ?? [])];
   let outcome: Outcome = 'incomplete';
   let executed = false;
   let observedHistory: Observation[] = [];
@@ -108,6 +111,7 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
   let effectSnapshot: 'unchanged' | 'changed' | 'unavailable' | null = null;
   let assessment: { checks: CheckResult[]; verdict: (Verdict & { policy: PolicyTrace }) | null } | undefined;
   const executedActions: ExecutedAction[] = [];
+  const collectedTurns: CollectedTurn[] = [];
   const heartbeat = setInterval(() => { void repo.heartbeat(run.id, generation).catch(() => clearInterval(heartbeat)); }, 10000);
   try {
     if (await shouldStop()) throw new Error('Run stopped');
@@ -137,10 +141,16 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
             turn = await session.turn(message, index + 1, source);
           }
           catch (e) { if (e instanceof TurnFailure) await emit('target', 'attempts', { attempts: e.attempts }); throw e; }
-          const observed = projectObservation(turn.observation, users, session.secrets());
+          const observed = projectObservation(turn.observation, users, privateSecrets());
           observations.push(observed);
           executedActions.push({ turn: index + 1, kind: action.kind, message, ...(action.kind === 'attach_pdf' ? { artifactId: action.artifactId, documentType: action.documentType, sourceId: source } : {}) });
-          await emit('target', 'turn', { action: action.kind, message: scrubEvidence(definition.category === 'cross_patient' ? action.message.replaceAll('{{OTHER_PATIENT_ID}}', other.user.pubpid) : action.message, users, session.secrets()), observation: observed, attempts: turn.attempts });
+          await emit('target', 'turn', { action: action.kind, message: scrubEvidence(definition.category === 'cross_patient' ? action.message.replaceAll('{{OTHER_PATIENT_ID}}', other.user.pubpid) : action.message, users, privateSecrets()), observation: observed, attempts: turn.attempts });
+          // Collect right after the accepted turn, after its redacted event exists and before any later attack action.
+          if (runtime && !(await shouldStop())) collectedTurns.push(await collectTurnEvidence(runtime, {
+            runId: run.id, targetId: run.target_id, leaseGeneration: generation, attemptId: contractContext.attemptId, caseId: sourceCaseId, executionCaseId: lineage?.executionCaseId,
+            user: definition.user, turn: index + 1, targetVersion: session.version, selectedChartId: session.assignedPid,
+            comparisonChartId: definition.category === 'cross_patient' ? other.assignedPid : null, timing: turn.timing, observation: turn.observation
+          }, { shouldStop, runUntil }));
         }
         if (definition.category === 'unintended_tool_action') {
           const after = await session.chartReportFingerprint();
@@ -155,50 +165,54 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
           await emit('judge', 'policy', { policy: policyTrace.parse({ version: 2, outcome: 'incomplete', passed: [], failed: ['run_stopped'] }) });
           return { outcome: 'incomplete' as const };
         }
-        const providerObservations = state.observations.map(observation => projectObservation(observation, users, session.secrets(), true));
+        // Case-final: every executed prompt and PDF is known, and stop/lease were checked just above.
+        const corroboration = runtime ? classifyCaseCorroboration(runtime, collectedTurns, executedActions) : null;
+        for (const sidecar of corroboration?.sidecars ?? []) await emit('check', 'corroboration', { corroboration: sidecar });
+        const positive = corroboration?.hasPositive ?? false;
+        const providerObservations = state.observations.map(observation => projectObservation(observation, users, privateSecrets(), true));
         const privateChecks = checkCase(definition, state.observations, users);
         const providerChecks = checkCase(definition, providerObservations, users);
         // Source locators can lose their identity during provider aliasing. A
         // citation is safe only if it survives the same projection the Judge
         // sees; patient and tool-effect checks still use private evidence.
         const checks = privateChecks.map((check, index) => check.kind === 'required_source_citation' ? providerChecks[index] : check);
-        await emit('check', 'deterministic', { checks: checks.map(c => ({ ...c, coveredClaim: scrubEvidence(c.coveredClaim, users, session.secrets()) })) });
+        await emit('check', 'deterministic', { checks: checks.map(c => ({ ...c, coveredClaim: scrubEvidence(c.coveredClaim, users, privateSecrets()) })) });
         const policyInput = { checks, observations: providerObservations, category: definition.category ?? 'prompt_injection' as const,
           expectedTurns: definition.actions.length, attachments: executedActions.filter(action => action.kind === 'attach_pdf').map(action => ({ turn: action.turn, sourceId: action.sourceId })),
-          executedPrompts: executedActions.map(action => scrub(action.message, users, session.secrets())), effect: effectSnapshot };
-        const earlyPolicy = async (enforcedOutcome: Outcome, reason: string) => {
+          executedPrompts: executedActions.map(action => scrub(action.message, users, privateSecrets())), effect: effectSnapshot };
+        const earlyPolicy = async (enforcedOutcome: Outcome, reason: string, judgeOnly = false): Promise<Outcome> => {
           const base = judgePolicy({ ...policyInput, verdict: null });
-          await emit('judge', 'policy', { policy: policyTrace.parse({ ...base, outcome: enforcedOutcome, failed: [...base.failed, reason] }) });
+          const routed = routeCorroboration(enforcedOutcome, positive, judgeOnly);
+          const escalated = routed !== enforcedOutcome;
+          if (escalated) assessment ??= { checks: checks.map(c => ({ ...c, coveredClaim: scrubEvidence(c.coveredClaim, users, privateSecrets()) })), verdict: null };
+          await emit('judge', 'policy', { policy: policyTrace.parse({ ...base, outcome: routed, failed: [...base.failed, reason, ...(escalated ? ['corroboration_pending_review'] : [])], ...(escalated ? { canonicalClaim: CORROBORATION_REVIEW_CLAIM } : {}) }) });
+          return routed;
         };
         if (state.observations.some(o => ['denied', 'failed'].includes(o.status))) {
-          await earlyPolicy('inconclusive', 'target_denied_or_failed');
-          return { outcome: 'inconclusive' as const };
+          return { outcome: await earlyPolicy('inconclusive', 'target_denied_or_failed') };
         }
         // The Judge receives neither over-limit nor target-partial evidence as
         // if it were a complete turn. E03 can add explicitly scoped decisions.
         if (state.observations.some(o => o.v === 2 && o.completeness.state === 'truncated')) {
-          await earlyPolicy('incomplete', 'target_evidence_truncated');
-          return { outcome: 'incomplete' as const };
+          return { outcome: await earlyPolicy('incomplete', 'target_evidence_truncated') };
         }
         if (state.observations.some(o => o.status === 'partial')) {
           const policy = judgePolicy({ ...policyInput, verdict: null });
-          await earlyPolicy(policy.outcome, 'target_evidence_partial');
-          return { outcome: policy.outcome };
+          return { outcome: await earlyPolicy(policy.outcome, 'target_evidence_partial') };
         }
         let input: ReturnType<typeof packet>;
-        try { input = packet(definition.expectedSafeBehavior, providerObservations, users, session.secrets(), {
+        try { input = packet(definition.expectedSafeBehavior, providerObservations, users, privateSecrets(), {
           category: definition.category ?? 'prompt_injection', actions: executedActions, checks,
           effect: { result: effectSnapshot ?? 'not_checked', scope: definition.category === 'unintended_tool_action' ? 'Read-only patient report fingerprint; does not cover all writes or attribution' : 'No independent effect observation configured' }
         }); }
-        catch { await earlyPolicy('incomplete', 'packet_bounds_exceeded'); return { outcome: 'incomplete' as const }; }
+        catch { return { outcome: await earlyPolicy('incomplete', 'packet_bounds_exceeded') }; }
         // Validate both the produced handoff and its binding to this execution
         // before pricing, reservation, or model transport.
         let handoff;
         try {
           handoff = parseAgentMessage(redTeamToJudge, { channel: 'red_team_to_judge', status: 'ok', header: agentMessageHeader(contractContext), payload: { packet: input, evidenceRefs: agentRefs(providerObservations, contractContext), policyVersion: 2 } }, contractContext);
         } catch {
-          await earlyPolicy('incomplete', 'agent_contract_invalid');
-          return { outcome: 'incomplete' as const };
+          return { outcome: await earlyPolicy('incomplete', 'agent_contract_invalid') };
         }
         const assignment = run.model_snapshot.roles.judge;
         let amount = 0n;
@@ -213,31 +227,31 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
           } catch (error) {
             const timeout = timeoutInfo(error); if (timeout) await emit('judge', 'timeout', timeout);
             await emit('judge', 'unavailable', { reason: 'Verified paid model pricing unavailable' });
-            await earlyPolicy('incomplete', 'verified_pricing_unavailable');
-            return { outcome: 'incomplete' as const };
+            return { outcome: await earlyPolicy('incomplete', 'verified_pricing_unavailable', true) };
           }
         }
         let callId: string;
         try { callId = await repo.reserveCall(run.id, generation, 'judge', assignment.provider, assignment.model, amount); }
-        catch (error) { await emit('judge', 'unavailable', { reason: 'Model budget, pricing, or lease unavailable', contract: handoffError(contractContext, error instanceof Error && error.message === 'Paid model budget exhausted' ? 'budget_exceeded' : 'reservation_unavailable', 'judge') }); await earlyPolicy('incomplete', 'model_reservation_unavailable'); return { outcome: 'incomplete' as const }; }
+        catch (error) { await emit('judge', 'unavailable', { reason: 'Model budget, pricing, or lease unavailable', contract: handoffError(contractContext, error instanceof Error && error.message === 'Paid model budget exhausted' ? 'budget_exceeded' : 'reservation_unavailable', 'judge') }); return { outcome: await earlyPolicy('incomplete', 'model_reservation_unavailable', true) }; }
         if (await shouldStop()) {
           await repo.settleCall(run.id, generation, callId, { latencyMs: 0, chargeNanos: '0' });
-          await earlyPolicy('incomplete', 'run_stopped_before_judge_dispatch');
-          return { outcome: 'incomplete' as const };
+          return { outcome: await earlyPolicy('incomplete', 'run_stopped_before_judge_dispatch') };
         }
         try {
           const { result, usage } = await callJudgeHandoff(assignment, handoff, contractContext, run.definition.ollamaUrl, modelFetch, dispatchPrice, { runUntil });
           const settled = await repo.settleCall(run.id, generation, callId, usage);
           await emit('judge', 'model_usage', { provider: assignment.provider, model: assignment.model, role: 'judge', ...usage, reconciliation: settled ? 'settled' : 'unresolved' });
-          if (!settled) { await earlyPolicy('incomplete', 'model_settlement_unresolved'); return { outcome: 'incomplete' as const }; }
-          if (await shouldStop()) { await earlyPolicy('incomplete', 'run_stopped'); return { outcome: 'incomplete' as const }; }
+          if (!settled) return { outcome: await earlyPolicy('incomplete', 'model_settlement_unresolved', true) };
+          if (await shouldStop()) return { outcome: await earlyPolicy('incomplete', 'run_stopped') };
           const policy = judgePolicy({ ...policyInput, verdict: result });
           const scoped = scopeOutcome(definition.category, policy.outcome, effectSnapshot);
-          const recordedPolicy = scoped === policy.outcome ? policy : policyTrace.parse({ ...policy, outcome: scoped, failed: [...policy.failed, 'scope_downgrade'] });
-          assessment = { checks: checks.map(c => ({ ...c, coveredClaim: scrubEvidence(c.coveredClaim, users, session.secrets()) })), verdict: { ...result, claim: recordedPolicy.canonicalClaim ?? scrubEvidence(result.claim, users, session.secrets()), evidenceQuote: result.evidenceQuote ? scrubEvidence(result.evidenceQuote, users, session.secrets()) : undefined, challengedClaim: result.challengedClaim ? scrubEvidence(result.challengedClaim, users, session.secrets()) : undefined, materialUncertainties: result.materialUncertainties.map(s => scrubEvidence(s, users, session.secrets())), policy: recordedPolicy } };
-          await emit('judge', 'policy', { policy: recordedPolicy, routedOutcome: scoped });
+          const routed = routeCorroboration(scoped, positive);
+          const scopedPolicy = scoped === policy.outcome ? policy : policyTrace.parse({ ...policy, outcome: scoped, failed: [...policy.failed, 'scope_downgrade'] });
+          const recordedPolicy = routed === scoped ? scopedPolicy : policyTrace.parse({ ...scopedPolicy, outcome: routed, failed: [...scopedPolicy.failed, 'corroboration_pending_review'], canonicalClaim: CORROBORATION_REVIEW_CLAIM });
+          assessment = { checks: checks.map(c => ({ ...c, coveredClaim: scrubEvidence(c.coveredClaim, users, privateSecrets()) })), verdict: { ...result, claim: recordedPolicy.canonicalClaim ?? scrubEvidence(result.claim, users, privateSecrets()), evidenceQuote: result.evidenceQuote ? scrubEvidence(result.evidenceQuote, users, privateSecrets()) : undefined, challengedClaim: result.challengedClaim ? scrubEvidence(result.challengedClaim, users, privateSecrets()) : undefined, materialUncertainties: result.materialUncertainties.map(s => scrubEvidence(s, users, privateSecrets())), policy: recordedPolicy } };
+          await emit('judge', 'policy', { policy: recordedPolicy, routedOutcome: routed });
           await emit('judge', 'verdict', { verdict: assessment.verdict, usage: { provider: assignment.provider, model: assignment.model, ...usage } });
-          return { outcome: scoped };
+          return { outcome: routed };
         } catch (error) {
           const timeout = timeoutInfo(error); if (timeout) await emit('judge', 'timeout', timeout);
           await repo.settleCall(run.id, generation, callId, timeout && !timeout.attempted ? { latencyMs: 0, chargeNanos: '0' } : undefined).catch(() => {});
@@ -245,15 +259,14 @@ export async function evaluateCase(repo: Repository, run: ClaimedRun, definition
           assessment = { checks, verdict: null };
           const policy = judgePolicy({ ...policyInput, verdict: null });
           const actual = assignment.provider === 'openrouter' ? 'incomplete' as const : policy.outcome;
-          await earlyPolicy(actual, 'judge_response_unavailable');
-          return { outcome: actual };
+          return { outcome: await earlyPolicy(actual, 'judge_response_unavailable', true) };
         }
       })
       .addEdge(START, 'observe').addEdge('observe', 'judge').addEdge('judge', END).compile();
     const result = await graph.invoke({});
     outcome = result.outcome;
     observedHistory = result.observations;
-    plannerHistory = observedHistory.map(observation => projectObservation(observation, users, session.secrets(), true));
+    plannerHistory = observedHistory.map(observation => projectObservation(observation, users, privateSecrets(), true));
   } catch (e) {
     outcome = await shouldStop() ? 'incomplete' : e instanceof TargetFailure ? e.kind : 'incomplete';
     const timeout = timeoutInfo(e); if (timeout) await emit('worker', 'timeout', timeout);

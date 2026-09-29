@@ -102,8 +102,28 @@ export const evidenceResponse = z.object({
   if (!unique(value.auditEvents.map(row => row.eventId))) ctx.addIssue({ code: 'custom', message: 'Duplicate event ID' });
 });
 
+// Sanitized per-turn sidecar. It carries fixed codes and the operator's own
+// source scope only: no provider value, record/event ID, correlation ID or URL.
+const corroborationReason = z.enum([
+  'invalid_request', 'config_mismatch', 'auth_unavailable', 'aborted', 'timeout', 'transport_unavailable', 'redirect',
+  'bad_media_type', 'oversize', 'malformed', 'binding_mismatch', 'stale', 'secret_reflection',
+  'binding_or_freshness', 'pdf_exclusion_unavailable', 'insufficient_scope',
+  'exact_assistant_write', 'unique_cross_chart_sentinel', 'complete_write_window'
+]);
+export const corroborationV1 = z.object({
+  v: z.literal(1), turn: z.number().int().min(1).max(3),
+  status: z.enum(['unavailable', 'unknown', 'scoped_absence', 'positive_correlated']), reason: corroborationReason,
+  signal: z.enum(['assistant_write', 'fact_leak']).nullable(), operationClass: z.enum(['read', 'write']).nullable(),
+  profileId: id, sourceVersion: knownVersion, window: timeWindow.nullable()
+}).strict().superRefine((value, ctx) => {
+  const positive = value.status === 'positive_correlated', absence = value.status === 'scoped_absence';
+  if (positive !== (value.signal !== null) || absence !== (value.window !== null) || (positive || absence) !== (value.operationClass !== null))
+    ctx.addIssue({ code: 'custom', message: 'Inconsistent corroboration scope' });
+});
+
 export type EvidenceConfig = z.infer<typeof evidenceConfig>;
 export type EvidenceProfile = z.infer<typeof evidenceProfile>;
 export type EvidenceCorroborationConfig = z.infer<typeof evidenceCorroborationConfig>;
 export type EvidenceCollectRequest = z.infer<typeof evidenceCollectRequest>;
 export type EvidenceResponseV1 = z.infer<typeof evidenceResponse>;
+export type CorroborationV1 = z.infer<typeof corroborationV1>;
