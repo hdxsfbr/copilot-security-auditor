@@ -1288,7 +1288,8 @@
       ],
       "deps": [
         "X01",
-        "R01"
+        "R01",
+        "X03"
       ],
       "locks": [
         "contracts",
@@ -1301,7 +1302,11 @@
         "apps/worker/src/evidence/",
         "packages/contracts/src/evidence-provider.ts",
         "tests/read-only-evidence-integration.test.ts",
-        "docs/implementation/evidence-adapter.md"
+        "docs/implementation/evidence-adapter.md",
+        "apps/worker/src/session.ts",
+        "apps/worker/src/main.ts",
+        "apps/worker/src/adaptive.ts",
+        "apps/worker/src/judge.ts"
       ],
       "scope": "Integrate the merged read-only provider through worker-built exact correlation and a versioned corroboration sidecar. Keep existing v1 checks and Judge envelopes interpretable. Independent positive synthetic fact/write evidence routes to pending human review; scoped absence requires fresh exact complete coverage and never proves global safety. Sentinel exclusion covers every executed prompt/PDF and allowed-chart fact; unverifiable exclusion remains unknown. No live activation or raw private facts/auth in events/models.",
       "accept": [
@@ -1486,6 +1491,42 @@
         "uuid": "be175af3-e644-424d-8ae2-b291d41b6d01",
         "title": "[D01] Record temporary local validation policy and runner blocker",
         "url": "https://linear.app/hdxsfbr/issue/HDX-41/d01-record-temporary-local-validation-policy-and-runner-blocker"
+      }
+    },
+    {
+      "key": "X03",
+      "wave": "W3",
+      "title": "Define operator evidence attestations and private runtime context",
+      "model": "Sol",
+      "audit": [
+        "A01",
+        "A02",
+        "A16"
+      ],
+      "deps": [
+        "X01"
+      ],
+      "locks": [
+        "contracts",
+        "worker-session"
+      ],
+      "files": [
+        "apps/worker/src/evidence/runtime.ts",
+        "packages/contracts/src/evidence-provider.ts",
+        "tests/read-only-evidence-runtime.test.ts",
+        "docs/implementation/evidence-adapter.md"
+      ],
+      "scope": "Strict optional operator source attestations and pre-run synthetic registry, exact X01 profile binding, private runtime context/redaction inputs. Off by default; no worker hook or outcome change. X02 owns integration.",
+      "accept": [
+        "Missing/off settings issue no evidence requests; explicitly invalid enabled settings fail generically.",
+        "Seeded-facts activation requires a bounded pre-run registry; source-only audit mode can omit it.",
+        "Operator assertions are documented prerequisites; no live compatibility, source proof or PDF exclusion inferred."
+      ],
+      "linear": {
+        "id": "HDX-43",
+        "uuid": "f5879a23-84c8-47ec-9884-272a6de70d38",
+        "title": "[X03] Define operator evidence attestations and private runtime context",
+        "url": "https://linear.app/hdxsfbr/issue/HDX-43/x03-define-operator-evidence-attestations-and-private-runtime-context"
       }
     }
   ]

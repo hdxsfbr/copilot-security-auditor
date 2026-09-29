@@ -32,6 +32,46 @@ export const evidenceConfig = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('http'), profile: evidenceProfile }).strict()
 ]);
 
+// Operator attestations are inputs to later policy, not proofs supplied by this
+// schema or by the HTTP transport. Keep synthetic values private at runtime.
+const registryId = id.min(8);
+const registryValue = text.min(16);
+const registryFact = z.object({
+  factId: registryId, sourceRecordRef: registryId, value: registryValue,
+  kind: z.enum(['allowed', 'sentinel'])
+}).strict();
+const registryChart = z.object({
+  chartId, completeAllowedFacts: z.boolean(), facts: z.array(registryFact).max(16)
+}).strict();
+const factRegistry = z.object({
+  completeSeededFacts: z.literal(true), uniqueAcrossSyntheticCharts: z.boolean(),
+  charts: z.array(registryChart).min(1).max(2)
+}).strict().superRefine((registry, ctx) => {
+  const facts = registry.charts.flatMap(chart => chart.facts);
+  if (!facts.some(fact => fact.kind === 'sentinel')) ctx.addIssue({ code: 'custom', message: 'Missing synthetic sentinel' });
+  if (!unique(registry.charts.map(chart => String(chart.chartId))) || facts.length > 32 ||
+    !unique(facts.map(fact => fact.factId)) || !unique(facts.map(fact => fact.value.normalize('NFC').toLowerCase())))
+    ctx.addIssue({ code: 'custom', message: 'Duplicate or excessive registry entries' });
+  for (const sentinel of facts.filter(fact => fact.kind === 'sentinel')) {
+    const marker = sentinel.value.normalize('NFC').toLowerCase();
+    if (facts.some(fact => fact !== sentinel &&
+      (fact.value.normalize('NFC').toLowerCase().includes(marker) || marker.includes(fact.value.normalize('NFC').toLowerCase()))))
+      ctx.addIssue({ code: 'custom', message: 'Overlapping sentinel value' });
+  }
+});
+export const evidenceCorroborationConfig = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('off') }).strict(),
+  z.object({
+    v: z.literal(1), mode: z.literal('on'),
+    binding: z.object({ profileId: id, targetId: z.uuid(), targetVersion: knownVersion, sourceVersion: knownVersion }).strict(),
+    sourceAttestation: z.object({
+      independentOfAssistant: z.boolean(), exactActorAndTurnAttribution: z.boolean(),
+      completeWindowContinuity: z.boolean()
+    }).strict(),
+    factRegistry: factRegistry.optional()
+  }).strict()
+]);
+
 const binding = z.object({
   targetId: z.uuid(), targetVersion: knownVersion, selectedChartId: chartId, comparisonChartId: chartId.optional(),
   conversationId: id, turnId: id, requestCorrelationId: id, responseCorrelationId: id.optional()
@@ -64,5 +104,6 @@ export const evidenceResponse = z.object({
 
 export type EvidenceConfig = z.infer<typeof evidenceConfig>;
 export type EvidenceProfile = z.infer<typeof evidenceProfile>;
+export type EvidenceCorroborationConfig = z.infer<typeof evidenceCorroborationConfig>;
 export type EvidenceCollectRequest = z.infer<typeof evidenceCollectRequest>;
 export type EvidenceResponseV1 = z.infer<typeof evidenceResponse>;
