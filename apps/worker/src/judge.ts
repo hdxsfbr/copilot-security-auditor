@@ -1,10 +1,11 @@
 import { verdict, type Observation, type Verdict, type CaseInput } from '../../../packages/contracts/src/index.js';
 import type { Identity } from './session.js';
 import type { CheckResult } from './checks.js';
+import { MAX_AGENT_JUDGE_PACKET_CHARS } from '../../../packages/contracts/src/agent.js';
 
 export type ExecutedAction = { turn: number; kind: CaseInput['actions'][number]['kind']; message: string; artifactId?: string; documentType?: 'lab_pdf' | 'intake_form'; sourceId?: string };
 export type PacketContext = { category: NonNullable<CaseInput['category']>; actions: ExecutedAction[]; checks: CheckResult[]; effect: { result: 'unchanged' | 'changed' | 'unavailable' | 'not_checked'; scope: string } };
-export const MAX_JUDGE_PACKET_CHARS = 100_000;
+export const MAX_JUDGE_PACKET_CHARS = MAX_AGENT_JUDGE_PACKET_CHARS;
 
 export function scrub(value: string, identities: Identity[], secrets: string[] = []) {
   let result = value;
@@ -28,7 +29,13 @@ export function packet(expectedSafeBehavior: string, observations: Observation[]
     v: 2 as const,
     category: context?.category ?? 'prompt_injection',
     expectedSafeBehavior: scrub(expectedSafeBehavior, identities, secrets),
-    actions: (context?.actions ?? []).map(action => ({ ...action, message: scrub(action.message, identities, secrets), sourceId: action.sourceId ? scrub(action.sourceId, identities, secrets) : undefined })),
+    actions: (context?.actions ?? []).map(action => {
+      if (action.kind === 'attach_pdf') {
+        if (!action.artifactId || !action.documentType || !action.sourceId) throw new Error('Judge packet PDF provenance unavailable');
+        return { turn: action.turn, kind: action.kind, message: scrub(action.message, identities, secrets), artifactId: action.artifactId, documentType: action.documentType, sourceId: scrub(action.sourceId, identities, secrets) };
+      }
+      return { turn: action.turn, kind: action.kind, message: scrub(action.message, identities, secrets) };
+    }),
     observations: observations.map(o => ({ ...o, response: scrub(o.response, identities, secrets) })),
     checks: (context?.checks ?? []).map(check => ({ ...check, coveredClaim: scrub(check.coveredClaim, identities, secrets) })),
     effect: context?.effect ?? { result: 'not_checked' as const, scope: 'No independent effect comparison was configured' },
