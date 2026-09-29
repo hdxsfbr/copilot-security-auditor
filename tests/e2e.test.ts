@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import { createApp } from '../apps/api/src/app.js';
 import { processNext } from '../apps/worker/src/process.js';
-import { database, fixture, modelFixture, users, testCase } from './support.js';
-import { chromium } from 'playwright-core';
+import { database, fixture, launchFixtureBrowser, modelFixture, users, testCase } from './support.js';
 import { PDFDocument } from 'pdf-lib';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -24,7 +23,7 @@ test('served UI and API start, poll and inspect safe, incomplete and reviewable 
     assert.deepEqual(await (await fetch(`${url}/api/config`)).json(), { ollamaUrl: process.env.OLLAMA_URL ?? '', model: process.env.OLLAMA_MODEL ?? '' });
     const health = await fetch(`${url}/api/health`);
     assert.equal(health.status, 200);
-    assert.deepEqual(await health.json(), { status: 'ok', database: 'ready', migrations: 8 });
+    assert.deepEqual(await health.json(), { status: 'ok', database: 'ready', migrations: 9 });
     assert.deepEqual(await (await fetch(`${url}/api/integrity`)).json(), { ok: true, orphaned: [], missing: [], corrupt: [] });
     const post = async (path: string, body: unknown) => {
       const response = await fetch(url + '/api' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -122,7 +121,7 @@ test('operator UI authors a case, replays it, reviews a finding and approves red
   const targetUrl = await toy.start(), safeUrl = await safe.start(), uncertainUrl = await uncertain.start();
   const server = createApp(db.repo).listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
-  const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  const browser = await launchFixtureBrowser();
   try {
     const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     const target = await db.repo.target({ name: 'Browser fixture', baseUrl: targetUrl, ...users });
@@ -221,7 +220,7 @@ test('operator selects a paid Judge with local companion roles and sees reported
   assert.equal((await snapshot({ ...legacyRoles('stub'), judge: { provider: 'openrouter', model: 'test/paid', maxOutputTokens: 64 } })).pricing.judge?.contextLength, 1000);
   const server = createApp(db.repo).listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
-  const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  const browser = await launchFixtureBrowser();
   try {
     const { target, selected } = await (async () => { const target = await db.repo.target({ name: 'Paid fixture', baseUrl: targetUrl, ...users }); const selected = await db.repo.createCase(testCase); return { target, selected }; })();
     const page = await browser.newPage();
@@ -267,7 +266,7 @@ test('operator starts and stops bounded exploration and sees category gaps', asy
   const oldModel = process.env.OLLAMA_MODEL, oldUrl = process.env.OLLAMA_URL;
   process.env.OLLAMA_MODEL = 'stub'; process.env.OLLAMA_URL = ollamaUrl;
   const server = createApp(db.repo).listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
-  const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  const browser = await launchFixtureBrowser();
   try {
     const target = await db.repo.target({ name: 'Bounded browser', baseUrl: targetUrl, ...users });
     const selected = await db.repo.createCase({ ...testCase, title: 'Browser adaptive seed' });
@@ -304,7 +303,7 @@ test('operator creates, pauses and inspects skipped scheduled occurrences', asyn
   const beforeUrl = process.env.OLLAMA_URL, beforeModel = process.env.OLLAMA_MODEL;
   process.env.OLLAMA_URL = ollamaUrl; process.env.OLLAMA_MODEL = 'stub';
   const server = createApp(db.repo).listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
-  const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  const browser = await launchFixtureBrowser();
   try {
     const target = await db.repo.target({ name: 'Schedule browser target', baseUrl: targetUrl, ...users });
     const selected = await db.repo.createCase({ ...testCase, title: 'Scheduled browser case' });

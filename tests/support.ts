@@ -1,6 +1,9 @@
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import pg from 'pg';
+import { chromium } from 'playwright-core';
 import { migrate } from '../db/migrate.js';
 import { Repository } from '../apps/api/src/repository.js';
 
@@ -66,17 +69,59 @@ export function modelFixture(outcome: 'safe' | 'unsafe' | 'inconclusive', overri
   });
   return { get packet() { return packet; }, async start() { await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); return `http://127.0.0.1:${(server.address() as { port: number }).port}/`; }, async close() { await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve())); } };
 }
+export async function launchFixtureBrowser() {
+  const executablePath = process.env.CHROME_BIN?.trim() || [
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+    '/opt/google/chrome/chrome'
+  ].find(path => existsSync(path));
+  if (!executablePath || !existsSync(executablePath)) {
+    throw new Error('Fixture browser unavailable. Install Chromium/Chrome or set CHROME_BIN to its executable path.');
+  }
+  return chromium.launch({ executablePath, headless: true, args: ['--no-sandbox'] });
+}
 export async function database() {
-  const id = execFileSync('docker', ['run', '--rm', '-d', '-P', '-e', 'POSTGRES_PASSWORD=test', 'postgres:17-alpine'], { encoding: 'utf8' }).trim();
-  const port = execFileSync('docker', ['port', id, '5432/tcp'], { encoding: 'utf8' }).trim().split(':').at(-1);
-  const pool = new pg.Pool({ connectionString: `postgres://postgres:test@127.0.0.1:${port}/postgres` });
+  const databaseName = `auditor_test_${process.pid}_${randomUUID().replaceAll('-', '')}`;
+  let pool: pg.Pool;
+  let stop: () => Promise<void>;
+  const serviceUrl = process.env.TEST_DATABASE_URL?.trim();
+  if (serviceUrl) {
+    const admin = new pg.Pool({ connectionString: serviceUrl });
+    try { await admin.query(`CREATE DATABASE "${databaseName}"`); }
+    catch (error) { await admin.end(); throw error; }
+    const databaseUrl = new URL(serviceUrl);
+    databaseUrl.pathname = `/${databaseName}`;
+    pool = new pg.Pool({ connectionString: databaseUrl.toString() });
+    stop = async () => {
+      try { await pool.end(); }
+      finally {
+        try {
+          let active = 0;
+          for (let attempt = 0; attempt < 20; attempt++) {
+            const result = await admin.query('SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=$1', [databaseName]);
+            active = result.rows[0].count;
+            if (active === 0) break;
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+          if (active !== 0) throw new Error(`Cannot drop isolated test database ${databaseName}: ${active} connection(s) remain after 1 second`);
+          await admin.query(`DROP DATABASE "${databaseName}"`);
+        } finally { await admin.end(); }
+      }
+    };
+  } else {
+    const id = execFileSync('docker', ['run', '--rm', '-d', '-P', '-e', 'POSTGRES_PASSWORD=test', 'postgres:17-alpine'], { encoding: 'utf8' }).trim();
+    const port = execFileSync('docker', ['port', id, '5432/tcp'], { encoding: 'utf8' }).trim().split(':').at(-1);
+    pool = new pg.Pool({ connectionString: `postgres://postgres:test@127.0.0.1:${port}/postgres` });
+    stop = async () => { await pool.end(); execFileSync('docker', ['stop', id], { stdio: 'ignore' }); };
+  }
   try {
     for (let i = 0; i < 50; i++) {
       try { await pool.query('SELECT 1'); break; } catch { if (i === 49) throw new Error('PostgreSQL did not start'); await new Promise(r => setTimeout(r, 250)); }
     }
     await migrate(pool);
-    return { repo: new Repository(pool), async close() { await pool.end(); execFileSync('docker', ['stop', id], { stdio: 'ignore' }); } };
-  } catch (error) { await pool.end(); execFileSync('docker', ['stop', id], { stdio: 'ignore' }); throw error; }
+    return { repo: new Repository(pool), async close() { await stop(); } };
+  } catch (error) { await stop(); throw error; }
 }
 export async function seed(repo: Repository, baseUrl: string, ollamaUrl: string) {
   const target = await repo.target({ name: 'Synthetic target', baseUrl, ...users });
