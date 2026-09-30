@@ -1,0 +1,870 @@
+{
+  "schema": "acceptance-run/v1",
+  "label": "FIXTURE ACCEPTANCE RUN: local stand-ins only (fixture target, scripted models, disposable database). This is NOT live acceptance.",
+  "workItem": "HDX-30 / Q02 fixture acceptance",
+  "claims": {
+    "liveTarget": false,
+    "paidProviders": false,
+    "network": "127.0.0.1 only",
+    "liveAcceptance": false
+  },
+  "recordedAt": "2026-09-30T21:26:52.358Z",
+  "revision": {
+    "head": "c9c3eb73c3c7813294798daceff10fe1d060b8ab",
+    "branch": "claude/hdx-30-q02-fixture-acceptance",
+    "subject": "Merge branch 'claude/paid-model-pricing' into 'main'",
+    "applicationTrees": {
+      "apps": "66f13ea4117fd482a4744a474d017be57de170ff",
+      "packages": "f8ef3b60d59e76d0d6730bcc0db04283ccc9b7c5",
+      "db": "47b91a0e4a45485f30d1c74a8248a6aaed86045b"
+    },
+    "applicationSourceDirty": false,
+    "workingTreeDirty": true,
+    "note": "Measured on the committed application source identified by `head` and `applicationTrees`. When `applicationSourceDirty` is false, working-tree differences at measurement time are limited to tests/, evals/ and docs/."
+  },
+  "machine": {
+    "platform": "Linux 7.0.0-31-generic x64",
+    "cpuModel": "Intel(R) Core(TM) i9-14900KF",
+    "logicalCpus": 32,
+    "availableParallelism": 32,
+    "totalMemoryGb": 31,
+    "loadAverageAtStart": [
+      3.4,
+      3.82,
+      3.88
+    ],
+    "node": "v24.14.0"
+  },
+  "command": "TEST_DATABASE_URL=postgresql://auditor:fixture-only@127.0.0.1:55432/auditor_test CHROME_BIN=/usr/bin/google-chrome node --import tsx tests/acceptance/record.ts",
+  "summary": {
+    "tests": 60,
+    "pass": 60,
+    "fail": 0,
+    "durationMs": 23614,
+    "files": 7
+  },
+  "requirementIds": [
+    "A01",
+    "A02",
+    "A03",
+    "A04",
+    "A05",
+    "A06",
+    "A07",
+    "A08",
+    "A09",
+    "A10",
+    "A11",
+    "A12",
+    "A13",
+    "A14",
+    "A15",
+    "A16",
+    "J01",
+    "J02",
+    "J03",
+    "J04",
+    "J05",
+    "J06",
+    "J07",
+    "J08",
+    "J09",
+    "J10",
+    "J11",
+    "BASELINE",
+    "UI-KEYBOARD",
+    "UI-SMALL-SCREEN",
+    "UI-RECOVERY"
+  ],
+  "coverage": {
+    "A01": {
+      "tests": 3,
+      "passed": 3
+    },
+    "A02": {
+      "tests": 4,
+      "passed": 4
+    },
+    "A03": {
+      "tests": 2,
+      "passed": 2
+    },
+    "A04": {
+      "tests": 1,
+      "passed": 1
+    },
+    "A05": {
+      "tests": 2,
+      "passed": 2
+    },
+    "A06": {
+      "tests": 6,
+      "passed": 6
+    },
+    "A07": {
+      "tests": 5,
+      "passed": 5
+    },
+    "A08": {
+      "tests": 2,
+      "passed": 2
+    },
+    "A09": {
+      "tests": 2,
+      "passed": 2
+    },
+    "A10": {
+      "tests": 7,
+      "passed": 7
+    },
+    "A11": {
+      "tests": 6,
+      "passed": 6
+    },
+    "A12": {
+      "tests": 3,
+      "passed": 3
+    },
+    "A13": {
+      "tests": 2,
+      "passed": 2
+    },
+    "A14": {
+      "tests": 4,
+      "passed": 4
+    },
+    "A15": {
+      "tests": 5,
+      "passed": 5
+    },
+    "A16": {
+      "tests": 5,
+      "passed": 5
+    },
+    "J01": {
+      "tests": 7,
+      "passed": 7
+    },
+    "J02": {
+      "tests": 12,
+      "passed": 12
+    },
+    "J03": {
+      "tests": 6,
+      "passed": 6
+    },
+    "J04": {
+      "tests": 4,
+      "passed": 4
+    },
+    "J05": {
+      "tests": 5,
+      "passed": 5
+    },
+    "J06": {
+      "tests": 4,
+      "passed": 4
+    },
+    "J07": {
+      "tests": 3,
+      "passed": 3
+    },
+    "J08": {
+      "tests": 2,
+      "passed": 2
+    },
+    "J09": {
+      "tests": 3,
+      "passed": 3
+    },
+    "J10": {
+      "tests": 3,
+      "passed": 3
+    },
+    "J11": {
+      "tests": 1,
+      "passed": 1
+    },
+    "BASELINE": {
+      "tests": 2,
+      "passed": 2
+    },
+    "UI-KEYBOARD": {
+      "tests": 1,
+      "passed": 1
+    },
+    "UI-SMALL-SCREEN": {
+      "tests": 2,
+      "passed": 2
+    },
+    "UI-RECOVERY": {
+      "tests": 3,
+      "passed": 3
+    }
+  },
+  "uncovered": [],
+  "productObservations": [
+    {
+      "id": "O1",
+      "kind": "gap",
+      "where": "apps/web/src/components/AppShell.tsx:36",
+      "what": "The footer still reads \"PHASE 02 / THREE TRUST BOUNDARIES\" (audit A16 drift) while the published catalog now holds the 20-case starter and targeted matrix.",
+      "suggestion": "Copy fix in a separate issue."
+    },
+    {
+      "id": "O2",
+      "kind": "gap",
+      "where": "apps/api/src/app.ts:113 (dispatchRun) and apps/api/src/repository.ts:627 (reserveCall)",
+      "what": "POST /api/runs returns 202 for a paid Judge whose conservative reservation exceeds openRouterCapUsd. Only the worker refuses, after the target turn and before the provider call, so the run ends incomplete. The composer blocks this case from its preflight preview; the API does not.",
+      "suggestion": "Refuse at dispatch so an API client cannot spend a target turn on a run that cannot be judged."
+    },
+    {
+      "id": "O3",
+      "kind": "gap",
+      "where": "apps/api/src/app.ts:234 (POST /api/runs/:id/stop)",
+      "what": "The same 409 \"No active run to stop\" is returned for an unknown run id and for a run that already finished.",
+      "suggestion": "Return 404 for unknown ids."
+    },
+    {
+      "id": "O4",
+      "kind": "note",
+      "where": "apps/worker/src/adaptive.ts:128 (adaptiveOutcome)",
+      "what": "An adaptive run that the no-signal stagnation policy stops early finishes safe although part of its case allowance was not spent, while one rejected proposal makes the whole run incomplete.",
+      "suggestion": "Decide whether an early stagnation stop should be reported as safe."
+    },
+    {
+      "id": "O5",
+      "kind": "gap",
+      "where": "db/migrations/003_starter_cases.sql, 004_chart_context_case.sql, 011_versioned_starter_matrix.sql",
+      "what": "Three pre-matrix starter cases (\"Starter: direct instruction override\", \"Starter: Co-Pilot chart-context isolation\", \"Starter: unintended chart action\") are published without a rubric: coverage reports them as unknown_legacy and they carry no OWASP mapping. Coverage cannot be filtered by OWASP tag.",
+      "suggestion": "Archive or re-version them with rubrics; add an OWASP filter if the rubric needs it."
+    },
+    {
+      "id": "O6",
+      "kind": "note",
+      "where": "apps/api/src/repository.ts:625 (reserveCall)",
+      "what": "An unresolved paid-call hold blocks further paid calls only inside the same run. A new run with its own cap can still call the provider while an earlier charge is unresolved.",
+      "suggestion": "Decide whether unresolved spend should also gate new paid runs on the same account."
+    },
+    {
+      "id": "O7",
+      "kind": "note",
+      "where": "apps/worker/src/process.ts:87 and :91 (scopeOutcome)",
+      "what": "The unintended_tool_action safe-to-inconclusive and cross_patient auto_confirm-to-pending_review branches are unreachable today because judgePolicy already routes those categories the same way. They are defence in depth that no test can exercise.",
+      "suggestion": "None needed; keep or remove deliberately."
+    },
+    {
+      "id": "O8",
+      "kind": "note",
+      "where": "apps/api/src/app.ts:295 (GET /api/coverage)",
+      "what": "The legacy coverage endpoint still pools every target and version. The UI uses GET /api/coverage/scoped.",
+      "suggestion": "Retire it when no client depends on it."
+    },
+    {
+      "id": "O9",
+      "kind": "bug",
+      "where": "apps/worker/src/session.ts:189 and apps/api/src/regression-states.ts:36",
+      "what": "When a target handshake omits module_version the worker records the literal label \"unknown\". Coverage treats that label as an unestablished version (coverage.ts:24), but regression state treats it as a verified version: a safe replay there after a violation on a verified version is reported fixed / safe_on_later_version, contradicting the documented rule that a version-less result is always unknown. Reproduced with the fixture target; not fixed here.",
+      "suggestion": "Store null (or normalise \"unknown\") where the version is recorded, so both consumers agree that it was never verified."
+    }
+  ],
+  "tests": [
+    {
+      "file": "baseline.test.ts",
+      "name": "[BASELINE] a small baseline run drives the real pipeline, injects latency, and labels itself a fixture baseline",
+      "ids": [
+        "BASELINE"
+      ],
+      "status": "pass",
+      "durationMs": 1840
+    },
+    {
+      "file": "baseline.test.ts",
+      "name": "[BASELINE] percentiles use nearest-rank on the sorted samples",
+      "ids": [
+        "BASELINE"
+      ],
+      "status": "pass",
+      "durationMs": 2
+    },
+    {
+      "file": "browser.test.ts",
+      "name": "[UI-KEYBOARD][A09] keyboard alone skips to content, walks the primary navigation with visible focus, launches a run and records a review decision",
+      "ids": [
+        "UI-KEYBOARD",
+        "A09"
+      ],
+      "status": "pass",
+      "durationMs": 3464
+    },
+    {
+      "file": "browser.test.ts",
+      "name": "[UI-RECOVERY][A04] a model-catalog 503 leaves the application usable, keeps entered work, still launches a run, and recovers with a local retry",
+      "ids": [
+        "UI-RECOVERY",
+        "A04"
+      ],
+      "status": "pass",
+      "durationMs": 3059
+    },
+    {
+      "file": "browser.test.ts",
+      "name": "[UI-RECOVERY][A06][A15] list and network failures keep the last data with a retry, a reload restores a run by its URL, and a busy target links to the run that owns it",
+      "ids": [
+        "UI-RECOVERY",
+        "A06",
+        "A15"
+      ],
+      "status": "pass",
+      "durationMs": 1383
+    },
+    {
+      "file": "browser.test.ts",
+      "name": "[UI-RECOVERY][A10][J01] a saved case draft survives a reload, and a rejected PDF keeps the draft for recovery",
+      "ids": [
+        "UI-RECOVERY",
+        "A10",
+        "J01"
+      ],
+      "status": "pass",
+      "durationMs": 1035
+    },
+    {
+      "file": "browser.test.ts",
+      "name": "[UI-SMALL-SCREEN][A09] every workspace page fits a 390px phone: no sideways scroll, reachable navigation, and controls that stay on screen",
+      "ids": [
+        "UI-SMALL-SCREEN",
+        "A09"
+      ],
+      "status": "pass",
+      "durationMs": 4244
+    },
+    {
+      "file": "browser.test.ts",
+      "name": "[UI-SMALL-SCREEN][A12][J09] a schedule shows its own zone at phone width and labels a differing browser zone",
+      "ids": [
+        "UI-SMALL-SCREEN",
+        "A12",
+        "J09"
+      ],
+      "status": "pass",
+      "durationMs": 783
+    },
+    {
+      "file": "cases-reports-regressions.test.ts",
+      "name": "[A07][J05] a rejected finding never gets a job, a revision or an approved report",
+      "ids": [
+        "A07",
+        "J05"
+      ],
+      "status": "pass",
+      "durationMs": 592
+    },
+    {
+      "file": "cases-reports-regressions.test.ts",
+      "name": "[A07][J05] a reviewed finding is drafted into a concrete, aliased report that only an exact-hash approval can publish",
+      "ids": [
+        "A07",
+        "J05"
+      ],
+      "status": "pass",
+      "durationMs": 366
+    },
+    {
+      "file": "cases-reports-regressions.test.ts",
+      "name": "[A07][J05] a run without a report policy drafts nothing until the operator authorizes the job",
+      "ids": [
+        "A07",
+        "J05"
+      ],
+      "status": "pass",
+      "durationMs": 273
+    },
+    {
+      "file": "cases-reports-regressions.test.ts",
+      "name": "[A07][J05] an invalid Documentation model output fails the job and creates no revision",
+      "ids": [
+        "A07",
+        "J05"
+      ],
+      "status": "pass",
+      "durationMs": 587
+    },
+    {
+      "file": "cases-reports-regressions.test.ts",
+      "name": "[A10][J01] a legacy-authored case is editable only until its first run, then refuses edits and is versioned by cloning",
+      "ids": [
+        "A10",
+        "J01"
+      ],
+      "status": "pass",
+      "durationMs": 226
+    },
+    {
+      "file": "cases-reports-regressions.test.ts",
+      "name": "[A10][J01] a used case is immutable; cloning copies the PDF into version 2 while earlier runs keep referencing version 1",
+      "ids": [
+        "A10",
+        "J01"
+      ],
+      "status": "pass",
+      "durationMs": 347
+    },
+    {
+      "file": "cases-reports-regressions.test.ts",
+      "name": "[A10][J01] an archived case leaves the runnable list, refuses launch and keeps its executions readable",
+      "ids": [
+        "A10",
+        "J01"
+      ],
+      "status": "pass",
+      "durationMs": 384
+    },
+    {
+      "file": "cases-reports-regressions.test.ts",
+      "name": "[A10][J01] an invalid PDF upload leaves a non-runnable draft that recovers in place after a valid upload",
+      "ids": [
+        "A10",
+        "J01"
+      ],
+      "status": "pass",
+      "durationMs": 950
+    },
+    {
+      "file": "cases-reports-regressions.test.ts",
+      "name": "[A10][J01] publishing an incomplete draft is refused with the named reason and the same draft publishes once fixed",
+      "ids": [
+        "A10",
+        "J01"
+      ],
+      "status": "pass",
+      "durationMs": 324
+    },
+    {
+      "file": "cases-reports-regressions.test.ts",
+      "name": "[A10][J01] the starter matrix publishes versioned cases for all three categories with complete OWASP-mapped rubrics",
+      "ids": [
+        "A10",
+        "J01"
+      ],
+      "status": "pass",
+      "durationMs": 249
+    },
+    {
+      "file": "cases-reports-regressions.test.ts",
+      "name": "[A14][J06] a suite replays the identity through the worker and the per-version state goes unknown, fixed, resurfaced without pooling targets",
+      "ids": [
+        "A14",
+        "J06"
+      ],
+      "status": "pass",
+      "durationMs": 468
+    },
+    {
+      "file": "cases-reports-regressions.test.ts",
+      "name": "[A14][J06] equivalent confirmed findings share one regression identity, different attacks never merge and every finding stays listed",
+      "ids": [
+        "A14",
+        "J06"
+      ],
+      "status": "pass",
+      "durationMs": 411
+    },
+    {
+      "file": "cases-reports-regressions.test.ts",
+      "name": "[A14][J06] unknown, inconclusive, blocked and same-version results are never reported as fixed",
+      "ids": [
+        "A14",
+        "J06"
+      ],
+      "status": "pass",
+      "durationMs": 422
+    },
+    {
+      "file": "coverage-spend-schedules.test.ts",
+      "name": "[A08][J07] a review decision changes disposition but never rewrites the recorded outcome or the scoped safe rate inputs",
+      "ids": [
+        "A08",
+        "J07"
+      ],
+      "status": "pass",
+      "durationMs": 289
+    },
+    {
+      "file": "coverage-spend-schedules.test.ts",
+      "name": "[A08][J07] scoped coverage keeps targets and versions apart, never counts blocked or inconclusive work as safe, and ties case rows to their OWASP-mapped rubric",
+      "ids": [
+        "A08",
+        "J07"
+      ],
+      "status": "pass",
+      "durationMs": 1022
+    },
+    {
+      "file": "coverage-spend-schedules.test.ts",
+      "name": "[A12][J09] a schedule from a saved definition reports its zone, target and cases, dispatches through the real worker, skips a reserved target with a reason, and stays inspectable when archived",
+      "ids": [
+        "A12",
+        "J09"
+      ],
+      "status": "pass",
+      "durationMs": 379
+    },
+    {
+      "file": "coverage-spend-schedules.test.ts",
+      "name": "[A12][J09] schedule times are computed and reported in the schedule zone, including the DST gap and the repeated hour",
+      "ids": [
+        "A12",
+        "J09"
+      ],
+      "status": "pass",
+      "durationMs": 8
+    },
+    {
+      "file": "coverage-spend-schedules.test.ts",
+      "name": "[J08] local inference is never priced or reconcilable",
+      "ids": [
+        "J08"
+      ],
+      "status": "pass",
+      "durationMs": 247
+    },
+    {
+      "file": "coverage-spend-schedules.test.ts",
+      "name": "[J08][A11] an unbilled paid call stays held against its run and only an evidence-backed, bounded, idempotent attestation releases it",
+      "ids": [
+        "J08",
+        "A11"
+      ],
+      "status": "pass",
+      "durationMs": 322
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A01][J03] a prose \"source:\" marker is not a citation: the same claim without a structured source is a violation and cannot be safe",
+      "ids": [
+        "A01",
+        "J03"
+      ],
+      "status": "pass",
+      "durationMs": 588
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A01][J03] structured chart, document and guideline references survive the real worker into the stored evidence and the Judge packet",
+      "ids": [
+        "A01",
+        "J03"
+      ],
+      "status": "pass",
+      "durationMs": 364
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A01][J03] visible text past the 10,000 character limit is marked truncated, never reaches the Judge, and cannot yield complete, safe or a finding",
+      "ids": [
+        "A01",
+        "J03"
+      ],
+      "status": "pass",
+      "durationMs": 599
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A02][J04] a refusal quoted by an unrelated unsafe verdict is not auto-confirmed, and the gate still confirms a real uncited claim",
+      "ids": [
+        "A02",
+        "J04"
+      ],
+      "status": "pass",
+      "durationMs": 409
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A02][J04] a safe verdict without a supporting quote or a complete reproduction is inconclusive; only a supported one is safe",
+      "ids": [
+        "A02",
+        "J04"
+      ],
+      "status": "pass",
+      "durationMs": 469
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A02][J04] the Judge packet carries the executed user messages, the deterministic check results and the effect evidence",
+      "ids": [
+        "A02",
+        "J04"
+      ],
+      "status": "pass",
+      "durationMs": 273
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A02][J04] the labeled calibration set has zero false auto-confirms and zero false safes through the real checks and Judge policy",
+      "ids": [
+        "A02",
+        "J04"
+      ],
+      "status": "pass",
+      "durationMs": 2
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A03] confirming a PDF-backed finding is refused with evidence_integrity_failed when the stored PDF is gone, and allowed once it is restored",
+      "ids": [
+        "A03"
+      ],
+      "status": "pass",
+      "durationMs": 419
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A03] losing the PDF after confirmation blocks approve-export and export with 409 while the historical decision stays confirmed",
+      "ids": [
+        "A03"
+      ],
+      "status": "pass",
+      "durationMs": 306
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A05][J03] a legitimate 15.3 second target turn completes with one request and the normal outcome, inside the documented 90 second turn deadline",
+      "ids": [
+        "A05",
+        "J03"
+      ],
+      "status": "pass",
+      "durationMs": 15574
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A05][J03] an ambiguous delivery ends incomplete after exactly one turn request: no replay, no Judge call, no finding",
+      "ids": [
+        "A05",
+        "J03"
+      ],
+      "status": "pass",
+      "durationMs": 184
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A16] a changed chart report fingerprint goes to pending_review even when the Judge says safe, without storing the report",
+      "ids": [
+        "A16"
+      ],
+      "status": "pass",
+      "durationMs": 210
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A16] a cross_patient case whose two charts cannot be told apart is blocked before any chat turn and never counts as safe",
+      "ids": [
+        "A16"
+      ],
+      "status": "pass",
+      "durationMs": 213
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A16] an unintended_tool_action case never ends safe even when the Judge says safe: it is inconclusive and stays out of the safe coverage",
+      "ids": [
+        "A16"
+      ],
+      "status": "pass",
+      "durationMs": 203
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A16] chart-context isolation: both identities open distinct charts, the placeholder becomes the other identifier, and only the selected chart context is claimed",
+      "ids": [
+        "A16"
+      ],
+      "status": "pass",
+      "durationMs": 196
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[A16] the case form and starters no longer require reciprocal record access, and starters cover all three categories with OWASP mappings",
+      "ids": [
+        "A16"
+      ],
+      "status": "pass",
+      "durationMs": 168
+    },
+    {
+      "file": "evidence-judge.test.ts",
+      "name": "[J03] the optional read-only evidence adapter is off by default: no corroboration sidecar and the black-box outcome is unchanged; configuring it is what adds one",
+      "ids": [
+        "J03"
+      ],
+      "status": "pass",
+      "durationMs": 256
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A06][A15][J02] run history pages newest-first with a stable cursor across safe, inconclusive, blocked and incomplete runs",
+      "ids": [
+        "A06",
+        "A15",
+        "J02"
+      ],
+      "status": "pass",
+      "durationMs": 579
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A06][J02] a queued selected run can be stopped, never reaches the target and releases its reservation",
+      "ids": [
+        "A06",
+        "J02"
+      ],
+      "status": "pass",
+      "durationMs": 296
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A06][J02] GET /api/runs/:id restores a finished run by id, with target identity and outcome, after an API restart",
+      "ids": [
+        "A06",
+        "J02"
+      ],
+      "status": "pass",
+      "durationMs": 563
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A06][J02] launching against a busy target returns 409 with the owning run id and creates nothing",
+      "ids": [
+        "A06",
+        "J02"
+      ],
+      "status": "pass",
+      "durationMs": 472
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A06][J02] stopping a running selected run is cooperative: the in-flight turn ends, no Judge is called and no candidate exists",
+      "ids": [
+        "A06",
+        "J02"
+      ],
+      "status": "pass",
+      "durationMs": 407
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A11][J02] a paid Judge needs no Ollama URL, previews a conservative reservation against the cap, and a cap below it refuses dispatch",
+      "ids": [
+        "A11",
+        "J02"
+      ],
+      "status": "pass",
+      "durationMs": 473
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A11][J02] a selected run needs only the Judge role; inactive legacy roles are neither validated nor stored",
+      "ids": [
+        "A11",
+        "J02"
+      ],
+      "status": "pass",
+      "durationMs": 421
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A11][J02] an adaptive launch validates only its three active roles",
+      "ids": [
+        "A11",
+        "J02"
+      ],
+      "status": "pass",
+      "durationMs": 392
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A11][J02] preflight reports a missing or unreachable local model without reserving the target, and launch refuses with issues",
+      "ids": [
+        "A11",
+        "J02"
+      ],
+      "status": "pass",
+      "durationMs": 308
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A11][J02] saved run definitions: create, edit by revision, launch the exact revision, and refuse stale or archived launches",
+      "ids": [
+        "A11",
+        "J02"
+      ],
+      "status": "pass",
+      "durationMs": 260
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A13][J02] adaptive proposals stay inside the 3-action cap, and rejected or out-of-bounds proposals never reach the target",
+      "ids": [
+        "A13",
+        "J02"
+      ],
+      "status": "pass",
+      "durationMs": 311
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A13][J02] an adaptive run records per-case mutation lineage, feeds sanitized prior verdicts forward, and stops on repeated no-signal with a recorded reason",
+      "ids": [
+        "A13",
+        "J02"
+      ],
+      "status": "pass",
+      "durationMs": 342
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A15][J10] CI runs typecheck, build and the fixture suite, and the fixture browser honors CHROME_BIN",
+      "ids": [
+        "A15",
+        "J10"
+      ],
+      "status": "pass",
+      "durationMs": 1
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A15][J10] operations health reports none registered, idle, busy, waiting, aging, stale and cycle-failed states with allowlisted codes only",
+      "ids": [
+        "A15",
+        "J10"
+      ],
+      "status": "pass",
+      "durationMs": 516
+    },
+    {
+      "file": "runs-models-ops.test.ts",
+      "name": "[A15][J10] run events page bounded, ordered and exclusive, and the pages are lossless against the full event list",
+      "ids": [
+        "A15",
+        "J10"
+      ],
+      "status": "pass",
+      "durationMs": 253
+    },
+    {
+      "file": "workflow.test.ts",
+      "name": "[J11][A07][A14][J05][J06][J07] author -> run -> finding -> decision -> redacted report -> approval -> regression suites by version -> coverage",
+      "ids": [
+        "J11",
+        "A07",
+        "A14",
+        "J05",
+        "J06",
+        "J07"
+      ],
+      "status": "pass",
+      "durationMs": 742
+    }
+  ]
+}
