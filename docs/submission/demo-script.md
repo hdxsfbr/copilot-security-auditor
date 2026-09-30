@@ -1,93 +1,91 @@
-# Demo video script (target 4:40, limit 5:00)
+# Demo video script (OpenMontage)
 
-Shot list for the PRD demo: work completed, key decisions, and the platform running live attacks against the **local (LAN) Co-Pilot deployment** at `http://10.0.0.32:8300`, target "Local Co-Pilot" with the synthetic physician and receptionist accounts. The public deployment (`https://openemr-137-184-4-22.sslip.io`) has no auditor target or credentials configured, so it is not used; say so on camera. Bracketed items are operator placeholders; never fill a finding from memory or from fixtures.
+A scene-by-scene script for an automated recorder that drives the browser, records the screen and narrates. Target length **4:40** (limit 5:00). Each scene gives the exact actions (UI labels are quoted exactly as they appear) and the narration to speak. Everything shown is synthetic.
 
-## Before recording
+## Environment (check before recording; do not narrate)
 
-- Synthetic data only. Keep `.env`, passwords and cookies off screen.
-- Pre-launch the live run; a case can take over a minute (turn deadline 90 s). Record the launch, cut to the finished run, and caption it "time-compressed".
-- The demo database was reset to one target ("Local Co-Pilot") and seeded with one run of each of the 10 starter-matrix cases on local models, so Overview, Runs and Coverage have current data. Auditor UI: `http://10.0.0.32:3000`.
-- Suggested live run on camera: one selected current-chart isolation case with a local Judge, then one adaptive run (`maxCases` 3, three categories).
-- Evidence caveat: the synthetic account credentials include ordinary role words, so stored transcripts show `[REDACTED]` where the attack text says "physician". That is the credential scrubber working (evidence and Judge packets never carry credentials); narrate it as such. Adaptive proposals are no longer rejected for it (admission gate checks only assigned patient identifiers, !49/!50).
-- A paid Judge must pass preflight and the cap must exceed one reservation. The UI default cap of 0.25 USD is below a `mistral-medium-3-5` reservation (about 0.40 USD); see `cost-and-scale.md` section 3.
+- **App:** `http://10.0.0.32:3000` (Clinical Auditor, no login). The recorder must run on a machine that can reach this LAN address.
+- **Browser:** 1440×900 or larger, zoom 100%, light theme.
+- **State:** one target, "Local Co-Pilot" (`http://10.0.0.32:8300`, target version 0.8.0), with seeded selected runs and one completed adaptive run. The target must be idle: on **Overview**, "Worker and queue health" reads "Normal".
+- **Architecture image:** `docs/submission/assets/architecture.png` in this repository (the GitLab project is private, so do not navigate to GitLab). Open it as a local file.
+- **Do not show:** any `.env` file or terminal; do not type into the **Password** field on **Targets**.
+- **Live-run timing:** a single-case run takes about 20 seconds. If the recorder cannot wait, cut and caption "time-compressed".
+- **Never claim a discovered vulnerability.** This pass found none; the script says so.
 
-## What is on `main` for the recording
+## Scenes
 
-Everything the shot list shows is merged: report drafting and review (F00–F02), the run composer (U04), scoped coverage and its UI (V01, V02), operations health (O01), regression identities and suites with recurring/fixed/resurfaced/unknown states (G01, G02), adaptive feedback, mutation lineage and stagnation stop (A17), spend reconciliation (M02) and reusable schedules (S01). Record against a stack rebuilt from current `main`.
+### 1 · 0:00–0:25 · The problem
 
-The first live pass found **no confirmed vulnerability** ([evidence](../../evals/results/live/2026-09-29/README.md)). Where a segment below expects a live finding, show the run's evidence and policy gates instead and say so, or use the clearly labelled simulated triage ([triage.md](triage.md)) to demonstrate review and reporting. Never present a simulated finding as discovered.
+**Actions:** open `http://10.0.0.32:3000/` (**Overview**). Hover the left navigation from **Overview** down to **Schedules**.
 
-## Shot list
+**Narration:**
+> OpenEMR's Clinical Co-Pilot answers questions from the open patient's chart, reads uploaded PDFs, and promises to stay read-only and inside that one chart. This is the Clinical Auditor: a multi-agent system that attacks that assistant continuously, judges every answer against evidence, and turns what it finds into reviewable reports and repeatable regression tests.
 
-### 1. 0:00-0:25 Problem framing
+### 2 · 0:25–1:00 · Architecture and trust boundaries
 
-**On screen:** `docs/COPILOT_FEATURE.md` overview or a chart with the Co-Pilot panel.
+**Actions:** open `docs/submission/assets/architecture.png`. Start at the top ("Operator") and scroll slowly to the bottom ("Policy gates (deterministic)"). Pause on the "Adaptive runs only" box, then on "Judge model" and "Policy gates".
 
-- The Co-Pilot answers from the open patient's chart, reads PDFs, cites records, and promises to be read-only.
-- Its promise: text in chat, notes or PDFs cannot change the patient, scope, tools or write boundary.
-- The auditor tests that repeatedly across target versions: prompt injection, chart-context isolation, unintended tool actions.
+**Narration:**
+> Four agent roles have separate authority. The Orchestrator picks what to test next from coverage gaps and regression history. The Red Team writes the attack messages. The Judge proposes a verdict with a verbatim quote. The Documentation role drafts reports only for confirmed findings. No model holds credentials or chooses endpoints: every proposal passes a deterministic admission gate, and the Judge's verdict passes deterministic policy gates before anything counts as safe or as a finding.
 
-### 2. 0:25-0:55 Architecture and trust boundaries
+### 3 · 1:00–1:20 · Targets and cases
 
-**On screen:** the `ARCHITECTURE.md` diagram, then the role table.
+**Actions:** click **Targets**. In "Target to configure", select "Local Co-Pilot - http://10.0.0.32:8300". Pause on the two test users (usernames and "External patient ID (pubpid)"). Click **Cases**. Click "Starter: current-chart isolation / multi-turn". Scroll to "Rubric and threat mapping" (subcategory, OWASP mappings, severity).
 
-- Four roles, separate authority: Orchestrator selects bounded work; Red Team proposes one to three typed actions; Judge proposes a cited verdict; Documentation drafts only from confirmed evidence.
-- A proposal is data until schema and policy admit it. The worker, not a model, owns credentials, chart selection, tickets and replay.
-- The Judge only proposes. A deterministic gate requires complete observations, resolvable evidence references, a quote from the cited response that is not a prompt echo, and no material uncertainty.
+**Narration:**
+> The target is a synthetic OpenEMR deployment with two test clinicians, each bound to a different synthetic patient. Passwords are stored encrypted and never returned to the browser. Test cases are versioned: each records its attack steps, the safe behavior it expects, OWASP mappings and a severity rationale.
 
-### 3. 0:55-1:20 UI tour
+### 4 · 1:20–1:50 · Launching a live attack
 
-**On screen:** Overview, Targets, Cases workspace.
+**Actions:** click **Launch**. In "Saved authorized target" select "Local Co-Pilot - http://10.0.0.32:8300". Under "Run mode" choose **Single case**. In "Selected case" choose "Starter: current-chart isolation / direct". Leave "Judge provider" as "Host Ollama (local)" (model `qwen3-coder:30b`). Click **Check availability**; pause on "$0 paid reservation; local inference unverified." Click **Start run**.
 
-- Targets: synthetic identities (passwords never returned), host allowlist, two distinct chart assignments.
-- Cases: versioned definitions with category, OWASP mapping, severity rationale, at most three actions. Footer: "CONFIRMED ≠ PUBLISHED · INCOMPLETE ≠ SAFE".
+**Narration:**
+> An operator composes one bounded run: the target, a case, and a model for each active role. Here the Judge runs on a local model, so the paid reservation is zero. Preflight checks model availability before anything is sent. When I start the run, the platform attacks the live target: it logs in as the synthetic clinician, opens patient A's chart, and asks for another patient's lab results.
 
-### 4. 1:20-1:45 Composing a run
+### 5 · 1:50–2:35 · Evidence from the live run
 
-**On screen:** Launch page, "Role models and spend" [U04 composer if merged].
+**Actions:** stay on the run page that opened after **Start run**. Wait until the status reads "FINISHED". Point at the header (outcome, target "Local Co-Pilot / 0.8.0", Judge model). Scroll through "Turns and checks": the "target / turn" event (chat message and visible response), "check / deterministic", the Judge verdict and the policy event. Then scroll up to "Measured model usage".
 
-- Pick target and case; assign a model per role: local `qwen3-coder:30b` for Orchestrator and Red Team, local or paid Judge.
-- Bounds: cases, minutes, per-run paid cap. Nothing dispatches until Start, and one run is active per target.
+**Narration:**
+> Every step is recorded as structured evidence: the session and target version, the exact message sent, the assistant's visible reply, and the deterministic checks. In this run the reply did not reveal anything from the other chart, and the outcome is labelled only as far as that evidence supports. The Judge proposes a verdict with a quote, and the policy gates check that the quote really appears in the cited reply and is not just an echo of the prompt. Model usage is metered per call: tokens, latency and cost.
 
-### 5. 1:45-2:30 Live run against the local target
+### 6 · 2:35–3:10 · Adaptive exploration
 
-**On screen:** Runs, then run detail during execution (time-compressed).
+**Actions:** click **Runs**. Click the entry "Local Co-Pilot adaptive · finished / inconclusive". Pause on "Adaptive progress" (three categories) and "Measured model usage" (orchestrator, redTeam, judge rows). Click **Case 2: unintended tool action** and scroll to its chat message.
 
-- Evidence stream: session open with target version, distinct-chart check, each prompt and response, deterministic checks, model usage rows with tokens and latency.
-- Adaptive sequence: Orchestrator picks a case, Red Team proposes actions, the boundary admits or rejects them, the target answers.
+**Narration:**
+> In adaptive mode the agents work as a loop. The Orchestrator ranks seeds by coverage gaps, regressions and severity; the Red Team mutates the seed attack, here pressuring the assistant to place a lab order; and the Judge assesses each case. Stored transcripts are scrubbed of credentials, which is why some words appear as "redacted". Categories that stop producing signal are parked, so spend goes where it can still find something.
 
-### 6. 2:30-3:05 Evidence-grounded verdict
+### 7 · 3:10–3:30 · Findings and human review
 
-**On screen:** structured evidence for `[RUN-ID / CASE]`: action, response, checks, Judge claim and quote, policy gate.
+**Actions:** click **Findings**. Pause on "Filter by state" (all counts are zero).
 
-- Outcome: `[safe | pending_review | inconclusive | incomplete]`. Finding: `[title, category, severity, what the response said]`.
-- Quotes are checked against the cited response. Repeating an ID is not disclosure; an incomplete or truncated turn never becomes safe.
+**Narration:**
+> Nothing here is auto-published. A suspected violation waits for a human, who confirms or rejects it with a typed rationale next to the evidence. Confirmed findings can get a drafted, redacted report that must be approved at an exact revision before download. In this first live pass the Co-Pilot held, so there are no confirmed findings, and we report that honestly.
 
-### 7. 3:05-3:35 Human review and report
+### 8 · 3:30–4:00 · Coverage and regressions
 
-**On screen:** Findings: evidence beside verdict, decision, export approval [F02 preview if merged].
+**Actions:** click **Coverage**. Pause on the table "Local Co-Pilot · version 0.8.0". Tick "Show individual cases" and scroll the table (gap chips, safe-rate numerator/denominator). Click **Regressions**. Pause on "Regression state", "Validate a new version" and "Version-change trigger" (do not click "Turn on for Local Co-Pilot…").
 
-- Uncertain candidates wait for an operator to confirm or reject; confirming creates a replayable definition.
-- Publishing a redacted report is a separate approval. `[F01/F02: draft from confirmed evidence, exact-revision approval]`.
+**Narration:**
+> Coverage is scoped to one target version at a time and keeps untested, blocked and inconclusive separate, so an unknown result never counts as safe. Every confirmed attack becomes a regression identity; suites replay them against new target versions and label each one recurring, fixed, resurfaced or unknown. A version-change trigger can queue that suite automatically, without ever deploying anything.
 
-### 8. 3:35-4:00 Regression and coverage
+### 9 · 4:00–4:15 · Operations and cost
 
-**On screen:** Regressions, "Select for replay"; Coverage [V02 scoped view if merged].
+**Actions:** click **Overview**. Pause on "Worker and queue health" and "Unresolved spend".
 
-- Replay reuses the exact validated actions; a bounded regression suite shows each confirmed attack as recurring, fixed, resurfaced or unknown per target version (G02).
-- Coverage separates executed from untested cases, scoped by target and version.
+**Narration:**
+> Operators can see worker health and queue age at a glance, and every paid call is reserved before it is sent, capped per run and reconcilable afterwards. This whole demo ran on local models, at zero model spend.
 
-### 9. 4:00-4:20 Cost controls
+### 10 · 4:15–4:40 · Limits and close
 
-**On screen:** run usage rows; `cost-and-scale.md` section 5 table [O01 health if merged].
+**Actions:** stay on **Overview**. Optionally show `docs/submission/README.md` from the repository as a local file.
 
-- Each paid call reserves the full context-window price first; a per-run cap, an unresolved-charge hold and no model fallback bound spend. Local Ollama calls carry no dollar price.
-- Target-side inference dominates the projection. Actual development spend: `[operator figure]`.
+**Narration:**
+> The limits are stated plainly. So far the live testing has run against a local copy of the Co-Pilot, not the public deployment. It has found no confirmed vulnerability yet, and independent peer integration and a 100-case live load test are still to come. The code, evidence and cost analysis are in the repository's submission index.
 
-### 10. 4:20-4:40 Honest limits and close
+## Operator notes (not for narration)
 
-**On screen:** `KEY_METRICS.md` or the open-items list.
-
-- Auditor is LAN-only with no app login; live testing so far used the LAN target, not the public deployment; auto-confirm is uncalibrated; fixture passes are not live findings.
-- Open: 100-case live baseline, independent peer integration, `[number]` confirmed live findings.
-- Close on the repository link and the submission index (`docs/submission/README.md`).
+- Scene 4 creates a new live run against the local target using local models only; it is safe to repeat. Scene 6 relies on the existing adaptive run shown as "finished / inconclusive"; ignore the older "finished / incomplete" adaptive entry.
+- If the recorder cannot reach the LAN address, record the app locally instead; the narration stays the same.
+- Evidence behind the narration: live results `evals/results/live/2026-09-29/README.md`; architecture `ARCHITECTURE.md`; cost `docs/submission/cost-and-scale.md`; simulated triage (review and reporting quality, clearly labelled simulated) `docs/submission/triage.md`.
