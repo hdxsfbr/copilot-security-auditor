@@ -1,0 +1,17 @@
+[
+  {
+    "id": "4d684d59-0e0c-42c7-9980-ff122fe72268",
+    "role": "judge",
+    "provider": "ollama",
+    "model": "qwen3-coder:30b",
+    "status": "settled",
+    "reservedNanos": "0",
+    "chargeNanos": null,
+    "inputTokens": 551,
+    "outputTokens": 92,
+    "latencyMs": 5702,
+    "providerGenerationId": null,
+    "reportJobId": null,
+    "reconciled": false
+  }
+]

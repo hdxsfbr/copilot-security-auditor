@@ -1,6 +1,6 @@
-# Early submission index
+# Submission index
 
-Every submission artifact, its path and its honest status as of 2026-09-29 (revision `217f9c5` plus this documentation slice). The full requirement-by-requirement register, with links to code, tests and evidence, is [docs/implementation/rubric.md](../implementation/rubric.md): 64 rows, 25 Implemented, 26 Partial, 2 Planned, 11 External gate.
+Every submission artifact, its path and its honest status. The broad local live pass and the public-deployment starter matrix are reported separately. The full requirement-by-requirement register, with links to code, tests and evidence, is [docs/implementation/rubric.md](../implementation/rubric.md).
 
 **Not met, stated plainly.** The PRD requires at least three distinct discovered vulnerability reports. The first live pass found **zero** confirmed findings, so **no vulnerability report exists**. The operator accepted this gap for the early submission. The simulated triage findings (`SIM-001` to `SIM-013`) are exercises, not discoveries, and do not count toward that minimum.
 
@@ -12,14 +12,15 @@ Every submission artifact, its path and its honest status as of 2026-09-29 (revi
 | Architecture with ~500-word summary, roles, messages, orchestration, regression harness, observability, tradeoffs, diagram, AI-use disclosure, API rate-limit/auth/pagination/429 handling | [ARCHITECTURE.md](../../ARCHITECTURE.md) | Done. 507-word summary; Mermaid diagram; no 429-specific code exists and the document says so |
 | Key metrics and why they prove success | [KEY_METRICS.md](../../KEY_METRICS.md) | Done, with measured values from the live pass and fixture gate; several metrics are stated as not measured |
 | Requirement-to-evidence register | [docs/implementation/rubric.md](../implementation/rubric.md) | Done for this revision; counts above |
-| Demo video (3-5 minutes) | Script: [demo-script.md](demo-script.md). Video: **operator** | Script exists and is current; the video is not recorded yet (operator). |
+| Demo video (3-5 minutes) | Script: [demo-script.md](demo-script.md). Video: local OpenMontage export | Recorded at 4:58, with the full local walkthrough and an appended, clearly separate public-deployment example. It uses synthetic data, local narration, no music, and no captions. |
 | Evals: seed suite | [evals/seeds](../../evals/seeds/README.md), [migration 011](../../db/migrations/011_versioned_starter_matrix.sql) | Done. 10 published starter cases across 3 categories plus legacy starters |
 | Evals: Judge calibration | [evals/judge](../../evals/judge/README.md) | Fixture only. 14 labeled cases checking deterministic routing; no model accuracy or drift measurement. Reproduce: `node --import tsx --test tests/judge-policy.test.ts` |
 | Evals: simulated triage | [triage.md](triage.md), [evals/triage](../../evals/triage/README.md) | Done, **simulated**. 13 hand-authored findings run through the real gates. Reproduce: `node --import tsx --test tests/triage-simulated.test.ts` |
 | Evals: live results | [evals/results/live/2026-09-29](../../evals/results/live/2026-09-29/README.md) | Done for one pass. 14 selected and 4 adaptive runs on a LAN target, 3 categories, 0 confirmed findings, raw API exports included. Live outcomes cannot be replayed offline |
+| Evals: public deployment starter matrix | [evals/results/live/2026-09-30/public-matrix](../../evals/results/live/2026-09-30/public-matrix/README.md) | 10 starter cases, 3 categories, target version 0.8.0: 2 `safe`, 8 `inconclusive`, 0 findings, $0 auditor spend. The target mostly replied that chart sections could not be retrieved, so this is not evidence of a defense. A separate single-case run is in [public-single-current-chart](../../evals/results/live/2026-09-30/public-single-current-chart/README.md) |
 | Vulnerability reports (3 or more discovered) | none | **Not met** |
 | AI cost analysis | [cost-and-scale.md](cost-and-scale.md) | Draft with labeled estimates for 100 / 1K / 10K / 100K cases. Actual development spend is blank (operator input). |
-| Deployed target | `https://openemr-137-184-4-22.sslip.io` ([brief](../COPILOT_FEATURE.md#2-actors-accounts-data)) | URL recorded. The auditor has **not** been run against it; the live pass used a LAN copy (version 0.8.0). The auditor itself is intentionally LAN-only and has no public URL |
+| Deployed target | `https://openemr-137-184-4-22.sslip.io` ([brief](../COPILOT_FEATURE.md#2-actors-accounts-data)) | The 10 starter-matrix cases ran on 2026-09-30 (version 0.8.0): 2 `safe`, 8 `inconclusive`, 0 findings; results are scoped to the visible replies and do not verify underlying chart access ([evidence](../../evals/results/live/2026-09-30/public-matrix/README.md)). The broader pass used a LAN copy. The auditor itself is intentionally LAN-only and has no public URL |
 | 100-case live baseline | none | Not run (external gate; the cost analysis holds estimates only) |
 | Independent peer integration | none | Not done (external gate); roles are in-process |
 | Early technical interview | none | Operator |
