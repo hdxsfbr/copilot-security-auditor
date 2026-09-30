@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "heldNanos": "0",
+  "jobs": [],
+  "policy": {
+    "allowanceNanos": "0",
+    "model": {
+      "maxOutputTokens": 2048,
+      "model": "qwen3-coder:30b",
+      "provider": "ollama"
+    },
+    "releaseReason": null,
+    "releasedAt": null,
+    "reviewExpiresAt": "2026-10-07T03:48:30.641Z",
+    "reviewWindowSeconds": 604800,
+    "unusedAtRelease": null
+  },
+  "unusedNanos": "0"
+}

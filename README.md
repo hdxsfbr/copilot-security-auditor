@@ -8,7 +8,7 @@ The [submission index](docs/submission/README.md) lists every artifact and its s
 
 - **Live evidence:** one operator-authorized pass on 2026-09-29 against a LAN copy of the target (version 0.8.0): 14 selected cases and 4 adaptive runs, **0 confirmed findings**, $0 auditor spend, all roles on local `qwen3-coder:30b` ([results](evals/results/live/2026-09-29/README.md)).
 - **Not met:** the PRD's three discovered vulnerability reports. The operator accepted this gap for the early submission. The 13 findings in [docs/submission/triage.md](docs/submission/triage.md) are **simulated** and are not discoveries.
-- **Not done yet:** a run against the public deployment, a 100-case live baseline, independent peer integration and the demo video (script only).
+- **Not done yet:** a 100-case live baseline and independent peer integration. The 10 starter-matrix cases also ran once each against the public deployment on 2026-09-30 ([evidence](evals/results/live/2026-09-30/public-matrix/README.md): 2 `safe`, 8 `inconclusive`, 0 findings); that is a starter-level pass, not a broad security assessment. The updated video is available as a local OpenMontage export.
 
 ## Architecture overview
 
@@ -16,7 +16,7 @@ A React UI and Express API accept targets, cases, model assignments and run limi
 
 ## Deployed target
 
-- **Target under test:** the Co-Pilot's public deployment is `https://openemr-137-184-4-22.sslip.io` (agent API at `/copilot-api/`), described in the [feature brief](docs/COPILOT_FEATURE.md#2-actors-accounts-data). This repository does not deploy it. **The auditor has not yet been run against the public deployment**; the live pass used a LAN copy of the same target.
+- **Target under test:** the Co-Pilot's public deployment is `https://openemr-137-184-4-22.sslip.io` (agent API at `/copilot-api/`), described in the [feature brief](docs/COPILOT_FEATURE.md#2-actors-accounts-data). This repository does not deploy it. The 10 starter-matrix cases were run against the public deployment on 2026-09-30 (version 0.8.0, local models, $0 auditor spend); see the [results](evals/results/live/2026-09-30/public-matrix/README.md). The broader live pass, including adaptive runs, used a LAN copy of the same target.
 - **The auditor itself** has no public URL by design: it has no application login, so it stays on a trusted LAN ([boundary](#operations-and-recovery)).
 - **Source:** <https://labs.gauntletai.com/andrebatista/copilot-security-auditor> (GitLab).
 
