@@ -1,0 +1,170 @@
+{
+  "schema": "performance-memory-stability/v1",
+  "label": "FIXTURE MEMORY-STABILITY CHECK (HDX-32 / P01): repeated 100-case passes in one process under a capped V8 heap. Not a live measurement.",
+  "recordedAt": "2026-09-30T22:11:45.728Z",
+  "revision": {
+    "head": "4048537ed237d853dfd8bf4ed63f6c0c5978deea",
+    "branch": "claude/hdx-32-p01-baseline-indexes-slo",
+    "subject": "Reword the memory-stability reading to match the measurement (HDX-32)",
+    "applicationTrees": {
+      "apps": "66f13ea4117fd482a4744a474d017be57de170ff",
+      "packages": "f8ef3b60d59e76d0d6730bcc0db04283ccc9b7c5",
+      "db": "41e407ef438f25821c7bfa0abffc4dc71451da4a"
+    },
+    "applicationSourceDirty": false,
+    "workingTreeDirty": true,
+    "note": "Measured on the committed application source identified by `head` and `applicationTrees`. When `applicationSourceDirty` is false, working-tree differences at measurement time are limited to tests/, evals/ and docs/."
+  },
+  "machine": {
+    "platform": "Linux 7.0.0-31-generic x64",
+    "cpuModel": "Intel(R) Core(TM) i9-14900KF",
+    "logicalCpus": 32,
+    "availableParallelism": 32,
+    "totalMemoryGb": 31,
+    "loadAverageAtStart": [
+      6.03,
+      4.88,
+      3.81
+    ],
+    "node": "v24.14.0"
+  },
+  "node": {
+    "execArgv": [
+      "--max-old-space-size=200",
+      "--import",
+      "tsx"
+    ],
+    "heapSizeLimitMb": 392
+  },
+  "rounds": 14,
+  "casesPerRound": 100,
+  "totalCases": 1400,
+  "series": [
+    {
+      "round": 0,
+      "rssMb": 295,
+      "heapUsedMb": 78,
+      "heapTotalMb": 211,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    },
+    {
+      "round": 1,
+      "rssMb": 302,
+      "heapUsedMb": 83,
+      "heapTotalMb": 218,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    },
+    {
+      "round": 2,
+      "rssMb": 303,
+      "heapUsedMb": 84,
+      "heapTotalMb": 219,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    },
+    {
+      "round": 3,
+      "rssMb": 305,
+      "heapUsedMb": 85,
+      "heapTotalMb": 220,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    },
+    {
+      "round": 4,
+      "rssMb": 306,
+      "heapUsedMb": 85,
+      "heapTotalMb": 221,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    },
+    {
+      "round": 5,
+      "rssMb": 306,
+      "heapUsedMb": 85,
+      "heapTotalMb": 221,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    },
+    {
+      "round": 6,
+      "rssMb": 308,
+      "heapUsedMb": 86,
+      "heapTotalMb": 222,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    },
+    {
+      "round": 7,
+      "rssMb": 309,
+      "heapUsedMb": 87,
+      "heapTotalMb": 223,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    },
+    {
+      "round": 8,
+      "rssMb": 309,
+      "heapUsedMb": 87,
+      "heapTotalMb": 223,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    },
+    {
+      "round": 9,
+      "rssMb": 309,
+      "heapUsedMb": 87,
+      "heapTotalMb": 224,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    },
+    {
+      "round": 10,
+      "rssMb": 310,
+      "heapUsedMb": 87,
+      "heapTotalMb": 224,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    },
+    {
+      "round": 11,
+      "rssMb": 311,
+      "heapUsedMb": 87,
+      "heapTotalMb": 224,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    },
+    {
+      "round": 12,
+      "rssMb": 311,
+      "heapUsedMb": 88,
+      "heapTotalMb": 224,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    },
+    {
+      "round": 13,
+      "rssMb": 312,
+      "heapUsedMb": 87,
+      "heapTotalMb": 225,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    },
+    {
+      "round": 14,
+      "rssMb": 315,
+      "heapUsedMb": 88,
+      "heapTotalMb": 225,
+      "externalMb": 14,
+      "arrayBuffersMb": 10
+    }
+  ],
+  "growth": {
+    "heapUsedMbFromFirstToLastRound": 5,
+    "rssMbFromFirstToLastRound": 13,
+    "heapUsedKbPerCase": 3.9
+  },
+  "reading": "With the old-space heap capped, JS heapUsed stays essentially flat across rounds (growth above, a few KB per case) while RSS creeps slowly upward. The large RSS peaks of an uncapped recording are therefore mostly lazy garbage collection, not a leak in the JS heap; the slow RSS creep is not attributed (allocator fragmentation or harness state in this all-in-one process) and is a reason to watch a long-lived worker with the worker-health metrics (O01) rather than assume it is flat. Fixture pipeline only."
+}
