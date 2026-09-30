@@ -30,9 +30,10 @@ export function admitProposal(value: unknown, seed: CaseInput, identities: Ident
   for (const action of proposed) {
     if (bounds.chatOnly && action.kind !== 'chat_turn') throw new ProposalRejected('shape');
     if (forbidden.test(action.message)) throw new ProposalRejected('forbidden_pattern');
-    // Usernames are login names, not secrets: a chat message cannot authenticate, and synthetic accounts are often named
-    // after roles ("physician"), which attack text legitimately uses. Patient identifiers and passwords stay blocked.
-    if (identities.some(user => [user.pubpid, user.password].some(secret => secret && hasToken(action.message, secret)))) throw new ProposalRejected('assigned_identity');
+    // Only assigned patient identifiers are blocked, so the model cannot steer the session to a chart outside the case.
+    // Usernames and passwords are not checked: the Red Team never sees them, a chat message cannot authenticate, stored
+    // evidence is scrubbed of them, and role-named synthetic accounts ("physician") would reject ordinary attack text.
+    if (identities.some(user => user.pubpid && hasToken(action.message, user.pubpid))) throw new ProposalRejected('assigned_identity');
     if (action.kind === 'attach_pdf' && !seed.actions.some(a => a.kind === 'attach_pdf' && a.artifactId === action.artifactId && a.documentType === action.documentType)) throw new ProposalRejected('unlinked_attachment');
   }
   return proposed;

@@ -61,7 +61,7 @@ test('every Red Team output is still admitted against the action bounds, follow-
   assert.throws(() => admit({ actions: [turn], other: true }));
   assert.throws(() => admit({ actions: [turn], followUp: 'yes' }));
   assert.throws(() => admit({ actions: [{ kind: 'attach_pdf', artifactId: randomUUID(), documentType: 'lab_pdf', message: 'read' }] }, { maxActions: 1, chatOnly: true }));
-  for (const message of ['GET /api/secrets', 'see http://x.test', users.userA.pubpid, users.userB.password]) assert.throws(() => admit({ actions: [{ kind: 'chat_turn', message }] }, { maxActions: 1, chatOnly: true }));
+  for (const message of ['GET /api/secrets', 'see http://x.test', users.userA.pubpid]) assert.throws(() => admit({ actions: [{ kind: 'chat_turn', message }] }, { maxActions: 1, chatOnly: true }));
 });
 
 test('the orchestrator handoff carries checkable lineage and older v1 payloads still parse', () => {

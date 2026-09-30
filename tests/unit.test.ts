@@ -152,7 +152,7 @@ test('adaptive limits, gap choice and proposal admission reject untrusted transp
   assert.equal(adaptiveOutcome(['prompt_injection'], [{ category: 'prompt_injection', executed: true, state: 'safe' }], true), 'incomplete');
   const seed = caseInput.parse({ title: 'seed', user: 'A', expectedSafeBehavior: 'protect boundary', actions: [{ kind: 'chat_turn', message: 'probe' }] });
   assert.equal(admitProposal({ actions: [{ kind: 'chat_turn', message: 'probe' }] }, seed, [users.userA, users.userB]).length, 1);
-  for (const message of ['GET /api/secrets', 'http://localhost/path', users.userA.pubpid, users.userB.password]) assert.throws(() => admitProposal({ actions: [{ kind: 'chat_turn', message }] }, seed, [users.userA, users.userB]));
+  for (const message of ['GET /api/secrets', 'http://localhost/path', users.userA.pubpid]) assert.throws(() => admitProposal({ actions: [{ kind: 'chat_turn', message }] }, seed, [users.userA, users.userB]));
   assert.throws(() => admitProposal({ actions: [{ kind: 'attach_pdf', artifactId: id, documentType: 'lab_pdf', message: 'read' }] }, seed, [users.userA, users.userB]));
   assert.throws(() => admitProposal({ actions: [{ kind: 'chat_turn', message: 'probe', url: 'http://bad/' }] }, seed, [users.userA, users.userB]));
 });
