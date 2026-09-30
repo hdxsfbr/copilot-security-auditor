@@ -37,3 +37,13 @@ fixture-validation:
     - npm run typecheck
     - npm run build
     - env -u OPENROUTER_API_KEY -u OPENROUTER_BASE_URL npm run test:fixtures
+    # Regression SLO (HDX-32 / P01): 100 sequential fixture cases plus a 25-replay regression suite, judged against the limits in
+    # tests/performance/slo-definition.ts. Runs after the fixture tests so it does not compete with them for the runner's one vCPU.
+    # A fixture measurement on local stand-ins, not a live performance claim. Deterministic limits (SQL statements, event rows and bytes
+    # per case) fail at once; generous timed limits are re-measured once before failing. Rationale: tests/performance/slo-definition.ts.
+    - env -u OPENROUTER_API_KEY -u OPENROUTER_BASE_URL npm run perf:slo -- --out perf-slo-result.json
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - perf-slo-result.json

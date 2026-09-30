@@ -23,7 +23,8 @@
     "dev:web": "vite --config apps/web/vite.config.ts",
     "perf:slo": "tsx tests/performance/slo-check.ts",
     "perf:baseline": "tsx tests/performance/baseline.ts",
-    "perf:plans": "tsx tests/performance/index-evidence.ts"
+    "perf:plans": "tsx tests/performance/index-evidence.ts",
+    "perf:scenarios": "tsx tests/performance/scenarios.ts"
   },
   "dependencies": {
     "@langchain/langgraph": "^1.4.18",

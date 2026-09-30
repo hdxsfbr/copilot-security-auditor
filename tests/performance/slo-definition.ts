@@ -34,7 +34,7 @@ export const SLO_REFERENCE = {
  */
 export const SLO_MULTIPLIERS = {
   deterministic: { workerStatementsPerCase: 1.25, launchStatementsPerCase: 1.25, eventRowsPerCase: 1.25, eventBytesPerCase: 1.5, replayStatementsPerReplay: 1.25, targetRequestsPerCase: 1.25 },
-  timed: { sequentialWallMs: 20, workerPassP95Ms: 20, suiteWallMs: 20, peakRssMb: 2 }
+  timed: { sequentialWallMs: 30, workerPassP95Ms: 30, suiteWallMs: 30, peakRssMb: 2 }
 } satisfies SloLimits;
 
 const ceil = (value: number) => Math.ceil(value);

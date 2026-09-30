@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import { runSlo } from './slo-check.js';
 import { deriveLimits, SLO, SLO_LABEL, SLO_LIMITS, SLO_MULTIPLIERS, SLO_REFERENCE } from './slo-definition.js';
 import { evaluateSlo, measureSloWorkload, type SloMeasurement } from './slo.js';
@@ -90,4 +92,14 @@ test('[P01] the real pipeline meets every deterministic limit on a 20-case run (
   const checks = evaluateSlo(measurement, SLO_LIMITS).filter(check => check.kind === 'deterministic');
   assert.ok(checks.length > 0 && checks.every(check => check.pass), JSON.stringify(checks.filter(check => !check.pass)));
   assert.ok(measurement.timed.sequentialWallMs > 0 && measurement.informational.throughputRunsPerSecond > 0);
+});
+
+test('[P01] `slo-check.ts --measure-only` prints exactly one JSON measurement from a fresh process', async () => {
+  const { stdout } = await promisify(execFile)(process.execPath, ['--import', 'tsx', 'tests/performance/slo-check.ts', '--measure-only', '--cases', '20', '--suite', '2', '--warmup', '0'], { env: process.env, cwd: new URL('../../', import.meta.url) });
+  const lines = stdout.trim().split('\n');
+  assert.equal(lines.length, 1, 'nothing but the measurement on stdout');
+  const measurement = JSON.parse(lines[0]) as SloMeasurement;
+  assert.equal(measurement.cases, 20);
+  assert.equal(measurement.suiteReplays, 2);
+  assert.ok(measurement.deterministic.workerStatementsPerCase > 20 && measurement.timed.peakRssMb > 50);
 });

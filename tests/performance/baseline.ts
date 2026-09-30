@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { machineInfo, revisionInfo } from '../acceptance/evidence.js';
 import { cpuProbe, instrumentPg, round } from './measure.js';
-import { measureSloWorkload } from './slo.js';
+import type { SloMeasurement } from './slo.js';
 import { phaseDeployedCadence, phaseLanes, phaseReads, phaseRegression, phaseSequential, publishPool, safeJudges, storageReport, workloadStack, type Profile } from './workload.js';
 
 // The reproducible 100-case FIXTURE baseline (HDX-32 / P01).
 //
 //   TEST_DATABASE_URL=... node --import tsx tests/performance/baseline.ts [--cases 100] [--identities 100] [--suite-size 25] [--lanes 1,2,4,8]
-//       [--latency-cases 100] [--latency-lanes 1,8] [--repeats 5] [--cadence-runs 5] [--out evals/results/performance/<date>]
+//       [--latency-cases 100] [--latency-lanes 2,4,8] [--repeats 5] [--cadence-runs 5] [--out evals/results/performance/<date>]
 //
 // Everything runs in one Node process on 127.0.0.1: the real Express API, the real worker entry (processNext), a disposable
 // PostgreSQL database, a local HTTP stand-in for the Co-Pilot target and scripted Judge stand-ins. There is NO live target, NO paid
@@ -20,7 +22,7 @@ import { phaseDeployedCadence, phaseLanes, phaseReads, phaseRegression, phaseSeq
 export const BASELINE_LABEL = 'FIXTURE BASELINE (HDX-32 / P01): synthetic, in-process, local stand-ins only. This is NOT a live 100-case result and NOT live performance.';
 
 type Options = { cases: number; identities: number; suiteSize: number; lanes: number[]; latencyCases: number; latencyLanes: number[]; repeats: number; cadenceRuns: number; targetLatencyMs: number; judgeLatencyMs: number; warmup: number; out: string | null };
-export const defaults: Options = { cases: 100, identities: 100, suiteSize: 25, lanes: [1, 2, 4, 8], latencyCases: 100, latencyLanes: [1, 8], repeats: 5, cadenceRuns: 5, targetLatencyMs: 50, judgeLatencyMs: 100, warmup: 10, out: null };
+export const defaults: Options = { cases: 100, identities: 100, suiteSize: 25, lanes: [1, 2, 4, 8], latencyCases: 100, latencyLanes: [2, 4, 8], repeats: 5, cadenceRuns: 5, targetLatencyMs: 50, judgeLatencyMs: 100, warmup: 10, out: null };
 
 const stats = (values: number[]) => {
   const sorted = [...values].sort((a, b) => a - b), mean = values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -28,10 +30,17 @@ const stats = (values: number[]) => {
   return { values, min: sorted[0], median: sorted[Math.floor(sorted.length / 2)], max: sorted.at(-1)!, mean: round(mean), coefficientOfVariation: mean ? round(sd / mean, 3) : 0 };
 };
 
+/** One SLO measurement in a fresh Node process: a cold heap, like CI. In-process repeats would inherit the previous stack's memory. */
+async function freshProcessMeasurement(options: Options): Promise<SloMeasurement> {
+  const { stdout } = await promisify(execFile)(process.execPath, ['--import', 'tsx', 'tests/performance/slo-check.ts', '--measure-only', '--cases', String(options.cases), '--suite', String(options.suiteSize), '--warmup', String(options.warmup)], { env: process.env, maxBuffer: 10 * 1048576, cwd: resolve('.') });
+  return JSON.parse(stdout.trim().split('\n').at(-1)!) as SloMeasurement;
+}
+
 export async function runBaseline(partial: Partial<Options> = {}) {
   const options = { ...defaults, ...partial };
   assert.ok(options.cases >= 20 && options.identities >= 1 && options.suiteSize >= 1 && options.suiteSize <= 25 && options.lanes.every(lanes => lanes >= 1 && lanes <= options.cases));
   const startedAt = new Date(), machine = machineInfo(), speed = await cpuProbe();
+  const rssAtStartMb = Math.round(process.memoryUsage().rss / 1048576);
   const pg = instrumentPg();
   const s = await workloadStack();
   let closed = false;
@@ -42,6 +51,7 @@ export async function runBaseline(partial: Partial<Options> = {}) {
     const setupStarted = performance.now();
     const pool = await publishPool(s, options.cases);
     const publishMs = performance.now() - setupStarted;
+    const rssAfterSetupMb = Math.round(process.memoryUsage().rss / 1048576);
 
     await phaseSequential(s, pg, pool, options.warmup, judges); // warm-up: JIT, connection pool, plan caches. Not reported.
     const sequential = await phaseSequential(s, pg, pool, options.cases, judges);
@@ -62,17 +72,17 @@ export async function runBaseline(partial: Partial<Options> = {}) {
 
     await close(); pg.restore(); // the repeat runs below each own a fresh stack and their own instrumentation
     const repeatability = options.repeats > 0 ? await (async () => {
-      const runs = [];
-      for (let index = 0; index < options.repeats; index++) runs.push(await measureSloWorkload({ cases: options.cases, suiteReplays: options.suiteSize, warmup: options.warmup }));
+      const runs: SloMeasurement[] = [];
+      for (let index = 0; index < options.repeats; index++) runs.push(await freshProcessMeasurement(options));
       return {
-        description: `The CI SLO workload (${options.cases} sequential cases, then one ${options.suiteSize}-replay regression suite) run ${options.repeats} times, each on a fresh database.`,
+        description: `The CI SLO workload (${options.cases} sequential cases, then one ${options.suiteSize}-replay regression suite) run ${options.repeats} times, each in a FRESH Node process on a fresh database, exactly as \`npm run perf:slo\` runs it in CI.`,
         sequentialWallMs: stats(runs.map(run => run.timed.sequentialWallMs)), workerPassP95Ms: stats(runs.map(run => run.timed.workerPassP95Ms)), suiteWallMs: stats(runs.map(run => run.timed.suiteWallMs)), peakRssMb: stats(runs.map(run => run.timed.peakRssMb)),
         workerStatementsPerCase: stats(runs.map(run => run.deterministic.workerStatementsPerCase)), launchStatementsPerCase: stats(runs.map(run => run.deterministic.launchStatementsPerCase)), eventRowsPerCase: stats(runs.map(run => run.deterministic.eventRowsPerCase)),
-        eventBytesPerCase: stats(runs.map(run => run.deterministic.eventBytesPerCase)), replayStatementsPerReplay: stats(runs.map(run => run.deterministic.replayStatementsPerReplay)), throughputRunsPerSecond: stats(runs.map(run => run.informational.throughputRunsPerSecond))
+        eventBytesPerCase: stats(runs.map(run => run.deterministic.eventBytesPerCase)), replayStatementsPerReplay: stats(runs.map(run => run.deterministic.replayStatementsPerReplay)), targetRequestsPerCase: stats(runs.map(run => run.deterministic.targetRequestsPerCase)), throughputRunsPerSecond: stats(runs.map(run => run.informational.throughputRunsPerSecond))
       };
     })() : null;
 
-    const single = latencyLanes.find(item => item.lanes === 1), widest = latencyLanes.at(-1);
+    const single = latencySequential, widest = latencyLanes.at(-1);
     return {
       schema: 'performance-fixture-baseline/v1', label: BASELINE_LABEL, workItem: 'HDX-32 / P01 reproducible 100-case fixture baseline',
       claims: { liveTarget: false, paidProviders: false, modelInference: false, network: '127.0.0.1 only', liveAcceptance: false, liveHundredCaseResult: false, liveLatencyOrThroughput: false, capacityClaim: false },
@@ -84,6 +94,7 @@ export async function runBaseline(partial: Partial<Options> = {}) {
         regression: `${options.identities} confirmed findings, each its own regression identity, replayed in suites of ${options.suiteSize} (the contract maximum) at a new target version.`,
         warmup: `${options.warmup} cases before the measured pass (not reported).`, publishCasesMs: Math.round(publishMs),
         cpuAndMemory: 'Process CPU time, sampled RSS/heap and event-loop delay of the whole in-process stack during each phase.',
+        memoryMarkers: { rssAtStartMb, rssAfterSetupMb, note: 'Resident set size after module load (TypeScript runtime, Express, pg) and after the stack and case pool exist, before any measured case. Phase peakRssMb values are read against these.' },
         injectedLatency: { targetPerRequestMs: options.targetLatencyMs, judgePerCallMs: options.judgeLatencyMs, note: 'Arbitrary illustrative values used only in the synthetic-latency profile. Not measurements of any real target or model.' },
         instrumentation: 'Every statement through pg.Client#query is counted and timed; target and Judge fetches are timed to response headers. The wrappers add microseconds per call.'
       },
@@ -91,7 +102,7 @@ export async function runBaseline(partial: Partial<Options> = {}) {
         overheadOnly: { description: 'No injected latency: the auditor\'s own orchestration, serialization and persistence cost.', sequential, laneCurve, regression, apiReads: reads, storage },
         syntheticLatency: latencySequential ? {
           description: `Target requests +${options.targetLatencyMs} ms and Judge calls +${options.judgeLatencyMs} ms (illustrative).`, sequential: latencySequential, laneCurve: latencyLanes,
-          speedup: single && widest ? { lanes: widest.lanes, throughputRatio: round(widest.throughputRunsPerSecond / single.throughputRunsPerSecond), note: 'Throughput at the widest lane count divided by one lane, same injected latency.' } : null
+          speedup: single && widest ? { lanes: widest.lanes, throughputRatio: round(widest.throughputRunsPerSecond / single.throughputRunsPerSecond), note: 'Throughput at the widest lane count divided by the sequential pass, same injected latency.' } : null
         } : null,
         deployedWorkerCadence: cadence
       },

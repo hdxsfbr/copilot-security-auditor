@@ -12,7 +12,7 @@ import { evaluateSlo, measureSloWorkload, type SloCheck, type SloMeasurement } f
 //
 // It measures the SLO workload (100 sequential fixture cases, then one 25-replay regression suite) and fails the job when a
 // limit in slo-definition.ts is exceeded. Exit codes: 0 pass, 1 SLO breached, 2 the workload itself failed (a wrong outcome is a
-// functional failure, never an SLO pass).
+// functional failure, never an SLO pass), 3 the watchdog fired.
 //
 // Noise policy (see the rationale in slo-definition.ts): the deterministic limits (statements, event rows and bytes per case) cannot
 // flake and any breach fails at once. The timed limits are generous, and a breach of only timed limits triggers ONE full re-measurement
@@ -43,8 +43,17 @@ const table = (checks: SloCheck[]) => checks.map(check => `  ${check.pass ? 'ok 
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2);
+  const numberFlag = (name: string, fallback: number) => { const at = args.indexOf(name); if (at < 0) return fallback; const value = Number(args[at + 1]); if (!Number.isInteger(value) || value < 0) { console.error(`${name} needs a non-negative integer`); process.exit(2); } return value; };
+  if (args.includes('--measure-only')) {
+    // One measurement as JSON on stdout and nothing else. The baseline recorder runs this in a fresh process per repetition so each
+    // repetition starts from a cold Node heap, exactly as the CI job does.
+    try { process.stdout.write(`${JSON.stringify(await measureSloWorkload({ cases: numberFlag('--cases', 100), suiteReplays: numberFlag('--suite', 25), warmup: numberFlag('--warmup', 10) }))}\n`); process.exit(0); }
+    catch (error) { console.error(`SLO workload failed: ${(error as Error).message}`); process.exit(2); }
+  }
   const out = args.includes('--out') ? resolve(args[args.indexOf('--out') + 1]) : null;
   const retry = !args.includes('--no-retry');
+  // A hung database or a stuck phase must not hold the shared runner: the whole check normally takes seconds.
+  setTimeout(() => { console.error('SLO check exceeded its 10 minute watchdog'); process.exit(3); }, 600_000).unref();
   console.log(SLO_LABEL);
   let result: SloRun;
   try { result = await runSlo(() => measureSloWorkload(), retry); }
