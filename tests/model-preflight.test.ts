@@ -61,15 +61,19 @@ test('adaptive reservation preview bounds attempted cases including rejected pro
   } finally { if (previous === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = previous; }
 });
 
-test('unverified paid pricing dimension fails preflight closed', async () => {
+test('known paid pricing dimensions are allowed; unknown ones fail preflight closed', async () => {
   const previous = process.env.OPENROUTER_API_KEY;
   process.env.OPENROUTER_API_KEY = 'fixture-key';
   try {
     const input = startInput.parse({ targetId, caseId, roles: { judge: paid }, openRouterCapUsd: 1 });
-    const result = await preflightModels({ kind: 'selected', input }, transport([], { ...price, image: '0.0001' }));
-    assert.equal(result.status, 'unavailable');
-    assert.deepEqual(result.issues, [{ code: 'paid_catalog_or_pricing_unavailable' }]);
-    assert.equal(result.preview, null);
+    const known = await preflightModels({ kind: 'selected', input }, transport([], { ...price, image: '0.0001', input_cache_read: '0.0000005' }));
+    assert.equal(known.status, 'available');
+    assert.deepEqual(known.issues, []);
+    assert.equal(known.preview!.reservationNanos, nanos('0.0022').toString());
+    const unknown = await preflightModels({ kind: 'selected', input }, transport([], { ...price, mystery_fee: '0.0001' }));
+    assert.equal(unknown.status, 'unavailable');
+    assert.deepEqual(unknown.issues, [{ code: 'paid_catalog_or_pricing_unavailable' }]);
+    assert.equal(unknown.preview, null);
   } finally { if (previous === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = previous; }
 });
 

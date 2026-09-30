@@ -115,8 +115,14 @@ export function verifiedPrice(models: unknown[], model: string): Price {
   if (!row || typeof row !== 'object' || !('pricing' in row) || !row.pricing || typeof row.pricing !== 'object' || !('context_length' in row)) throw new Error('Selected model unavailable');
   const pricing = row.pricing as Record<string, unknown>;
   for (const field of ['prompt', 'completion']) if (typeof pricing[field] !== 'string') throw new Error('Model pricing unavailable');
+  // Real OpenRouter models price extra dimensions (image, prompt caching, web
+  // search, reasoning) that our bounded text-only, no-tool, no-cache calls never
+  // incur, so they are neither reserved nor billed here. Allow those known
+  // dimensions and still fail closed on a genuinely unrecognized nonzero one.
+  const knownExtraPricing = new Set(['image', 'audio', 'web_search', 'internal_reasoning', 'input_cache_read', 'input_cache_write', 'input_cache_write_1h', 'input_cache_write_5m', 'discount']);
   for (const [field, value] of Object.entries(pricing)) {
-    if (!['prompt', 'completion', 'request'].includes(field) && value !== null && value !== undefined && nanos(String(value)) !== 0n) throw new Error('Unsupported model pricing dimension');
+    if (['prompt', 'completion', 'request'].includes(field) || knownExtraPricing.has(field) || value === null || value === undefined) continue;
+    if (nanos(String(value)) !== 0n) throw new Error('Unsupported model pricing dimension');
   }
   const contextLength = row.context_length;
   const price = { prompt: pricing.prompt as string, completion: pricing.completion as string, request: pricing.request === undefined || pricing.request === null ? '0' : String(pricing.request), contextLength: contextLength as number };
