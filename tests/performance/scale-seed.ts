@@ -18,6 +18,9 @@ const uid = (ns: string, n: string) => `(substr(md5('${ns}:' || ${n}), 1, 12) ||
 
 export async function seedScale(pool: pg.Pool, partial: Partial<SeedScale> = {}) {
   const s = { ...defaultScale, ...partial };
+  // Statistics and visibility maps are refreshed explicitly below. Autovacuum is switched off for the seeded tables so a background
+  // worker cannot perturb plan timings, and cannot still be attached to the database when the harness drops it.
+  for (const table of ['runs', 'events', 'candidates', 'adaptive_cases', 'regressions', 'regression_identities']) await pool.query(`ALTER TABLE ${table} SET (autovacuum_enabled = false)`);
   const selectedRuns = Math.round(s.runs * (1 - s.adaptiveShare));
   const adaptiveRuns = s.runs - selectedRuns;
   await pool.query(`INSERT INTO credentials(id,ciphertext) SELECT ${uid('cred', 'i::text')}, 'perf-fixture-not-a-secret' FROM generate_series(1, $1::int * 2) i`, [s.targets]);

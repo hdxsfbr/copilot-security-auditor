@@ -192,6 +192,7 @@ export type PlanEvidenceOptions = { scale?: Partial<SeedScale>; repeats?: number
 export async function collectPlanEvidence(options: PlanEvidenceOptions = {}) {
   const repeats = options.repeats ?? 5, routeRepeats = options.routeRepeats ?? 3;
   const db = await database();
+  let failure: unknown = null;
   try {
     const pool = db.repo.pool;
     const seeded = await seedScale(pool, options.scale);
@@ -251,7 +252,8 @@ export async function collectPlanEvidence(options: PlanEvidenceOptions = {}) {
         'Severity has no SQL predicate in the product, so there is no severity query to measure; see the migration header and tests/performance/migration-024.test.ts.'
       ]
     };
-  } finally { await db.close(); }
+  } catch (error) { failure = error; throw error; }
+  finally { try { await db.close(); } catch (closeError) { if (!failure) throw closeError; } } // a close failure must never hide the error that caused it
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
