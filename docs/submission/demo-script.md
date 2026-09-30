@@ -8,7 +8,7 @@ Shot list for the PRD demo: work completed, key decisions, and the platform runn
 - Pre-launch the live run; a case can take over a minute (turn deadline 90 s). Record the launch, cut to the finished run, and caption it "time-compressed".
 - The demo database was reset to one target ("Local Co-Pilot") and seeded with one run of each of the 10 starter-matrix cases on local models, so Overview, Runs and Coverage have current data. Auditor UI: `http://10.0.0.32:3000`.
 - Suggested live run on camera: one selected current-chart isolation case with a local Judge, then one adaptive run (`maxCases` 3, three categories).
-- Adaptive caveat: the synthetic usernames are ordinary words ("physician", "receptionist"), and the admission gate still rejects Red Team text that uses them as words ("As the attending physician…"). Expect some `proposal_rejected` events with rule `assigned_identity`; narrate them as the boundary working, not as a crash.
+- Evidence caveat: the synthetic account credentials include ordinary role words, so stored transcripts show `[REDACTED]` where the attack text says "physician". That is the credential scrubber working (evidence and Judge packets never carry credentials); narrate it as such. Adaptive proposals are no longer rejected for it (admission gate checks only assigned patient identifiers, !49/!50).
 - A paid Judge must pass preflight and the cap must exceed one reservation. The UI default cap of 0.25 USD is below a `mistral-medium-3-5` reservation (about 0.40 USD); see `cost-and-scale.md` section 3.
 
 ## What is on `main` for the recording
