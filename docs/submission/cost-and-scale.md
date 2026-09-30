@@ -69,7 +69,7 @@ The worker also re-downloads the whole catalog before every paid call (`process.
 | CPU | 9.7 ms per case, half a core at one lane |
 | SQL | 64.2 worker statements plus 9 at launch per case; 12.65 commits, 52% of database time |
 | Memory | 357 MB peak RSS (305 MB before any case runs); JS heap flat under a cap over 1,400 cases (+3.9 KB per case) |
-| Storage | 12.8 KiB of database growth per case at the fixture floor; 6.65 events, 2,981 bytes of event JSON |
+| Storage | 12.8 KiB (13,107 bytes) of database growth per case at the fixture floor; 6.65 events, 2,981 bytes of event JSON |
 | Full regression suite (25 replays) | 433-477 ms, median replay 15-17 ms, 84 statements per replay; creating the suite 44-62 ms |
 | 100 replays in 4 suites | 1,836 ms, 54.5 replays/s; setting up 100 confirmed findings 2,276 ms |
 | Lanes, free calls | 56.5 / 78.4 / 96.8 / 126.0 cases/s at 1 / 2 / 4 / 8 lanes; 1.09 cores used at 8 |
@@ -171,10 +171,10 @@ Auditor cost depends on which roles are paid. "Paid Judge only" is also the cost
 ### 6.4 Reading the tables
 
 - **The target is most of the cost and all of the wall-clock.** With a cheap Judge the target-side line is one to three orders of magnitude above the auditor line. Upgrading the Judge barely moves the total; one fewer target turn per case does.
-- **Two constraints bind before any auditor limit.** At 18K target tokens per attempt the target's 2M-token daily halt allows about 110 attempts a day per instance, roughly ten times fewer than one serial worker could send (about 1,200). One hundred finished cases already need a day of target budget (W2 makes it 111 attempts). Whether the deployed target sets the brief's limits is unverified.
+- **The target's token budget binds before any auditor limit.** At 18K target tokens per attempt the target's 2M-token daily halt allows about 110 attempts a day per instance, roughly ten times fewer than one serial worker could send (about 1,200). One hundred finished cases already need a day of target budget (W2 makes it 111 attempts). Whether the deployed target sets the brief's limits is unverified.
 - **Scheduling.** A target admits one active run, so lanes are targets (`repository.ts:418,445`); scheduled occurrences are skipped while one is active (`repository.ts:204`). The 1.5 s worker pause costs 2.1% of a live attempt and 99% of a fixture one (B2). One worker loop today means the serial rows are what the current deployment delivers.
 - **Retries and failures.** The 10% unusable-attempt assumption (W2) adds 11% to every linear row. Failures also hold spend: an ambiguous paid call keeps its reservation and blocks further paid calls in that run (`repository.ts:579`), so failures shrink the usable per-run cap as well as adding cost; the model never retries a model call (`models.ts:32-35`), only reruns the case.
-- **Reservation is not spend** (section 3): the per-run cap must exceed at least one reservation (up to $0.16 for kimi, $0.40 for mistral-medium and $2.01 for a Sonnet-5-priced model at 1,024 output tokens), which is why the cost rows are far below the caps a run needs.
+- **Reservation is not spend** (section 3): the per-run cap must exceed at least one reservation (up to $0.16 for kimi, $0.40 for mistral-medium and $2.01 for a Sonnet-5-priced model at 1,024 output tokens). Reservations are replaced by the settled charge, so they constrain the cap a run needs, not the totals above.
 - **All-local scenario.** It shifts cost to hardware: the host-time row times the operator's host price per hour (**TODO**, no hardware price is assumed). Throughput of `qwen3-coder:30b` on that host is unmeasured; the per-call deadline is 90 seconds (`deadlines.ts:10`).
 - **Judge size.** A maximal Judge packet with 4,096 output tokens costs about 10 times the planning Judge call in every priced row.
 - **Auditor resources are small.** 1.1 s of auditor CPU for 100 cases and 18 minutes for 100K [F, extrapolated linearly]; the CPU, statement and storage rows scale linearly from one fixture measurement, and storage is a floor (real responses are larger) until the ledger replaces it.
