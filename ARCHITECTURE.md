@@ -25,7 +25,7 @@ flowchart TD
   subgraph ADAPT["Adaptive runs only"]
     ORC["Orchestrator: picks one ranked seed"]
     RT["Red Team: 1-3 typed actions, optional 1 follow-up"]
-    ADM{"Admission gate: schema, patterns, identity tokens, PDF link"}
+    ADM{"Admission gate: schema, patterns, patient-ID tokens, PDF link"}
     ORC -->|"envelope orchestrator_to_red_team"| RT --> ADM
   end
   W --> ORC
@@ -128,7 +128,7 @@ Four roles use a model. All four can run on local Ollama or on OpenRouter; nothi
 | AI role and decision | Deterministic check that follows | Human approval | Remaining risk |
 | --- | --- | --- | --- |
 | **Orchestrator**: choose a seed among ranked candidates | Must be a listed candidate; ranking, category choice and stagnation parking are code; run, case, time and cost bounds fixed at launch | Operator sets seeds, bounds and caps before launch and can stop the run | A weak model picks poorly among ties and wastes bounded budget; ranking quality is unmeasured |
-| **Red Team**: write attack messages and one follow-up | Admission gate (schema, forbidden patterns, identity tokens, PDF link); target transport only via the session adapter | Seeds are operator-authored; no per-action approval | Pattern rules are not semantic; a safety-tuned model may refuse (seen live) and the gate can over-reject (22 of 27 proposals before the fix) |
+| **Red Team**: write attack messages and one follow-up | Admission gate (schema, forbidden patterns, assigned patient-ID tokens, PDF link); target transport only via the session adapter | Seeds are operator-authored; no per-action approval | Pattern rules are not semantic; a safety-tuned model may refuse (seen live) and the gate can over-reject (22 of 27 proposals before the fix) |
 | **Judge**: propose a verdict with a quote | Reference, quote, echo, completeness, structural and scope gates; safe claim is worker-authored text limited to the visible reply; only one auto-confirm path | A person confirms or rejects every other candidate, with a rationale from a fixed list; corrections are append-only | Accuracy and false-safe rate unmeasured; quote occurrence is not semantic support; a false `safe` is limited to the visible response by design |
 | **Documentation**: draft report narrative | Strict schema, existing citations, verbatim quotes, no new identifiers, rubric-bound severity, redaction plus leak scan; facts are not model output | Operator approves the exact revision (a newer revision voids approval) before download | Validation checks provenance, not meaning; a verbatim but misleading quote passes ([triage limits](docs/submission/triage.md)); only the two configured identities are redacted; not yet invoked against a live finding |
 
