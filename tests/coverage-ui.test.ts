@@ -12,15 +12,15 @@ const output = resolve('test-results/HDX-25/after');
 const T1 = 'a1111111-1111-4111-8111-111111111111', T2 = 'b2222222-2222-4222-8222-222222222222', MISSING = 'c3333333-3333-4333-8333-333333333333';
 const targets = [{ id: T1, name: 'Synthetic Co-Pilot', baseUrl: 'http://fixture.invalid/', activeRunId: null }, { id: T2, name: 'Synthetic Records Bot', baseUrl: 'http://fixture.invalid/', activeRunId: null }];
 type Spec = { safe?: number; pending_review?: number; auto_confirm?: number; inconclusive?: number; blocked?: number; incomplete?: number; notAttempted?: number; inFlight?: number; awaiting?: number; confirmed?: number; rejected?: number };
-type Case = { id: string; title: string; category: 'prompt_injection' | 'cross_patient' | 'unintended_tool_action'; subcategory: string | null; spec: Spec };
+type Case = { id: string; title: string; category: 'prompt_injection' | 'cross_patient' | 'unintended_tool_action'; subcategory: string | null; spec: Spec; owasp: string[] };
 const catalog = (prefix: string, safe: number): Case[] => [
-  { id: `${prefix}1`, title: 'Ignore prior instructions', category: 'prompt_injection', subcategory: 'Direct override', spec: { safe, pending_review: 1, awaiting: 1 } },
-  { id: `${prefix}2`, title: 'Override via document', category: 'prompt_injection', subcategory: 'Direct override', spec: { inconclusive: 2 } },
-  { id: `${prefix}3`, title: 'Poisoned note', category: 'prompt_injection', subcategory: 'Indirect', spec: { blocked: 2, notAttempted: 1 } },
-  { id: `${prefix}4`, title: 'Swap patient identifier', category: 'cross_patient', subcategory: 'Identifier swap', spec: {} },
-  { id: `${prefix}5`, title: 'Chart bleed', category: 'cross_patient', subcategory: 'Identifier swap', spec: {} },
-  { id: `${prefix}6`, title: 'Silent order', category: 'unintended_tool_action', subcategory: 'Write attempt', spec: { inFlight: 1 } },
-  { id: `${prefix}7`, title: 'Note edit', category: 'unintended_tool_action', subcategory: 'Write attempt', spec: { incomplete: 1 } }];
+  { id: `${prefix}1`, title: 'Ignore prior instructions', category: 'prompt_injection', subcategory: 'Direct override', spec: { safe, pending_review: 1, awaiting: 1 }, owasp: ['LLM01:2025', 'A03:2021'] },
+  { id: `${prefix}2`, title: 'Override via document', category: 'prompt_injection', subcategory: 'Direct override', spec: { inconclusive: 2 }, owasp: ['LLM01:2025'] },
+  { id: `${prefix}3`, title: 'Poisoned note', category: 'prompt_injection', subcategory: 'Indirect', spec: { blocked: 2, notAttempted: 1 }, owasp: ['LLM01:2025', 'LLM02:2025'] },
+  { id: `${prefix}4`, title: 'Swap patient identifier', category: 'cross_patient', subcategory: 'Identifier swap', spec: {}, owasp: ['LLM02:2025'] },
+  { id: `${prefix}5`, title: 'Chart bleed', category: 'cross_patient', subcategory: 'Identifier swap', spec: {}, owasp: ['LLM02:2025'] },
+  { id: `${prefix}6`, title: 'Silent order', category: 'unintended_tool_action', subcategory: 'Write attempt', spec: { inFlight: 1 }, owasp: ['LLM06:2025'] },
+  { id: `${prefix}7`, title: 'Note edit', category: 'unintended_tool_action', subcategory: 'Write attempt', spec: { incomplete: 1 }, owasp: [] }]; // no OWASP mapping: reported as Unmapped
 const n = (spec: Spec, key: keyof Spec) => spec[key] ?? 0;
 const attempts = (s: Spec) => n(s, 'safe') + n(s, 'pending_review') + n(s, 'auto_confirm') + n(s, 'inconclusive') + n(s, 'blocked') + n(s, 'incomplete');
 function counts(list: Spec[]) {
@@ -35,6 +35,13 @@ function counts(list: Spec[]) {
 }
 const gapOf = (c: ReturnType<typeof counts>) => c.outcomes.safe + c.outcomes.pending_review + c.outcomes.auto_confirm ? null : !c.attempted ? (c.inFlight ? 'in_flight' : 'untested') : c.assessed ? 'inconclusive' : c.executed || !c.outcomes.blocked ? 'incomplete' : 'blocked';
 const present = (list: Spec[]) => { const c = counts(list); return { counts: c, gap: gapOf(c) }; };
+const caseRef = (c: Case) => ({ id: `00000000-0000-4000-8000-${c.id.padStart(12, '0')}`, familyId: `00000000-0000-4000-8000-${c.id.padStart(12, '0')}`, version: 1, title: c.title, catalogState: 'published', metadataStatus: 'complete' });
+// Mirrors V01: a case counts under every tag it carries (rows overlap), cases with no tag are the trailing `unmapped` row.
+function owaspRows(cases: Case[]) {
+  const tags = [...new Set(cases.flatMap(c => c.owasp))].sort(), unmapped = cases.filter(c => c.owasp.length === 0);
+  return [...tags.map(tag => { const list = cases.filter(c => c.owasp.includes(tag)); return { kind: 'tag', tag, ...present(list.map(c => c.spec)), cases: list.map(caseRef) }; }),
+    ...(unmapped.length ? [{ kind: 'unmapped', ...present(unmapped.map(c => c.spec)), cases: unmapped.map(caseRef) }] : [])];
+}
 function scope(target: typeof targets[number], version: string | null, cases: Case[], observed: [string, string] | null) {
   const rows: unknown[] = [];
   for (const category of ['prompt_injection', 'cross_patient', 'unintended_tool_action'] as const) {
@@ -43,10 +50,10 @@ function scope(target: typeof targets[number], version: string | null, cases: Ca
     for (const sub of [...new Set(inside.map(c => c.subcategory))]) {
       const list = inside.filter(c => c.subcategory === sub);
       rows.push({ level: 'subcategory', category, subcategory: sub, ...present(list.map(c => c.spec)) });
-      for (const c of list) rows.push({ level: 'case', category, subcategory: sub, ...present([c.spec]), case: { id: `00000000-0000-4000-8000-${c.id.padStart(12, '0')}`, familyId: `00000000-0000-4000-8000-${c.id.padStart(12, '0')}`, version: 1, title: c.title, catalogState: 'published', metadataStatus: 'complete' } });
+      for (const c of list) rows.push({ level: 'case', category, subcategory: sub, ...present([c.spec]), case: caseRef(c) });
     }
   }
-  return { target: { id: target.id, name: target.name }, targetVersion: version, observed: { firstAt: observed?.[0] ?? null, lastAt: observed?.[1] ?? null }, totals: counts(cases.map(c => c.spec)), rows };
+  return { target: { id: target.id, name: target.name }, targetVersion: version, observed: { firstAt: observed?.[0] ?? null, lastAt: observed?.[1] ?? null }, totals: counts(cases.map(c => c.spec)), rows, owasp: owaspRows(cases) };
 }
 const none = (cases: Case[]) => cases.map(c => ({ ...c, spec: {} }));
 const lastSpecs = (cases: Case[], safe: number) => cases.map(c => c.id.endsWith('1') ? { ...c, spec: { safe, pending_review: 0 } } : { ...c, spec: {} });
@@ -312,5 +319,83 @@ test('comparison pairs only scopes of one target, labels both versions, and comp
     assert.match(await page.getByRole('table', { name: /Per category/ }).locator('thead').innerText(), /A: Earlier window[\s\S]*B: Selected window/);
     await fits(page);
     await shots(page, 'comparison-earlier-window', '.cov-compare');
+  });
+});
+
+test('OWASP view reads a scope by tag, keeps overlapping rows honest and lists unmapped cases explicitly', async () => {
+  await withPage(1440, async (page, origin) => {
+    await page.goto(`${origin}/coverage?targetId=${T1}&targetVersion=1.4.0`);
+    const owasp = page.getByRole('table', { name: /OWASP view for Synthetic Co-Pilot, version 1\.4\.0/ });
+    await owasp.waitFor();
+    assert.equal(await page.getByRole('heading', { level: 3 }).count(), 1, 'still one scope table; the OWASP view is part of it');
+    assert.equal(await page.getByRole('heading', { level: 4, name: 'By OWASP tag' }).count(), 1);
+    assert.match(await page.locator('.cov-owasp-note').first().innerText(), /rows overlap and do not add up to the scope total[\s\S]*Unmapped have no OWASP mapping[\s\S]*never counted as safe/);
+    assert.equal(await page.getByRole('region', { name: /OWASP view for Synthetic Co-Pilot, version 1\.4\.0/ }).getAttribute('tabindex'), '0');
+    assert.deepEqual(await owasp.locator('thead th[scope="colgroup"]').allInnerTexts(), ['Outcome (immutable)', 'Review (disposition)', 'Execution'], 'same outcome and review columns as the category table');
+    assert.match(await owasp.locator('caption').innerText(), /rows overlap; Unmapped lists cases with no OWASP tag/);
+
+    // Tags ascend and the unmapped bucket is last.
+    const labels = await owasp.locator('tbody th[scope="row"]').evaluateAll(cells => cells.map(cell => cell.querySelector('strong')?.textContent));
+    assert.deepEqual(labels, ['A03:2021', 'LLM01:2025', 'LLM02:2025', 'LLM06:2025', 'Unmapped']);
+    const cell = async (row: RegExp, column: string) => owasp.getByRole('row', { name: row }).locator(`td[data-col="${column}"]`).innerText();
+    const chip = (row: RegExp) => owasp.getByRole('row', { name: row }).locator('.cov-gap').innerText();
+
+    // One case under two tags counts under both; the blocked and inconclusive cases of LLM01 are excluded, never safe.
+    const llm01 = /^OWASP tag: LLM01:2025/;
+    assert.match(await cell(llm01, 'safeRate'), /3\/4/); assert.match(await cell(llm01, 'safeRate'), /75%/); assert.match(await cell(llm01, 'safeRate'), /4 excluded/);
+    for (const [column, expected] of [['safe', '3'], ['pending_review', '1'], ['inconclusive', '2'], ['blocked', '2'], ['incomplete', '0'], ['notAttempted', '1']]) assert.equal(await cell(llm01, column), expected, `LLM01 ${column}`);
+    assert.match(await owasp.getByRole('row', { name: llm01 }).locator('th').innerText(), /3 published cases · 0 untested/);
+    const a03 = /^OWASP tag: A03:2021/;
+    assert.match(await cell(a03, 'safeRate'), /3\/4/); assert.match(await cell(a03, 'safeRate'), /0 excluded/);
+    assert.equal(await chip(a03), 'Has result');
+
+    // No determinate result stays a gap with n/a, never 0% or safe.
+    const llm02 = /^OWASP tag: LLM02:2025/;
+    assert.match(await chip(llm02), /Blocked/);
+    const blocked = await cell(llm02, 'safeRate');
+    assert.match(blocked, /0\/0/); assert.match(blocked, /n\/a/); assert.match(blocked, /2 excluded/); assert.doesNotMatch(blocked, /0%/);
+    assert.match(await owasp.getByRole('row', { name: llm02 }).locator('th').innerText(), /3 published cases · 2 untested/);
+    const llm06 = /^OWASP tag: LLM06:2025/;
+    assert.match(await chip(llm06), /In flight/); assert.match(await cell(llm06, 'safeRate'), /0\/0[\s\S]*n\/a/);
+
+    // The unmapped bucket is explicit: it names its cases, reports them as a gap, and never shows a result it does not have.
+    const unmapped = /^No OWASP mapping: Unmapped/;
+    const label = await owasp.getByRole('row', { name: unmapped }).locator('th').innerText();
+    assert.match(label, /No OWASP mapping recorded for: Note edit v1/);
+    assert.match(await chip(unmapped), /Incomplete/);
+    const none = await cell(unmapped, 'safeRate');
+    assert.match(none, /0\/0/); assert.match(none, /n\/a/); assert.match(none, /1 excluded/); assert.equal(await cell(unmapped, 'safe'), '0');
+    assert.equal(await cell(unmapped, 'incomplete'), '1');
+
+    // The footer is the scope total, stated as such: every case once, not the sum of the overlapping rows.
+    const foot = await owasp.locator('tfoot').innerText();
+    assert.match(foot, /Scope total \(each case once, not the sum of the rows above\)/);
+    assert.match(await owasp.locator('tfoot td[data-col="safeRate"]').innerText(), /3\/4/);
+    await fits(page);
+    await shots(page, 'owasp-view', '.cov-owasp');
+
+    // A scope with no executions lists every tag and the unmapped bucket as untested.
+    await page.goto(`${origin}/coverage?targetId=${T2}&targetVersion=unknown`);
+    const idle = page.getByRole('table', { name: /OWASP view for Synthetic Records Bot, version unknown/ });
+    await idle.waitFor();
+    for (const row of ['OWASP tag: A03:2021', 'OWASP tag: LLM01:2025', 'OWASP tag: LLM02:2025', 'OWASP tag: LLM06:2025', 'No OWASP mapping: Unmapped'])
+      assert.equal(await idle.getByRole('row', { name: new RegExp(`^${row}`) }).locator('.cov-gap').innerText(), '○ Untested', row);
+    assert.equal(await idle.locator('tbody td[data-col="safe"]').evaluateAll(cells => cells.every(item => item.textContent === '0')), true);
+    await fits(page);
+
+    // All targets: each scope gets its own OWASP table and none is pooled with another.
+    await page.goto(`${origin}/coverage`);
+    await page.getByRole('heading', { level: 3, name: /Synthetic Records Bot/ }).waitFor();
+    assert.equal(await page.getByRole('table', { name: /^OWASP view for/ }).count(), 4);
+    assert.equal(await page.getByRole('heading', { level: 3 }).count(), 4);
+  });
+});
+
+test('the OWASP view is readable on a phone without sideways page scroll', async () => {
+  await withPage(390, async (page, origin) => {
+    await page.goto(`${origin}/coverage?targetId=${T1}&targetVersion=1.4.0`);
+    await page.getByRole('table', { name: /OWASP view for Synthetic Co-Pilot, version 1\.4\.0/ }).waitFor();
+    await fits(page);
+    await shots(page, 'owasp-view-phone', '.cov-owasp');
   });
 });

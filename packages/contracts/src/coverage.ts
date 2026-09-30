@@ -10,6 +10,10 @@ import { z } from 'zod';
 //  reviewed     an operator (not the automatic route) confirmed or rejected the finding candidate.
 // `outcomes` is the immutable execution outcome and partitions `attempted`. `disposition` is the
 // current human/automatic finding state and never rewrites `outcomes`.
+// `scope.owasp` (additive to v1, HDX-45) re-reads the same scope by OWASP tag. A case contributes its whole
+// facts to every tag in its rubric's `owaspMappings`, so tag rows overlap and must never be summed: use
+// `scope.totals`. A case with no mapping (legacy, or an empty mapping) lands in the explicit `unmapped` row. Each row
+// uses the same counts and gap as a category row, so the safe-rate rules are identical.
 export const coverageCategories = ['prompt_injection', 'cross_patient', 'unintended_tool_action'] as const;
 const count = z.number().int().nonnegative();
 const timestamp = z.iso.datetime({ offset: true });
@@ -34,6 +38,12 @@ export const coverageCaseRef = z.object({
   id: z.uuid(), familyId: z.uuid(), version: z.number().int().positive(), title: z.string(),
   catalogState: z.enum(['published', 'archived']), metadataStatus: z.enum(['complete', 'unknown_legacy'])
 }).strict();
+// The published or executed case versions behind an OWASP row, so a tag stays joinable to its cases.
+const owaspRowFields = { ...rowFields, cases: z.array(coverageCaseRef) };
+export const coverageOwaspRow = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('tag'), tag: z.string().min(1), ...owaspRowFields }).strict(),
+  z.object({ kind: z.literal('unmapped'), ...owaspRowFields }).strict() // present only when at least one case has no mapping
+]);
 export const coverageRow = z.discriminatedUnion('level', [
   z.object({ level: z.literal('category'), category, ...rowFields }).strict(),
   z.object({ level: z.literal('subcategory'), category, subcategory: z.string().nullable(), ...rowFields }).strict(),
@@ -44,7 +54,8 @@ export const coverageScope = z.object({
   targetVersion: z.string().nullable(), // null: version never established (blocked before session open)
   observed: z.object({ firstAt: timestamp.nullable(), lastAt: timestamp.nullable() }).strict(),
   totals: coverageCounts,
-  rows: z.array(coverageRow) // category, then its subcategories, each followed by its cases
+  rows: z.array(coverageRow), // category, then its subcategories, each followed by its cases
+  owasp: z.array(coverageOwaspRow) // OWASP tags in ascending order, then `unmapped` last; rows overlap, see above
 }).strict();
 export const coverageQuery = z.object({
   targetId: z.uuid().optional(),
@@ -61,5 +72,6 @@ export const coverageReport = z.object({
 export type CoverageQuery = z.infer<typeof coverageQuery>;
 export type CoverageCounts = z.infer<typeof coverageCounts>;
 export type CoverageRow = z.infer<typeof coverageRow>;
+export type CoverageOwaspRow = z.infer<typeof coverageOwaspRow>;
 export type CoverageScope = z.infer<typeof coverageScope>;
 export type CoverageReport = z.infer<typeof coverageReport>;
