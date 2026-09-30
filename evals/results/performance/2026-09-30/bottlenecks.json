@@ -1,0 +1,180 @@
+{
+  "schema": "performance-bottlenecks/v1",
+  "recordedAt": "2026-09-30T22:26:53.750Z",
+  "label": "FIXTURE BOTTLENECK ANALYSIS (HDX-32 / P01): derived from fixture measurements. Not a live result; items marked \"estimate\" rest on the planning document, not on a measurement.",
+  "derivedFrom": {
+    "baselineHead": "6781412d01dd89f27c4a3d19c85d22b4122ce1f4",
+    "plansHead": "88779c6fc1609c761a2aa36f9de73a3512b60430",
+    "memoryHead": "4048537ed237d853dfd8bf4ed63f6c0c5978deea",
+    "contentionHead": "6781412d01dd89f27c4a3d19c85d22b4122ce1f4"
+  },
+  "bottlenecks": [
+    {
+      "id": "B1",
+      "title": "The target, not the auditor, sets live throughput",
+      "evidence": [
+        {
+          "basis": "measured fixture",
+          "text": "The auditor spends 9.7 ms CPU and 73 SQL statements per case; a worker pass is 17.3 ms.",
+          "source": "fixture-baseline-100.json#profiles.overheadOnly.sequential"
+        },
+        {
+          "basis": "measured fixture",
+          "text": "With injected latency (+50 ms per target request, +100 ms per Judge call, illustrative) 81.1% of a worker pass is waiting on the target and 14.3% on the Judge; 8 lanes reach 7.35x the sequential rate at 0.12 of one core.",
+          "source": "fixture-baseline-100.json#profiles.syntheticLatency"
+        },
+        {
+          "basis": "estimate",
+          "text": "At an assumed 70 s live case plus the 1.5 s pause, one lane uses 0.014% of a core and 100 lanes 1.4%. The target's 2M-token daily halt allows about 110 cases a day per instance.",
+          "source": "docs/submission/cost-and-scale.md (planning assumptions)"
+        }
+      ],
+      "response": "Scale live throughput with lanes, not by optimizing auditor CPU: one target row and synthetic user pair per lane, more worker processes when one approaches a core, per-target concurrency limits, an incomplete-rate circuit breaker, and negotiated target token headroom or a multi-day schedule.",
+      "bindsAt": "every live scale from 100 cases up"
+    },
+    {
+      "id": "B2",
+      "title": "Fixed 1.5 s worker pause after every cycle",
+      "evidence": [
+        {
+          "basis": "measured fixture",
+          "text": "5 queued runs drained by the deployed loop cadence in 7618 ms = 1.52 s per run (0.66 runs/s); the pause is 98.7% of each cycle at fixture speed.",
+          "source": "fixture-baseline-100.json#profiles.deployedWorkerCadence"
+        },
+        {
+          "basis": "estimate",
+          "text": "At an assumed 70 s live case the pause is 2.1% of the cycle.",
+          "source": "docs/submission/cost-and-scale.md (planning assumptions)"
+        }
+      ],
+      "response": "Sleep only when processNext returned nothing; loop at once after a cycle that ran a case (apps/worker/src/main.ts:24). One line; not worth doing for live cases, worth doing before running bursts of fast runs.",
+      "bindsAt": "negligible for live cases; dominant for bursts of fast runs"
+    },
+    {
+      "id": "B3",
+      "title": "Commit-bound persistence: one durable transaction per event",
+      "evidence": [
+        {
+          "basis": "measured fixture",
+          "text": "12.65 COMMITs per case (launch and worker together) cost 7.19 ms: 52.4% of all database time and 37.1% of the 19.4 ms launch-plus-worker time. Within the worker pass alone, PostgreSQL wait is 71.2% (12.3 ms) against 2.4 ms of orchestration CPU.",
+          "source": "fixture-baseline-100.json#profiles.overheadOnly.sequential.topStatements[0]"
+        },
+        {
+          "basis": "measured fixture",
+          "text": "6.65 events per case, each appended in its own transaction (BEGIN, lease SELECT, UPDATE runs SET version, INSERT, COMMIT).",
+          "source": "fixture-baseline-100.json#profiles.overheadOnly.sequential.topStatements"
+        }
+      ],
+      "response": "Group the events one pipeline stage produces into a single transaction and skip the version UPDATE when unchanged; keep durable commits for verdicts and terminal events. Removing about 5 of the 12.65 commits and their paired statements saves on the order of 5 ms per fixture case (estimate from the per-statement costs). Also why the CI timed limits are wide: commit latency on the runner disk is unmeasured.",
+      "bindsAt": "only when per-case wall time is well under a second; immaterial at live case times, so not recommended now"
+    },
+    {
+      "id": "B4",
+      "title": "One process saturates one core at about a hundred fixture cases per second",
+      "evidence": [
+        {
+          "basis": "measured fixture",
+          "text": "Throughput 56.5 to 126.0 cases/s from 1 to 8 lanes (2.23x) while CPU rises from 0.44 to 1.09 cores; lane-cycle p95 21.7 to 91.4 ms.",
+          "source": "fixture-baseline-100.json#profiles.overheadOnly.laneCurve"
+        },
+        {
+          "basis": "measured fixture",
+          "text": "Event-loop delay p99 stays at timer resolution (5.95 ms at one lane, 7.97 ms at 8).",
+          "source": "fixture-baseline-100.json#profiles.overheadOnly.laneCurve[].resources.eventLoopDelay"
+        }
+      ],
+      "response": "Add worker processes (the worker is already a separate deployable) once one process approaches a core; claiming is SKIP LOCKED-safe. This curve is conservative because API, worker, target and Judge share one event loop here.",
+      "bindsAt": "only with calls fast enough to keep a process busy; not reachable with live targets on one process"
+    },
+    {
+      "id": "B5",
+      "title": "Unbounded, quadratic list reads",
+      "evidence": [
+        {
+          "basis": "measured synthetic database",
+          "text": "GET /api/regressions: payload 0.6 MiB at 2,500 runs to 34.4 MiB at 20,000 (about x4 per doubling), 15.6 ms to 1,141 ms. A candidate index (runs_case_target) speeds it only 1.27x to 1.39x because the payload is the cost.",
+          "source": "query-plan-evidence.json#regressionsRouteSweep"
+        },
+        {
+          "basis": "measured synthetic database",
+          "text": "At 100,000 runs (4,723 regressions) the SQL takes 29.0 s and serialization fails with RangeError: Invalid string length; the route therefore returns HTTP 500.",
+          "source": "query-plan-evidence.json#regressionsAtFullScale"
+        },
+        {
+          "basis": "measured fixture",
+          "text": "After 706 runs, GET /api/coverage/scoped without a target returns 4.4 MiB (every scope lists the whole case catalog) in 67.3 ms p50; GET /api/cases returns 237 KiB for 320 cases.",
+          "source": "fixture-baseline-100.json#profiles.overheadOnly.apiReads"
+        },
+        {
+          "basis": "measured synthetic database",
+          "text": "GET /api/findings returns 5.2 MiB for 21,667 candidates.",
+          "source": "query-plan-evidence.json#routeTimings"
+        }
+      ],
+      "response": "Cursor pagination and caps (the pattern already exists for run history, identities and suites); return the latest N replays per regression with a count; page coverage scopes or serve coverage from counts maintained when a run finishes. An index does not fix these.",
+      "bindsAt": "from about 10K runs; /api/regressions is unusable before 100K"
+    },
+    {
+      "id": "B6",
+      "title": "Coverage reads all history and nothing is indexable",
+      "evidence": [
+        {
+          "basis": "measured synthetic database",
+          "text": "Scoped coverage over all targets takes 675 ms at 100,000 runs, 674 ms without migration 024: no predicate to index. Category and subcategory are extracted from JSONB per row and events are probed per run.",
+          "source": "query-plan-evidence.json#queries"
+        },
+        {
+          "basis": "measured synthetic database",
+          "text": "An expression index on the JSONB category was tried and the planner did not choose it (35.12 ms against 34.14 ms).",
+          "source": "query-plan-evidence.json#rejectedCandidates"
+        }
+      ],
+      "response": "A rollup table keyed by target, version and case, updated at run finish, and category and subcategory promoted to real columns so they can be indexed. Migration 024 deliberately does not pretend an index fixes this.",
+      "bindsAt": "from about 10K runs"
+    },
+    {
+      "id": "B7",
+      "title": "Storage growth",
+      "evidence": [
+        {
+          "basis": "measured fixture",
+          "text": "12.8 KiB of database growth per case at the floor (fixture responses are short): events 4,557 rows and 3.0 MiB, runs 2.9 MiB, assessments 0.8 MiB for 706 runs.",
+          "source": "fixture-baseline-100.json#profiles.overheadOnly.storage"
+        },
+        {
+          "basis": "estimate",
+          "text": "1.5 GB (decimal) for 100K finished cases at the floor (111,111 attempts), 2.8 GB at the 25,000-byte planning value.",
+          "source": "docs/submission/cost-and-scale.md (scenario model)"
+        }
+      ],
+      "response": "Partition events by month and archive finished-run events past retention to object storage, keeping hashes in PostgreSQL; read replica for the UI.",
+      "bindsAt": "from about 10K runs; real responses are larger than the fixture floor"
+    },
+    {
+      "id": "B8",
+      "title": "Memory of a long-lived process",
+      "evidence": [
+        {
+          "basis": "measured fixture",
+          "text": "1,400 cases in one process with the old-space heap capped: JS heap used 83 to 88 MB (3.9 KB per case) while RSS went 302 to 315 MB. Uncapped recordings peak higher from lazy garbage collection.",
+          "source": "memory-stability.json"
+        }
+      ],
+      "response": "No leak in the JS heap at this scale; the slow RSS creep is unattributed, so watch worker RSS through the worker-health metrics and restart on a threshold instead of assuming it is flat.",
+      "bindsAt": "only for long-lived workers"
+    },
+    {
+      "id": "B9",
+      "title": "CI runner headroom for the regression SLO",
+      "evidence": [
+        {
+          "basis": "measured fixture",
+          "text": "With Node starved to about a third of a core, the timed wall-clock metrics were 2.95x to 3.60x the uncontended reference and still had 8.3x to 10.2x headroom under the SLO limits; peak memory was unchanged (372 MB against a 748 MB limit) and the work counts did not move (identical to the reference).",
+          "source": "slo-contention-emulation.json"
+        }
+      ],
+      "response": "Keep the work-count limits as the precise tier and the wall-clock limits as a coarse tripwire; re-record the reference if the runner class changes.",
+      "bindsAt": "CI only"
+    }
+  ]
+}

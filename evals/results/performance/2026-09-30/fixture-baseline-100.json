@@ -1,0 +1,1128 @@
+{
+  "schema": "performance-fixture-baseline/v1",
+  "label": "FIXTURE BASELINE (HDX-32 / P01): synthetic, in-process, local stand-ins only. This is NOT a live 100-case result and NOT live performance.",
+  "workItem": "HDX-32 / P01 reproducible 100-case fixture baseline",
+  "claims": {
+    "liveTarget": false,
+    "paidProviders": false,
+    "modelInference": false,
+    "network": "127.0.0.1 only",
+    "liveAcceptance": false,
+    "liveHundredCaseResult": false,
+    "liveLatencyOrThroughput": false,
+    "capacityClaim": false
+  },
+  "recordedAt": "2026-09-30T21:59:26.523Z",
+  "revision": {
+    "head": "6781412d01dd89f27c4a3d19c85d22b4122ce1f4",
+    "branch": "claude/hdx-32-p01-baseline-indexes-slo",
+    "subject": "Add SLO check, scenario model, CI step and fresh-process repeatability (HDX-32)",
+    "applicationTrees": {
+      "apps": "66f13ea4117fd482a4744a474d017be57de170ff",
+      "packages": "f8ef3b60d59e76d0d6730bcc0db04283ccc9b7c5",
+      "db": "41e407ef438f25821c7bfa0abffc4dc71451da4a"
+    },
+    "applicationSourceDirty": false,
+    "workingTreeDirty": false,
+    "note": "Measured on the committed application source identified by `head` and `applicationTrees`. When `applicationSourceDirty` is false, working-tree differences at measurement time are limited to tests/, evals/ and docs/."
+  },
+  "machine": {
+    "platform": "Linux 7.0.0-31-generic x64",
+    "cpuModel": "Intel(R) Core(TM) i9-14900KF",
+    "logicalCpus": 32,
+    "availableParallelism": 32,
+    "totalMemoryGb": 31,
+    "loadAverageAtStart": [
+      2.75,
+      2.7,
+      2.97
+    ],
+    "node": "v24.14.0",
+    "cpuProbe": {
+      "medianMs": 16.33,
+      "samplesMs": [
+        16.33,
+        17.14,
+        11.69
+      ],
+      "workload": "4,000 x (JSON stringify+parse of a ~1.3 KB document, then SHA-256 of its serialization), single thread"
+    }
+  },
+  "database": {
+    "server": "PostgreSQL 17.11",
+    "service": "disposable PostgreSQL service on 127.0.0.1 (container outside this process), one fresh database per stack, default settings",
+    "note": "Database server CPU and memory are outside this process and are not reported; PostgreSQL time below is client-observed."
+  },
+  "method": {
+    "summary": "One Node process hosts the API (Express), the worker entry (processNext), the fixture target, the scripted Judge stand-ins and the PostgreSQL client. Runs are launched through POST /api/runs (with model preflight) and executed by the real worker pipeline: session handshake, chart context, chat turns, deterministic checks, Judge call, policy gate and persistence.",
+    "caseMix": "100 distinct published cases. Per 20: 10 single-turn prompt injections, 3 three-turn injections, 4 chart-context cross_patient cases, 3 unintended_tool_action cases (1.3 target turns per case on average; tool cases also fetch the patient report twice). Expected outcomes are asserted for every run: safe for injection and cross_patient, inconclusive for tool cases.",
+    "regression": "100 confirmed findings, each its own regression identity, replayed in suites of 25 (the contract maximum) at a new target version.",
+    "warmup": "10 cases before the measured pass (not reported).",
+    "publishCasesMs": 276,
+    "cpuAndMemory": "Process CPU time, sampled RSS/heap and event-loop delay of the whole in-process stack during each phase.",
+    "memoryMarkers": {
+      "rssAtStartMb": 305,
+      "rssAfterSetupMb": 336,
+      "note": "Resident set size after module load (TypeScript runtime, Express, pg) and after the stack and case pool exist, before any measured case. Phase peakRssMb values are read against these."
+    },
+    "injectedLatency": {
+      "targetPerRequestMs": 50,
+      "judgePerCallMs": 100,
+      "note": "Arbitrary illustrative values used only in the synthetic-latency profile. Not measurements of any real target or model."
+    },
+    "instrumentation": "Every statement through pg.Client#query is counted and timed; target and Judge fetches are timed to response headers. The wrappers add microseconds per call."
+  },
+  "profiles": {
+    "overheadOnly": {
+      "description": "No injected latency: the auditor's own orchestration, serialization and persistence cost.",
+      "sequential": {
+        "runs": 100,
+        "outcomes": {
+          "safe": 85,
+          "inconclusive": 15
+        },
+        "throughputRunsPerSecond": 51.58,
+        "latency": {
+          "launch": {
+            "count": 100,
+            "meanMs": 2.06,
+            "p50Ms": 1.92,
+            "p95Ms": 2.88,
+            "p99Ms": 4.68,
+            "maxMs": 7.19
+          },
+          "worker": {
+            "count": 100,
+            "meanMs": 17.32,
+            "p50Ms": 16.27,
+            "p95Ms": 23.26,
+            "p99Ms": 24.91,
+            "maxMs": 31.34
+          },
+          "endToEnd": {
+            "count": 100,
+            "meanMs": 19.38,
+            "p50Ms": 18.16,
+            "p95Ms": 25.69,
+            "p99Ms": 29.2,
+            "maxMs": 34.16
+          }
+        },
+        "workerPassBreakdown": {
+          "note": "Per worker pass, in ms. PostgreSQL = client-observed time awaiting statements; target and Judge = time to response headers of each fixture HTTP request (including any injected latency); orchestration = the remainder (CPU, JSON, hashing, scheduling).",
+          "postgres": {
+            "count": 100,
+            "meanMs": 12.34,
+            "p50Ms": 11.74,
+            "p95Ms": 16.01,
+            "p99Ms": 16.68,
+            "maxMs": 18.47
+          },
+          "targetHttp": {
+            "count": 100,
+            "meanMs": 2.32,
+            "p50Ms": 2.02,
+            "p95Ms": 4.27,
+            "p99Ms": 5.71,
+            "maxMs": 8.26
+          },
+          "judgeHttp": {
+            "count": 100,
+            "meanMs": 0.25,
+            "p50Ms": 0.23,
+            "p95Ms": 0.38,
+            "p99Ms": 0.42,
+            "maxMs": 0.43
+          },
+          "orchestration": {
+            "count": 100,
+            "meanMs": 2.41,
+            "p50Ms": 2.2,
+            "p95Ms": 3.75,
+            "p99Ms": 4.11,
+            "maxMs": 4.33
+          },
+          "meanShare": {
+            "postgres": 0.712,
+            "targetHttp": 0.134,
+            "judgeHttp": 0.015,
+            "orchestration": 0.139
+          }
+        },
+        "perCase": {
+          "workerStatements": {
+            "mean": 64.2,
+            "max": 73
+          },
+          "launchStatements": {
+            "mean": 9,
+            "max": 9
+          },
+          "targetRequests": {
+            "mean": 11.3,
+            "max": 16
+          },
+          "judgeRequests": {
+            "mean": 1,
+            "max": 1
+          },
+          "eventRows": 6.65,
+          "eventBytes": 2981,
+          "storageBytes": 13107
+        },
+        "resources": {
+          "wallMs": 1939,
+          "cpuMs": 970,
+          "cpuUserMs": 871,
+          "cpuSystemMs": 99,
+          "cpuUtilization": 0.5,
+          "peakRssMb": 357,
+          "peakHeapUsedMb": 170,
+          "eventLoopDelay": {
+            "meanMs": 5.02,
+            "p50Ms": 5.01,
+            "p99Ms": 5.95,
+            "maxMs": 7.22,
+            "note": "Timer-resolution delay of the single Node event loop that hosts API, worker, fixture target, Judge stand-in and PostgreSQL client."
+          }
+        },
+        "topStatements": [
+          {
+            "sql": "COMMIT",
+            "callsPerCase": 12.65,
+            "msPerCase": 7.191,
+            "shareOfDbTime": 0.524
+          },
+          {
+            "sql": "UPDATE runs SET version=COALESCE($3,version) WHERE id=$1 AND lease_generation=$2 AND status='running' AND leas",
+            "callsPerCase": 6.65,
+            "msPerCase": 0.914,
+            "shareOfDbTime": 0.067
+          },
+          {
+            "sql": "SELECT stop_requested,started_at,adaptive FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' A",
+            "callsPerCase": 6.6,
+            "msPerCase": 0.827,
+            "shareOfDbTime": 0.06
+          },
+          {
+            "sql": "INSERT INTO events(run_id,event) VALUES ($1,$2)",
+            "callsPerCase": 6.65,
+            "msPerCase": 0.686,
+            "shareOfDbTime": 0.05
+          },
+          {
+            "sql": "BEGIN",
+            "callsPerCase": 12.65,
+            "msPerCase": 0.66,
+            "shareOfDbTime": 0.048
+          },
+          {
+            "sql": "SELECT r.id,r.target_id AS \"targetId\",r.case_id AS \"caseId\",r.status,r.outcome,r.version, r.created_at AS \"cre",
+            "callsPerCase": 1,
+            "msPerCase": 0.247,
+            "shareOfDbTime": 0.018
+          },
+          {
+            "sql": "UPDATE runs SET status='finished',outcome=CASE WHEN stop_requested OR (adaptive IS NOT NULL AND started_at+((a",
+            "callsPerCase": 1,
+            "msPerCase": 0.224,
+            "shareOfDbTime": 0.016
+          },
+          {
+            "sql": "SELECT ciphertext FROM credentials WHERE id=$1",
+            "callsPerCase": 2,
+            "msPerCase": 0.213,
+            "shareOfDbTime": 0.015
+          }
+        ]
+      },
+      "laneCurve": [
+        {
+          "lanes": 1,
+          "runs": 100,
+          "outcomes": {
+            "safe": 85,
+            "inconclusive": 15
+          },
+          "throughputRunsPerSecond": 56.52,
+          "wallMs": 1769,
+          "laneCycleLatency": {
+            "count": 100,
+            "meanMs": 17.69,
+            "p50Ms": 17.4,
+            "p95Ms": 21.67,
+            "p99Ms": 24.28,
+            "maxMs": 28.16
+          },
+          "statementsPerCase": 74.2,
+          "resources": {
+            "wallMs": 1769,
+            "cpuMs": 782,
+            "cpuUserMs": 694,
+            "cpuSystemMs": 88,
+            "cpuUtilization": 0.44,
+            "peakRssMb": 394,
+            "peakHeapUsedMb": 213,
+            "eventLoopDelay": {
+              "meanMs": 5.02,
+              "p50Ms": 5.01,
+              "p99Ms": 6.04,
+              "maxMs": 7.13,
+              "note": "Timer-resolution delay of the single Node event loop that hosts API, worker, fixture target, Judge stand-in and PostgreSQL client."
+            }
+          }
+        },
+        {
+          "lanes": 2,
+          "runs": 100,
+          "outcomes": {
+            "safe": 85,
+            "inconclusive": 15
+          },
+          "throughputRunsPerSecond": 78.42,
+          "wallMs": 1275,
+          "laneCycleLatency": {
+            "count": 100,
+            "meanMs": 25.34,
+            "p50Ms": 24.81,
+            "p95Ms": 34.68,
+            "p99Ms": 36.07,
+            "maxMs": 39.4
+          },
+          "statementsPerCase": 74.2,
+          "resources": {
+            "wallMs": 1275,
+            "cpuMs": 980,
+            "cpuUserMs": 886,
+            "cpuSystemMs": 94,
+            "cpuUtilization": 0.77,
+            "peakRssMb": 428,
+            "peakHeapUsedMb": 238,
+            "eventLoopDelay": {
+              "meanMs": 5.01,
+              "p50Ms": 5,
+              "p99Ms": 5.73,
+              "maxMs": 7.76,
+              "note": "Timer-resolution delay of the single Node event loop that hosts API, worker, fixture target, Judge stand-in and PostgreSQL client."
+            }
+          }
+        },
+        {
+          "lanes": 4,
+          "runs": 100,
+          "outcomes": {
+            "safe": 85,
+            "inconclusive": 15
+          },
+          "throughputRunsPerSecond": 96.82,
+          "wallMs": 1033,
+          "laneCycleLatency": {
+            "count": 100,
+            "meanMs": 40.82,
+            "p50Ms": 39.57,
+            "p95Ms": 51.14,
+            "p99Ms": 68.48,
+            "maxMs": 93.57
+          },
+          "statementsPerCase": 75.04,
+          "resources": {
+            "wallMs": 1033,
+            "cpuMs": 996,
+            "cpuUserMs": 902,
+            "cpuSystemMs": 94,
+            "cpuUtilization": 0.96,
+            "peakRssMb": 428,
+            "peakHeapUsedMb": 162,
+            "eventLoopDelay": {
+              "meanMs": 5.02,
+              "p50Ms": 4.98,
+              "p99Ms": 6.17,
+              "maxMs": 6.71,
+              "note": "Timer-resolution delay of the single Node event loop that hosts API, worker, fixture target, Judge stand-in and PostgreSQL client."
+            }
+          }
+        },
+        {
+          "lanes": 8,
+          "runs": 96,
+          "outcomes": {
+            "safe": 84,
+            "inconclusive": 12
+          },
+          "throughputRunsPerSecond": 125.98,
+          "wallMs": 762,
+          "laneCycleLatency": {
+            "count": 96,
+            "meanMs": 62.74,
+            "p50Ms": 60.56,
+            "p95Ms": 91.38,
+            "p99Ms": 106.63,
+            "maxMs": 106.63
+          },
+          "statementsPerCase": 80.07,
+          "resources": {
+            "wallMs": 762,
+            "cpuMs": 831,
+            "cpuUserMs": 742,
+            "cpuSystemMs": 89,
+            "cpuUtilization": 1.09,
+            "peakRssMb": 428,
+            "peakHeapUsedMb": 197,
+            "eventLoopDelay": {
+              "meanMs": 5.08,
+              "p50Ms": 5.01,
+              "p99Ms": 7.97,
+              "maxMs": 8.25,
+              "note": "Timer-resolution delay of the single Node event loop that hosts API, worker, fixture target, Judge stand-in and PostgreSQL client."
+            }
+          }
+        }
+      ],
+      "regression": {
+        "identities": 100,
+        "suiteSize": 25,
+        "setup": {
+          "wallMs": 2276,
+          "msPerIdentity": 22.76,
+          "resources": {
+            "wallMs": 2276,
+            "cpuMs": 863,
+            "cpuUserMs": 767,
+            "cpuSystemMs": 96,
+            "cpuUtilization": 0.38,
+            "peakRssMb": 431,
+            "peakHeapUsedMb": 241,
+            "eventLoopDelay": {
+              "meanMs": 5,
+              "p50Ms": 5.01,
+              "p99Ms": 5.62,
+              "maxMs": 6.11,
+              "note": "Timer-resolution delay of the single Node event loop that hosts API, worker, fixture target, Judge stand-in and PostgreSQL client."
+            }
+          }
+        },
+        "suites": [
+          {
+            "size": 25,
+            "createMs": 62.47,
+            "wallMs": 467,
+            "replayLatency": {
+              "count": 25,
+              "meanMs": 16.04,
+              "p50Ms": 15.35,
+              "p95Ms": 19.12,
+              "p99Ms": 20.69,
+              "maxMs": 20.69
+            },
+            "statementsPerReplay": 84.08,
+            "peakRssMb": 439,
+            "cpuMs": 174
+          },
+          {
+            "size": 25,
+            "createMs": 45.26,
+            "wallMs": 477,
+            "replayLatency": {
+              "count": 25,
+              "meanMs": 17.18,
+              "p50Ms": 16.75,
+              "p95Ms": 21.02,
+              "p99Ms": 21.04,
+              "maxMs": 21.04
+            },
+            "statementsPerReplay": 83.88,
+            "peakRssMb": 446,
+            "cpuMs": 173
+          },
+          {
+            "size": 25,
+            "createMs": 43.84,
+            "wallMs": 433,
+            "replayLatency": {
+              "count": 25,
+              "meanMs": 15.49,
+              "p50Ms": 15.33,
+              "p95Ms": 17.3,
+              "p99Ms": 20.25,
+              "maxMs": 20.25
+            },
+            "statementsPerReplay": 83.88,
+            "peakRssMb": 453,
+            "cpuMs": 142
+          },
+          {
+            "size": 25,
+            "createMs": 44.16,
+            "wallMs": 459,
+            "replayLatency": {
+              "count": 25,
+              "meanMs": 16.53,
+              "p50Ms": 16.53,
+              "p95Ms": 18.93,
+              "p99Ms": 18.97,
+              "maxMs": 18.97
+            },
+            "statementsPerReplay": 83.88,
+            "peakRssMb": 460,
+            "cpuMs": 143
+          }
+        ],
+        "replays": 100,
+        "replayWallMs": 1836,
+        "replayThroughputPerSecond": 54.47,
+        "firstSuite": {
+          "size": 25,
+          "createMs": 62.47,
+          "wallMs": 467,
+          "replayLatency": {
+            "count": 25,
+            "meanMs": 16.04,
+            "p50Ms": 15.35,
+            "p95Ms": 19.12,
+            "p99Ms": 20.69,
+            "maxMs": 20.69
+          },
+          "statementsPerReplay": 84.08,
+          "peakRssMb": 439,
+          "cpuMs": 174
+        }
+      },
+      "apiReads": {
+        "runs_history_25": {
+          "count": 30,
+          "meanMs": 0.74,
+          "p50Ms": 0.71,
+          "p95Ms": 0.87,
+          "p99Ms": 1.39,
+          "maxMs": 1.39,
+          "bytes": 14267
+        },
+        "findings": {
+          "count": 30,
+          "meanMs": 1.09,
+          "p50Ms": 1.07,
+          "p95Ms": 1.31,
+          "p99Ms": 1.41,
+          "maxMs": 1.41,
+          "bytes": 34093
+        },
+        "scoped_coverage_target": {
+          "count": 30,
+          "meanMs": 12.54,
+          "p50Ms": 11.43,
+          "p95Ms": 19.11,
+          "p99Ms": 23.39,
+          "maxMs": 23.39,
+          "bytes": 243681
+        },
+        "scoped_coverage_all_targets": {
+          "count": 30,
+          "meanMs": 70.11,
+          "p50Ms": 67.33,
+          "p95Ms": 74.8,
+          "p99Ms": 155.98,
+          "maxMs": 155.98,
+          "bytes": 4620037
+        },
+        "coverage_summary": {
+          "count": 30,
+          "meanMs": 1.14,
+          "p50Ms": 1.21,
+          "p95Ms": 1.72,
+          "p99Ms": 2.22,
+          "maxMs": 2.22,
+          "bytes": 264
+        },
+        "regression_identities": {
+          "count": 30,
+          "meanMs": 3.35,
+          "p50Ms": 3.26,
+          "p95Ms": 4.65,
+          "p99Ms": 4.86,
+          "maxMs": 4.86,
+          "bytes": 55321
+        },
+        "regressions": {
+          "count": 30,
+          "meanMs": 5.66,
+          "p50Ms": 5.61,
+          "p95Ms": 5.87,
+          "p99Ms": 6.31,
+          "maxMs": 6.31,
+          "bytes": 99785
+        },
+        "regression_suites": {
+          "count": 30,
+          "meanMs": 0.68,
+          "p50Ms": 0.62,
+          "p95Ms": 0.86,
+          "p99Ms": 1.19,
+          "maxMs": 1.19,
+          "bytes": 1639
+        },
+        "operations_health": {
+          "count": 30,
+          "meanMs": 0.9,
+          "p50Ms": 0.84,
+          "p95Ms": 1.24,
+          "p99Ms": 1.77,
+          "maxMs": 1.77,
+          "bytes": 417
+        },
+        "cases": {
+          "count": 30,
+          "meanMs": 2.3,
+          "p50Ms": 1.97,
+          "p95Ms": 3.19,
+          "p99Ms": 4.95,
+          "maxMs": 4.95,
+          "bytes": 242500
+        }
+      },
+      "storage": {
+        "databaseBytes": 18003635,
+        "tables": {
+          "runs": {
+            "rows": 706,
+            "totalBytes": 3039232,
+            "indexBytes": 278528
+          },
+          "events": {
+            "rows": 4557,
+            "totalBytes": 3104768,
+            "indexBytes": 385024
+          },
+          "candidates": {
+            "rows": 100,
+            "totalBytes": 98304,
+            "indexBytes": 40960
+          },
+          "assessments": {
+            "rows": 706,
+            "totalBytes": 811008,
+            "indexBytes": 57344
+          },
+          "model_calls": {
+            "rows": 706,
+            "totalBytes": 278528,
+            "indexBytes": 131072
+          },
+          "cases": {
+            "rows": 320,
+            "totalBytes": 458752,
+            "indexBytes": 90112
+          },
+          "artifacts": {
+            "rows": 0,
+            "totalBytes": 16384,
+            "indexBytes": 8192
+          },
+          "regressions": {
+            "rows": 100,
+            "totalBytes": 212992,
+            "indexBytes": 65536
+          },
+          "regression_identities": {
+            "rows": 100,
+            "totalBytes": 139264,
+            "indexBytes": 65536
+          },
+          "regression_replays": {
+            "rows": 100,
+            "totalBytes": 122880,
+            "indexBytes": 65536
+          },
+          "regression_suites": {
+            "rows": 4,
+            "totalBytes": 73728,
+            "indexBytes": 57344
+          },
+          "regression_suite_items": {
+            "rows": 100,
+            "totalBytes": 253952,
+            "indexBytes": 81920
+          },
+          "adaptive_cases": {
+            "rows": 0,
+            "totalBytes": 40960,
+            "indexBytes": 32768
+          }
+        },
+        "eventPayload": {
+          "rows": 4557,
+          "meanBytes": 440,
+          "maxBytes": 1037,
+          "note": "octet_length of the event JSON text; on-disk bytes include row headers, TOAST and indexes (see tables.events)."
+        }
+      }
+    },
+    "syntheticLatency": {
+      "description": "Target requests +50 ms and Judge calls +100 ms (illustrative).",
+      "sequential": {
+        "runs": 100,
+        "outcomes": {
+          "safe": 85,
+          "inconclusive": 15
+        },
+        "throughputRunsPerSecond": 1.42,
+        "latency": {
+          "launch": {
+            "count": 100,
+            "meanMs": 2.59,
+            "p50Ms": 2.36,
+            "p95Ms": 3.96,
+            "p99Ms": 4.32,
+            "maxMs": 4.39
+          },
+          "worker": {
+            "count": 100,
+            "meanMs": 702.05,
+            "p50Ms": 595.84,
+            "p95Ms": 948.76,
+            "p99Ms": 951.85,
+            "maxMs": 958.85
+          },
+          "endToEnd": {
+            "count": 100,
+            "meanMs": 704.65,
+            "p50Ms": 600.22,
+            "p95Ms": 951.78,
+            "p99Ms": 955.58,
+            "maxMs": 962.43
+          }
+        },
+        "workerPassBreakdown": {
+          "note": "Per worker pass, in ms. PostgreSQL = client-observed time awaiting statements; target and Judge = time to response headers of each fixture HTTP request (including any injected latency); orchestration = the remainder (CPU, JSON, hashing, scheduling).",
+          "postgres": {
+            "count": 100,
+            "meanMs": 28.61,
+            "p50Ms": 27.24,
+            "p95Ms": 36.71,
+            "p99Ms": 39.84,
+            "maxMs": 41.55
+          },
+          "targetHttp": {
+            "count": 100,
+            "meanMs": 569.6,
+            "p50Ms": 457.07,
+            "p95Ms": 807.81,
+            "p99Ms": 811.09,
+            "maxMs": 811.71
+          },
+          "judgeHttp": {
+            "count": 100,
+            "meanMs": 100.46,
+            "p50Ms": 100.43,
+            "p95Ms": 101.22,
+            "p99Ms": 101.74,
+            "maxMs": 102.14
+          },
+          "orchestration": {
+            "count": 100,
+            "meanMs": 3.39,
+            "p50Ms": 3.12,
+            "p95Ms": 5.43,
+            "p99Ms": 5.58,
+            "maxMs": 5.99
+          },
+          "meanShare": {
+            "postgres": 0.041,
+            "targetHttp": 0.811,
+            "judgeHttp": 0.143,
+            "orchestration": 0.005
+          }
+        },
+        "perCase": {
+          "workerStatements": {
+            "mean": 64.2,
+            "max": 73
+          },
+          "launchStatements": {
+            "mean": 9,
+            "max": 9
+          },
+          "targetRequests": {
+            "mean": 11.3,
+            "max": 16
+          },
+          "judgeRequests": {
+            "mean": 1,
+            "max": 1
+          },
+          "eventRows": 6.65,
+          "eventBytes": 2986,
+          "storageBytes": 11141
+        },
+        "resources": {
+          "wallMs": 70465,
+          "cpuMs": 2201,
+          "cpuUserMs": 1872,
+          "cpuSystemMs": 329,
+          "cpuUtilization": 0.03,
+          "peakRssMb": 717,
+          "peakHeapUsedMb": 144,
+          "eventLoopDelay": {
+            "meanMs": 5.08,
+            "p50Ms": 5.07,
+            "p99Ms": 5.72,
+            "maxMs": 34.18,
+            "note": "Timer-resolution delay of the single Node event loop that hosts API, worker, fixture target, Judge stand-in and PostgreSQL client."
+          }
+        },
+        "topStatements": [
+          {
+            "sql": "COMMIT",
+            "callsPerCase": 12.65,
+            "msPerCase": 17.846,
+            "shareOfDbTime": 0.589
+          },
+          {
+            "sql": "BEGIN",
+            "callsPerCase": 12.65,
+            "msPerCase": 2.09,
+            "shareOfDbTime": 0.069
+          },
+          {
+            "sql": "UPDATE runs SET version=COALESCE($3,version) WHERE id=$1 AND lease_generation=$2 AND status='running' AND leas",
+            "callsPerCase": 6.65,
+            "msPerCase": 1.864,
+            "shareOfDbTime": 0.062
+          },
+          {
+            "sql": "SELECT stop_requested,started_at,adaptive FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' A",
+            "callsPerCase": 6.6,
+            "msPerCase": 1.483,
+            "shareOfDbTime": 0.049
+          },
+          {
+            "sql": "INSERT INTO events(run_id,event) VALUES ($1,$2)",
+            "callsPerCase": 6.65,
+            "msPerCase": 1.377,
+            "shareOfDbTime": 0.045
+          },
+          {
+            "sql": "UPDATE runs SET status='finished',outcome=CASE WHEN stop_requested OR (adaptive IS NOT NULL AND started_at+((a",
+            "callsPerCase": 1,
+            "msPerCase": 0.446,
+            "shareOfDbTime": 0.015
+          },
+          {
+            "sql": "SELECT r.id,r.target_id AS \"targetId\",r.case_id AS \"caseId\",r.status,r.outcome,r.version, r.created_at AS \"cre",
+            "callsPerCase": 1,
+            "msPerCase": 0.361,
+            "shareOfDbTime": 0.012
+          },
+          {
+            "sql": "SELECT id FROM runs WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now() FOR UPDATE",
+            "callsPerCase": 1,
+            "msPerCase": 0.35,
+            "shareOfDbTime": 0.012
+          }
+        ]
+      },
+      "laneCurve": [
+        {
+          "lanes": 2,
+          "runs": 100,
+          "outcomes": {
+            "safe": 85,
+            "inconclusive": 15
+          },
+          "throughputRunsPerSecond": 2.84,
+          "wallMs": 35262,
+          "laneCycleLatency": {
+            "count": 100,
+            "meanMs": 699.44,
+            "p50Ms": 594.43,
+            "p95Ms": 940.25,
+            "p99Ms": 943.3,
+            "maxMs": 944.83
+          },
+          "statementsPerCase": 74.2,
+          "resources": {
+            "wallMs": 35262,
+            "cpuMs": 1544,
+            "cpuUserMs": 1320,
+            "cpuSystemMs": 224,
+            "cpuUtilization": 0.04,
+            "peakRssMb": 344,
+            "peakHeapUsedMb": 141,
+            "eventLoopDelay": {
+              "meanMs": 5.08,
+              "p50Ms": 5.07,
+              "p99Ms": 5.82,
+              "maxMs": 6.38,
+              "note": "Timer-resolution delay of the single Node event loop that hosts API, worker, fixture target, Judge stand-in and PostgreSQL client."
+            }
+          }
+        },
+        {
+          "lanes": 4,
+          "runs": 100,
+          "outcomes": {
+            "safe": 85,
+            "inconclusive": 15
+          },
+          "throughputRunsPerSecond": 5.57,
+          "wallMs": 17955,
+          "laneCycleLatency": {
+            "count": 100,
+            "meanMs": 702.82,
+            "p50Ms": 678.9,
+            "p95Ms": 940.73,
+            "p99Ms": 941.91,
+            "maxMs": 942.04
+          },
+          "statementsPerCase": 78.19,
+          "resources": {
+            "wallMs": 17955,
+            "cpuMs": 1271,
+            "cpuUserMs": 1112,
+            "cpuSystemMs": 159,
+            "cpuUtilization": 0.07,
+            "peakRssMb": 344,
+            "peakHeapUsedMb": 142,
+            "eventLoopDelay": {
+              "meanMs": 5.08,
+              "p50Ms": 5.07,
+              "p99Ms": 5.84,
+              "maxMs": 6.76,
+              "note": "Timer-resolution delay of the single Node event loop that hosts API, worker, fixture target, Judge stand-in and PostgreSQL client."
+            }
+          }
+        },
+        {
+          "lanes": 8,
+          "runs": 96,
+          "outcomes": {
+            "safe": 84,
+            "inconclusive": 12
+          },
+          "throughputRunsPerSecond": 10.44,
+          "wallMs": 9200,
+          "laneCycleLatency": {
+            "count": 96,
+            "meanMs": 708.3,
+            "p50Ms": 611.95,
+            "p95Ms": 942.54,
+            "p99Ms": 1488.69,
+            "maxMs": 1488.69
+          },
+          "statementsPerCase": 96.04,
+          "resources": {
+            "wallMs": 9200,
+            "cpuMs": 1133,
+            "cpuUserMs": 991,
+            "cpuSystemMs": 142,
+            "cpuUtilization": 0.12,
+            "peakRssMb": 345,
+            "peakHeapUsedMb": 143,
+            "eventLoopDelay": {
+              "meanMs": 5.06,
+              "p50Ms": 5.07,
+              "p99Ms": 5.91,
+              "maxMs": 6.24,
+              "note": "Timer-resolution delay of the single Node event loop that hosts API, worker, fixture target, Judge stand-in and PostgreSQL client."
+            }
+          }
+        }
+      ],
+      "speedup": {
+        "lanes": 8,
+        "throughputRatio": 7.35,
+        "note": "Throughput at the widest lane count divided by the sequential pass, same injected latency."
+      }
+    },
+    "deployedWorkerCadence": {
+      "runs": 5,
+      "pauseMs": 1500,
+      "wallMs": 7618,
+      "secondsPerRun": 1.52,
+      "throughputRunsPerSecond": 0.66,
+      "note": "Queued backlog drained by one loop that mirrors main.ts: processNext, then a fixed pause, repeated."
+    }
+  },
+  "repeatability": {
+    "description": "The CI SLO workload (100 sequential cases, then one 25-replay regression suite) run 5 times, each in a FRESH Node process on a fresh database, exactly as `npm run perf:slo` runs it in CI.",
+    "sequentialWallMs": {
+      "values": [
+        1925,
+        1834,
+        1962,
+        1817,
+        1921
+      ],
+      "min": 1817,
+      "median": 1921,
+      "max": 1962,
+      "mean": 1891.8,
+      "coefficientOfVariation": 0.03
+    },
+    "workerPassP95Ms": {
+      "values": [
+        22.99,
+        21.88,
+        22.82,
+        20.85,
+        22.82
+      ],
+      "min": 20.85,
+      "median": 22.82,
+      "max": 22.99,
+      "mean": 22.27,
+      "coefficientOfVariation": 0.036
+    },
+    "suiteWallMs": {
+      "values": [
+        480,
+        485,
+        445,
+        452,
+        453
+      ],
+      "min": 445,
+      "median": 453,
+      "max": 485,
+      "mean": 463,
+      "coefficientOfVariation": 0.035
+    },
+    "peakRssMb": {
+      "values": [
+        386,
+        375,
+        353,
+        374,
+        353
+      ],
+      "min": 353,
+      "median": 374,
+      "max": 386,
+      "mean": 368.2,
+      "coefficientOfVariation": 0.036
+    },
+    "workerStatementsPerCase": {
+      "values": [
+        64.2,
+        64.2,
+        64.2,
+        64.2,
+        64.2
+      ],
+      "min": 64.2,
+      "median": 64.2,
+      "max": 64.2,
+      "mean": 64.2,
+      "coefficientOfVariation": 0
+    },
+    "launchStatementsPerCase": {
+      "values": [
+        9,
+        9,
+        9,
+        9,
+        9
+      ],
+      "min": 9,
+      "median": 9,
+      "max": 9,
+      "mean": 9,
+      "coefficientOfVariation": 0
+    },
+    "eventRowsPerCase": {
+      "values": [
+        6.65,
+        6.65,
+        6.65,
+        6.65,
+        6.65
+      ],
+      "min": 6.65,
+      "median": 6.65,
+      "max": 6.65,
+      "mean": 6.65,
+      "coefficientOfVariation": 0
+    },
+    "eventBytesPerCase": {
+      "values": [
+        2981,
+        2981,
+        2981,
+        2981,
+        2981
+      ],
+      "min": 2981,
+      "median": 2981,
+      "max": 2981,
+      "mean": 2981,
+      "coefficientOfVariation": 0
+    },
+    "replayStatementsPerReplay": {
+      "values": [
+        84.08,
+        84.08,
+        84.08,
+        84.08,
+        84.08
+      ],
+      "min": 84.08,
+      "median": 84.08,
+      "max": 84.08,
+      "mean": 84.08,
+      "coefficientOfVariation": 0
+    },
+    "targetRequestsPerCase": {
+      "values": [
+        11.3,
+        11.3,
+        11.3,
+        11.3,
+        11.3
+      ],
+      "min": 11.3,
+      "median": 11.3,
+      "max": 11.3,
+      "mean": 11.3,
+      "coefficientOfVariation": 0
+    },
+    "throughputRunsPerSecond": {
+      "values": [
+        51.95,
+        54.53,
+        50.96,
+        55.05,
+        52.06
+      ],
+      "min": 50.96,
+      "median": 52.06,
+      "max": 55.05,
+      "mean": 52.91,
+      "coefficientOfVariation": 0.03
+    }
+  },
+  "derived": {
+    "auditorCpuPerCaseMs": 9.7,
+    "auditorDbStatementsPerCase": 73.2,
+    "storageBytesPerCase": 13107,
+    "oneProcessLiveLaneEquivalent": {
+      "note": "How many concurrent LIVE cases one auditor process could orchestrate if it were the only limit: a live case occupies a lane for its whole wall time (the planning doc assumes ~70 s with a paid Judge, an estimate not a measurement) while costing the auditor only its measured CPU per case. Illustrative arithmetic on fixture CPU, not a capacity claim.",
+      "assumedLiveCaseSeconds": 70,
+      "fixtureCpuSecondsPerCase": 0.0097,
+      "lanesAtFullCpu": 7216
+    },
+    "deployedCadenceCeiling": {
+      "runsPerSecondPerWorker": 0.66,
+      "pauseShareOfCycle": 0.987
+    }
+  },
+  "knownLimits": [
+    "Fixture only: a local HTTP stand-in replaces the Co-Pilot target and scripted stand-ins replace the Judge model. No live target, paid provider or model inference was called. This is not the authorized live 100-case acceptance (L02 / HDX-37).",
+    "Latencies exclude real target turn time (the documented envelope is up to 90 s per turn) and real model latency, so throughput here is an upper bound on orchestration speed and says nothing about live throughput.",
+    "API, worker, fixture target, Judge stand-in and database client share one Node process and one event loop; the deployment separates API and worker processes. CPU and memory include all of them; PostgreSQL server resources are not included.",
+    "The lane curve serves several targets because a target admits one in-flight run (the reservation model); it does not measure contention on a single target, and lanes share one event loop so the curve understates a multi-process deployment.",
+    "Fixture responses are short; event and storage sizes per case are a floor, not a forecast for real Co-Pilot responses (event payloads are bounded at 256,000 bytes per turn body).",
+    "Adaptive exploration, PDF attachments, report drafting, schedules and paid-spend accounting are not part of this workload (they are covered functionally by the acceptance suite). Paid-model reservation and catalog downloads are therefore not measured.",
+    "One recording on one shared workstation; the repeatability block shows run-to-run variation for the headline figures, nothing more rigorous than that."
+  ],
+  "repeat": "TEST_DATABASE_URL=postgresql://auditor:fixture-only@127.0.0.1:55432/auditor_test npm run perf:baseline -- --out evals/results/performance/<date>"
+}
