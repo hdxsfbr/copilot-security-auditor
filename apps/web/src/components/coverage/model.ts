@@ -1,7 +1,7 @@
 import { isRecord } from "../../api/client.js";
-import type { CoverageCounts, CoverageReport, CoverageRow, CoverageScope } from "../../../../../packages/contracts/src/coverage.js";
+import type { CoverageCounts, CoverageOwaspRow, CoverageReport, CoverageRow, CoverageScope } from "../../../../../packages/contracts/src/coverage.js";
 
-export type { CoverageCounts, CoverageReport, CoverageRow, CoverageScope };
+export type { CoverageCounts, CoverageOwaspRow, CoverageReport, CoverageRow, CoverageScope };
 export type Mode = "all" | "selected" | "adaptive";
 export type Gap = NonNullable<CoverageRow["gap"]>;
 // The URL query uses the API's own parameter names, so a copied link and the request describe the same view.
@@ -19,15 +19,20 @@ const isCounts = (value: unknown): value is CoverageCounts => isRecord(value)
   && natsIn(value.safeRate, ["numerator", "denominator", "excluded"]) && isRecord(value.safeRate)
   && (value.safeRate.rate === null || (typeof value.safeRate.rate === "number" && value.safeRate.rate >= 0 && value.safeRate.rate <= 1))
   && natsIn(value.cases, ["catalog", "attempted", "executed", "untested"]);
-const isRow = (value: unknown): value is CoverageRow => isRecord(value) && text(value.category) && isCounts(value.counts) && (value.gap === null || gaps.includes(String(value.gap)))
+const isCaseRef = (value: unknown) => isRecord(value) && text(value.id) && text(value.title) && nat(value.version)
+  && (value.catalogState === "published" || value.catalogState === "archived") && (value.metadataStatus === "complete" || value.metadataStatus === "unknown_legacy");
+const isGap = (value: unknown) => value === null || gaps.includes(String(value));
+const isRow = (value: unknown): value is CoverageRow => isRecord(value) && text(value.category) && isCounts(value.counts) && isGap(value.gap)
   && (value.level === "category" || ((value.level === "subcategory" || value.level === "case") && (value.subcategory === null || text(value.subcategory))))
-  && (value.level !== "case" || (isRecord(value.case) && text(value.case.id) && text(value.case.title) && nat(value.case.version)
-    && (value.case.catalogState === "published" || value.case.catalogState === "archived") && (value.case.metadataStatus === "complete" || value.case.metadataStatus === "unknown_legacy")));
+  && (value.level !== "case" || isCaseRef(value.case));
+// One row per OWASP tag plus an explicit unmapped bucket; both carry the case versions behind them.
+const isOwaspRow = (value: unknown): value is CoverageOwaspRow => isRecord(value) && isCounts(value.counts) && isGap(value.gap) && Array.isArray(value.cases) && value.cases.every(isCaseRef)
+  && (value.kind === "unmapped" || (value.kind === "tag" && text(value.tag) && value.tag.length > 0));
 const isTime = (value: unknown) => value === null || (text(value) && !Number.isNaN(Date.parse(value)));
 const strings = (value: unknown) => Array.isArray(value) && value.every(text);
 const isScope = (value: unknown): value is CoverageScope => isRecord(value) && isRecord(value.target) && text(value.target.id) && text(value.target.name)
   && (value.targetVersion === null || text(value.targetVersion)) && isRecord(value.observed) && isTime(value.observed.firstAt) && isTime(value.observed.lastAt)
-  && isCounts(value.totals) && Array.isArray(value.rows) && value.rows.every(isRow);
+  && isCounts(value.totals) && Array.isArray(value.rows) && value.rows.every(isRow) && Array.isArray(value.owasp) && value.owasp.every(isOwaspRow);
 export const isCoverageReport = (value: unknown): value is CoverageReport => isRecord(value) && value.v === 1 && text(value.generatedAt) && isRecord(value.filters)
   && isRecord(value.safeRatePolicy) && strings(value.safeRatePolicy.numerator) && strings(value.safeRatePolicy.denominator) && strings(value.safeRatePolicy.excluded)
   && Array.isArray(value.scopes) && value.scopes.every(isScope);

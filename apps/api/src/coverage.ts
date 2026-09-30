@@ -1,6 +1,6 @@
 import type pg from 'pg';
 import { caseRubric, category as caseCategory } from '../../../packages/contracts/src/index.js';
-import { coverageCategories, coverageReport, type CoverageCounts, type CoverageQuery, type CoverageReport, type CoverageRow, type CoverageScope } from '../../../packages/contracts/src/coverage.js';
+import { coverageCategories, coverageReport, type CoverageCounts, type CoverageOwaspRow, type CoverageQuery, type CoverageReport, type CoverageRow, type CoverageScope } from '../../../packages/contracts/src/coverage.js';
 
 // One execution unit is a finished-or-running selected run or one adaptive execution case. Facts come
 // only from persisted rows: runs/adaptive_cases (immutable outcome), events (target action evidence) and
@@ -67,10 +67,19 @@ function gap(a: Acc): CoverageRow['gap'] {
 }
 const present = (a: Acc) => ({ counts: counts(a), gap: gap(a) });
 const inCategory = (value: unknown) => (coverageCategories as readonly unknown[]).includes(value) ? value as typeof coverageCategories[number] : 'prompt_injection';
+// OWASP tags come from the case rubric, exactly as recorded. Only whitespace and the case of identifier-shaped tags
+// (LLM01:2025, A03:2021) are normalized so one risk is not split across spellings. Anything else is kept verbatim; nothing is inferred.
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+const OWASP_ID = /^[A-Za-z]+\d{2}:\d{4}$/;
+const owaspTags = (rubric: unknown): string[] => {
+  const mappings = isObject(rubric) ? rubric.owaspMappings : undefined;
+  if (!Array.isArray(mappings)) return [];
+  return [...new Set(mappings.filter((tag): tag is string => typeof tag === 'string').map(tag => tag.trim()).filter(Boolean).map(tag => OWASP_ID.test(tag) ? tag.toUpperCase() : tag))].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+};
 const byName = <T>(name: (item: T) => string | null) => (a: T, b: T) => (name(a) === null ? 1 : 0) - (name(b) === null ? 1 : 0) || (name(a) ?? '').localeCompare(name(b) ?? '');
 
 type Grain = Partial<Acc> & { targetId: string; version: string | null; caseId: string; category: string; subcategory: string | null; firstAt: Date; lastAt: Date };
-type CaseMeta = { id: string; familyId: string; version: number; state: 'published' | 'archived'; title: string; category: ReturnType<typeof inCategory>; subcategory: string | null; metadataStatus: 'complete' | 'unknown_legacy' };
+type CaseMeta = { id: string; familyId: string; version: number; state: 'published' | 'archived'; title: string; category: ReturnType<typeof inCategory>; subcategory: string | null; metadataStatus: 'complete' | 'unknown_legacy'; owasp: string[] };
 type CaseRow = { meta: CaseMeta; category: ReturnType<typeof inCategory>; subcategory: string | null; acc: Acc };
 
 function buildScope(target: { id: string; name: string }, version: string | null, grains: Grain[], catalog: Map<string, CaseMeta>): CoverageScope {
@@ -83,6 +92,7 @@ function buildScope(target: { id: string; name: string }, version: string | null
   }
   for (const meta of catalog.values()) if (meta.state === 'published' && !cases.has(meta.id)) cases.set(meta.id, { meta, category: meta.category, subcategory: meta.subcategory, acc: zero() });
   for (const row of cases.values()) if (row.meta.state === 'published') { row.acc.catalog = 1; row.acc.casesAttempted = row.acc.attempted ? 1 : 0; row.acc.casesExecuted = row.acc.executed ? 1 : 0; }
+  const caseRef = (row: CaseRow) => ({ id: row.meta.id, familyId: row.meta.familyId, version: row.meta.version, title: row.meta.title, catalogState: row.meta.state, metadataStatus: row.meta.metadataStatus });
   const rows: CoverageRow[] = [];
   for (const name of coverageCategories) {
     const inside = [...cases.values()].filter(row => row.category === name);
@@ -91,12 +101,19 @@ function buildScope(target: { id: string; name: string }, version: string | null
       const list = inside.filter(row => row.subcategory === sub).sort((a, b) => a.meta.title.localeCompare(b.meta.title) || a.meta.version - b.meta.version);
       rows.push({ level: 'subcategory', category: name, subcategory: sub, ...present(sum(list.map(row => row.acc))) });
       for (const row of list) rows.push({ level: 'case', category: name, subcategory: sub, ...present(row.acc),
-        case: { id: row.meta.id, familyId: row.meta.familyId, version: row.meta.version, title: row.meta.title, catalogState: row.meta.state, metadataStatus: row.meta.metadataStatus } });
+        case: caseRef(row) });
     }
   }
+  // OWASP dimension: every case adds its whole acc to each of its tags (so tag rows overlap by design), and a case with no
+  // mapping adds it to `unmapped`. Nothing is dropped, and each row goes through the same counts/gap rules as a category row.
+  const owasp: CoverageOwaspRow[] = [], byTag = new Map<string, CaseRow[]>(), unmapped: CaseRow[] = [];
+  for (const row of cases.values()) { if (row.meta.owasp.length) for (const tag of row.meta.owasp) { const list = byTag.get(tag) ?? []; list.push(row); byTag.set(tag, list); } else unmapped.push(row); }
+  const inOrder = (list: CaseRow[]) => [...list].sort((a, b) => a.meta.title.localeCompare(b.meta.title) || a.meta.version - b.meta.version || a.meta.id.localeCompare(b.meta.id));
+  for (const tag of [...byTag.keys()].sort((a, b) => a < b ? -1 : a > b ? 1 : 0)) { const list = inOrder(byTag.get(tag)!); owasp.push({ kind: 'tag', tag, ...present(sum(list.map(row => row.acc))), cases: list.map(caseRef) }); }
+  if (unmapped.length) { const list = inOrder(unmapped); owasp.push({ kind: 'unmapped', ...present(sum(list.map(row => row.acc))), cases: list.map(caseRef) }); }
   const times = grains.map(grain => grain.firstAt.getTime()).concat(grains.map(grain => grain.lastAt.getTime()));
   return { target, targetVersion: version, observed: { firstAt: times.length ? new Date(Math.min(...times)).toISOString() : null, lastAt: times.length ? new Date(Math.max(...times)).toISOString() : null },
-    totals: counts(sum([...cases.values()].map(row => row.acc))), rows };
+    totals: counts(sum([...cases.values()].map(row => row.acc))), rows, owasp };
 }
 
 export async function scopedCoverage(pool: pg.Pool, query: CoverageQuery, now = new Date()): Promise<CoverageReport | null> {
@@ -109,7 +126,8 @@ export async function scopedCoverage(pool: pg.Pool, query: CoverageQuery, now = 
   const names = new Map<string, string>(targets.rows.map(row => [row.id, row.name]));
   const catalog = new Map<string, CaseMeta>(cases.rows.map(row => [row.id, { id: row.id, familyId: row.familyId, version: row.version, state: row.state === 'published' ? 'published' : 'archived',
     title: String(row.definition.title ?? ''), category: inCategory(row.definition.category), subcategory: row.definition.rubric?.subcategory ?? null,
-    metadataStatus: caseCategory.safeParse(row.definition.category).success && caseRubric.safeParse(row.definition.rubric).success ? 'complete' : 'unknown_legacy' }]));
+    metadataStatus: caseCategory.safeParse(row.definition.category).success && caseRubric.safeParse(row.definition.rubric).success ? 'complete' : 'unknown_legacy',
+    owasp: owaspTags(row.definition.rubric) }]));
   const groups = new Map<string, Grain[]>();
   for (const grain of grains) { const id = `${grain.targetId}|${grain.version ?? ''}`; groups.set(id, [...(groups.get(id) ?? []), grain]); }
   // An explicit target+version request always yields that scope, even with no executions: all catalog cases are untested.

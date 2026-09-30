@@ -1,5 +1,5 @@
 import React, { useId } from "react";
-import { categoryLabel, gapInfo, observedText, scopeLabel, versionLabel, type CoverageCounts, type CoverageRow, type CoverageScope } from "./model.js";
+import { categoryLabel, gapInfo, observedText, scopeLabel, versionLabel, type CoverageCounts, type CoverageOwaspRow, type CoverageRow, type CoverageScope } from "./model.js";
 
 type Column = { key: string; label: string; value: (counts: CoverageCounts) => number };
 const execution: Column[] = [
@@ -38,6 +38,45 @@ function RowLabel({ row }: { row: CoverageRow }) {
 }
 const rowKey = (row: CoverageRow) => row.level === "case" ? `k:${row.case.id}` : row.level === "subcategory" ? `s:${row.category}:${row.subcategory ?? ""}` : `c:${row.category}`;
 
+// Both tables use one column set, so an OWASP row reads exactly like a category row.
+function Head({ first }: { first: string }) {
+  return <thead>
+    <tr><th rowSpan={2} scope="col" className="cov-first">{first}</th><th rowSpan={2} scope="col">Gap</th><th rowSpan={2} scope="col">Safe rate n/d</th>
+      <th colSpan={outcomes.length} scope="colgroup">Outcome (immutable)</th><th colSpan={review.length} scope="colgroup">Review (disposition)</th>
+      <th colSpan={execution.length} scope="colgroup">Execution</th></tr>
+    <tr>{[...outcomes, ...review, ...execution].map(column => <th key={column.key} scope="col">{column.label}</th>)}</tr>
+  </thead>;
+}
+
+const caseNote = (row: CoverageOwaspRow["cases"][number]) => `${row.title} v${row.version}${row.catalogState === "archived" ? " (archived version)" : ""}`;
+function OwaspLabel({ row }: { row: CoverageOwaspRow }) {
+  const counts = <span className="cov-meta">{row.counts.cases.catalog} published case{row.counts.cases.catalog === 1 ? "" : "s"} · {row.counts.cases.untested} untested</span>;
+  if (row.kind === "tag") return <><span className="sr-only">OWASP tag: </span><strong>{row.tag}</strong> {counts}</>;
+  return <><span className="sr-only">No OWASP mapping: </span><strong>Unmapped</strong> {counts}
+    <span className="cov-meta">No OWASP mapping recorded for: {row.cases.map(caseNote).join("; ")}</span></>;
+}
+
+// The same scope read by OWASP tag. A case counts under every tag in its rubric, so these rows overlap and are never summed;
+// cases without a mapping are an explicit Unmapped row, never dropped and never counted as safe.
+export function OwaspTable({ scope }: { scope: CoverageScope }) {
+  const { owasp, totals } = scope, label = `${scope.target.name}, ${versionLabel(scope.targetVersion)}`;
+  const unmappedNote = owasp.some(row => row.kind === "unmapped") ? "Cases listed under Unmapped have no OWASP mapping in their rubric: they are shown here so they are not dropped, and they are never counted as safe." : "Every case in this scope carries an OWASP mapping.";
+  return <div className="cov-owasp">
+    <h4>By OWASP tag</h4>
+    <p className="cov-owasp-note">A case counts under every OWASP tag in its rubric, so these rows overlap and do not add up to the scope total below. Safe rates use the same rule as the table above. {unmappedNote}</p>
+    {owasp.length === 0 ? <p className="cov-owasp-note">No cases in this scope.</p>
+      : <div className="cov-scroll" role="region" aria-label={`OWASP view for ${label}`} tabIndex={0}>
+        <table className="cov-table cov-owasp-table">
+          <caption>OWASP view for {label}: rows overlap; Unmapped lists cases with no OWASP tag.</caption>
+          <Head first="OWASP tag" />
+          <tbody>{owasp.map(row => <tr key={row.kind === "tag" ? `t:${row.tag}` : "unmapped"} className={row.kind === "tag" ? "lvl-tag" : "lvl-unmapped"}>
+            <th scope="row" className="cov-first"><OwaspLabel row={row} /></th><td><GapChip gap={row.gap} /></td><Cells counts={row.counts} /></tr>)}</tbody>
+          <tfoot><tr><th scope="row" className="cov-first">Scope total (each case once, not the sum of the rows above)</th><td>—</td><Cells counts={totals} /></tr></tfoot>
+        </table>
+      </div>}
+  </div>;
+}
+
 export function ScopeTable({ scope, showCases }: { scope: CoverageScope; showCases: boolean }) {
   const id = useId(), { totals } = scope;
   const idle = totals.attempted === 0 && totals.inFlight === 0 && totals.notAttempted === 0;
@@ -56,15 +95,11 @@ export function ScopeTable({ scope, showCases }: { scope: CoverageScope; showCas
     <div className="cov-scroll" role="region" aria-label={`Coverage table for ${scopeLabel(scope)}`} tabIndex={0}>
       <table className="cov-table">
         <caption>{scopeLabel(scope)} — outcome and review columns are separate; untested, blocked and inconclusive are never combined.</caption>
-        <thead>
-          <tr><th rowSpan={2} scope="col" className="cov-first">Category / subcategory / case</th><th rowSpan={2} scope="col">Gap</th><th rowSpan={2} scope="col">Safe rate n/d</th>
-            <th colSpan={outcomes.length} scope="colgroup">Outcome (immutable)</th><th colSpan={review.length} scope="colgroup">Review (disposition)</th>
-            <th colSpan={execution.length} scope="colgroup">Execution</th></tr>
-          <tr>{[...outcomes, ...review, ...execution].map(column => <th key={column.key} scope="col">{column.label}</th>)}</tr>
-        </thead>
+        <Head first="Category / subcategory / case" />
         <tbody>{rows.map(row => <tr key={rowKey(row)} className={`lvl-${row.level}`}><th scope="row" className="cov-first"><RowLabel row={row} /></th><td><GapChip gap={row.gap} /></td><Cells counts={row.counts} /></tr>)}</tbody>
         <tfoot><tr><th scope="row" className="cov-first">Scope total (this target and version only)</th><td>—</td><Cells counts={totals} /></tr></tfoot>
       </table>
     </div>
+    <OwaspTable scope={scope} />
   </section>;
 }
