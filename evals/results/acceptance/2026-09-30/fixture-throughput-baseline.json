@@ -1,0 +1,281 @@
+{
+  "schema": "acceptance-fixture-throughput-baseline/v1",
+  "label": "FIXTURE BASELINE: synthetic, in-process, local stand-ins only. This is NOT a live 100-case result and NOT live performance.",
+  "workItem": "HDX-30 / Q02 fixture acceptance",
+  "claims": {
+    "liveTarget": false,
+    "paidProviders": false,
+    "modelInference": false,
+    "network": "127.0.0.1 only",
+    "liveAcceptance": false,
+    "liveHundredCaseResult": false,
+    "capacityClaim": false
+  },
+  "recordedAt": "2026-09-30T21:27:16.717Z",
+  "revision": {
+    "head": "c9c3eb73c3c7813294798daceff10fe1d060b8ab",
+    "branch": "claude/hdx-30-q02-fixture-acceptance",
+    "subject": "Merge branch 'claude/paid-model-pricing' into 'main'",
+    "applicationTrees": {
+      "apps": "66f13ea4117fd482a4744a474d017be57de170ff",
+      "packages": "f8ef3b60d59e76d0d6730bcc0db04283ccc9b7c5",
+      "db": "47b91a0e4a45485f30d1c74a8248a6aaed86045b"
+    },
+    "applicationSourceDirty": false,
+    "workingTreeDirty": true,
+    "note": "Measured on the committed application source identified by `head` and `applicationTrees`. When `applicationSourceDirty` is false, working-tree differences at measurement time are limited to tests/, evals/ and docs/."
+  },
+  "machine": {
+    "platform": "Linux 7.0.0-31-generic x64",
+    "cpuModel": "Intel(R) Core(TM) i9-14900KF",
+    "logicalCpus": 32,
+    "availableParallelism": 32,
+    "totalMemoryGb": 31,
+    "loadAverageAtStart": [
+      3.09,
+      3.73,
+      3.85
+    ],
+    "node": "v24.14.0"
+  },
+  "database": {
+    "server": "PostgreSQL 17.11",
+    "service": "disposable PostgreSQL service on 127.0.0.1, one fresh database per process",
+    "note": "Database server CPU and memory are outside this process and are not reported."
+  },
+  "method": {
+    "summary": "One Node process hosts the API (Express), the worker entry (processNext), the fixture target, the Judge stand-in and the PostgreSQL client. Runs are launched through POST /api/runs (with model preflight) and executed by the real worker pipeline: session handshake, chat turn, deterministic checks, Judge call, policy gate, persistence.",
+    "cases": 60,
+    "caseMix": "8 prompt-injection cases (expected safe) and 2 unintended-tool-action cases (expected inconclusive: a chat reply cannot prove the absence of writes)",
+    "parallelLanes": 4,
+    "regressionIdentities": 10,
+    "injectedLatency": {
+      "targetPerRequestMs": 50,
+      "judgePerCallMs": 100,
+      "note": "Arbitrary illustrative values, not measurements of any real target or model."
+    },
+    "cpuAndMemory": "Process CPU time and sampled RSS of the whole in-process stack during each phase."
+  },
+  "profiles": {
+    "overheadOnly": {
+      "description": "No injected latency: auditor overhead only.",
+      "sequential": {
+        "runs": 60,
+        "outcomes": {
+          "safe": 48,
+          "inconclusive": 12
+        },
+        "throughputRunsPerSecond": 47.72,
+        "launchLatency": {
+          "count": 60,
+          "meanMs": 2.32,
+          "p50Ms": 2.06,
+          "p95Ms": 3.57,
+          "p99Ms": 6.94,
+          "maxMs": 6.94
+        },
+        "workerLatency": {
+          "count": 60,
+          "meanMs": 18.63,
+          "p50Ms": 17.73,
+          "p95Ms": 26.21,
+          "p99Ms": 49.98,
+          "maxMs": 49.98
+        },
+        "endToEndLatency": {
+          "count": 60,
+          "meanMs": 20.95,
+          "p50Ms": 19.63,
+          "p95Ms": 28.91,
+          "p99Ms": 56.92,
+          "maxMs": 56.92
+        },
+        "resources": {
+          "wallMs": 1257,
+          "cpuMs": 706,
+          "cpuUtilization": 0.56,
+          "peakRssMb": 322,
+          "heapUsedMb": 110
+        }
+      },
+      "parallel": {
+        "runs": 60,
+        "lanes": 4,
+        "outcomes": {
+          "safe": 48,
+          "inconclusive": 12
+        },
+        "throughputRunsPerSecond": 97.27,
+        "laneCycleLatency": {
+          "count": 60,
+          "meanMs": 40.53,
+          "p50Ms": 39.79,
+          "p95Ms": 51.19,
+          "p99Ms": 61.42,
+          "maxMs": 61.42
+        },
+        "resources": {
+          "wallMs": 617,
+          "cpuMs": 622,
+          "cpuUtilization": 1.01,
+          "peakRssMb": 336,
+          "heapUsedMb": 164
+        }
+      },
+      "regressionSuite": {
+        "identities": 10,
+        "setupWallMs": 277,
+        "suiteReplays": 10,
+        "suiteWallMs": 208,
+        "replayThroughputPerSecond": 47.98,
+        "replayLatency": {
+          "count": 10,
+          "meanMs": 17.39,
+          "p50Ms": 15.53,
+          "p95Ms": 23.06,
+          "p99Ms": 23.06,
+          "maxMs": 23.06
+        },
+        "resources": {
+          "wallMs": 208,
+          "cpuMs": 85,
+          "cpuUtilization": 0.41,
+          "peakRssMb": 345,
+          "heapUsedMb": 173
+        }
+      },
+      "apiReads": {
+        "runs_history_25": {
+          "count": 30,
+          "meanMs": 1.05,
+          "p50Ms": 0.94,
+          "p95Ms": 1.45,
+          "p99Ms": 4.39,
+          "maxMs": 4.39,
+          "bytes": 14163
+        },
+        "findings": {
+          "count": 30,
+          "meanMs": 0.61,
+          "p50Ms": 0.59,
+          "p95Ms": 0.88,
+          "p99Ms": 0.94,
+          "maxMs": 0.94,
+          "bytes": 3352
+        },
+        "scoped_coverage_target": {
+          "count": 30,
+          "meanMs": 5.4,
+          "p50Ms": 4.76,
+          "p95Ms": 6.97,
+          "p99Ms": 15.33,
+          "maxMs": 15.33,
+          "bytes": 151249
+        },
+        "regression_identities": {
+          "count": 30,
+          "meanMs": 2.67,
+          "p50Ms": 2.45,
+          "p95Ms": 3.87,
+          "p99Ms": 5.42,
+          "maxMs": 5.42,
+          "bytes": 22081
+        },
+        "operations_health": {
+          "count": 30,
+          "meanMs": 1.33,
+          "p50Ms": 1.34,
+          "p95Ms": 1.7,
+          "p99Ms": 3.08,
+          "maxMs": 3.08,
+          "bytes": 417
+        },
+        "cases": {
+          "count": 30,
+          "meanMs": 0.68,
+          "p50Ms": 0.67,
+          "p95Ms": 0.71,
+          "p99Ms": 0.89,
+          "maxMs": 0.89,
+          "bytes": 46610
+        }
+      }
+    },
+    "syntheticLatency": {
+      "description": "Target requests +50 ms and Judge calls +100 ms (illustrative).",
+      "sequential": {
+        "runs": 20,
+        "outcomes": {
+          "safe": 16,
+          "inconclusive": 4
+        },
+        "throughputRunsPerSecond": 1.65,
+        "launchLatency": {
+          "count": 20,
+          "meanMs": 2.52,
+          "p50Ms": 2.13,
+          "p95Ms": 3.86,
+          "p99Ms": 6.12,
+          "maxMs": 6.12
+        },
+        "workerLatency": {
+          "count": 20,
+          "meanMs": 605.01,
+          "p50Ms": 587.08,
+          "p95Ms": 688.24,
+          "p99Ms": 693.23,
+          "maxMs": 693.23
+        },
+        "endToEndLatency": {
+          "count": 20,
+          "meanMs": 607.53,
+          "p50Ms": 589.06,
+          "p95Ms": 691.98,
+          "p99Ms": 695.96,
+          "maxMs": 695.96
+        },
+        "resources": {
+          "wallMs": 12151,
+          "cpuMs": 449,
+          "cpuUtilization": 0.04,
+          "peakRssMb": 369,
+          "heapUsedMb": 90
+        }
+      },
+      "parallel": {
+        "runs": 20,
+        "lanes": 4,
+        "outcomes": {
+          "safe": 16,
+          "inconclusive": 4
+        },
+        "throughputRunsPerSecond": 4.72,
+        "laneCycleLatency": {
+          "count": 20,
+          "meanMs": 700.16,
+          "p50Ms": 601.85,
+          "p95Ms": 1165.7,
+          "p99Ms": 1189.57,
+          "maxMs": 1189.57
+        },
+        "resources": {
+          "wallMs": 4234,
+          "cpuMs": 444,
+          "cpuUtilization": 0.1,
+          "peakRssMb": 225,
+          "heapUsedMb": 96
+        }
+      }
+    }
+  },
+  "knownLimits": [
+    "Fixture only: a local HTTP stand-in replaces the Co-Pilot target and a scripted stand-in replaces the Judge model. No live target, paid provider or model inference was called.",
+    "Latencies exclude real target turn time (the documented envelope is up to 90 s per turn) and real model latency, so throughput here is an upper bound on orchestration speed and says nothing about live throughput.",
+    "API, worker, fixture and database client share one Node process and one event loop; real deployments separate them. CPU and memory include all of them; PostgreSQL server resources are not included.",
+    "The parallel phase serves several targets because a target admits one in-flight run (reservation model); it does not measure contention on a single target.",
+    "Adaptive exploration, report drafting, schedules and paid-spend accounting are not part of this throughput run (they are covered functionally by the acceptance tests).",
+    "Numbers come from one run on one machine and are not statistically characterized; treat them as a regression baseline for comparing later runs on the same machine, not as an SLO.",
+    "This is not the 100-case fixture baseline and scale-cost analysis owned by HDX-32 (P01), and it is not the explicitly authorized live 100-case acceptance owned by HDX-37 (L02)."
+  ],
+  "repeat": "TEST_DATABASE_URL=postgresql://auditor:fixture-only@127.0.0.1:55432/auditor_test node --import tsx tests/acceptance/baseline.ts --out evals/results/acceptance/<date>"
+}
