@@ -33,7 +33,7 @@ export async function measureMemoryStability(options: { rounds?: number; cases?:
       node: { execArgv: process.execArgv, heapSizeLimitMb: mb(getHeapStatistics().heap_size_limit) },
       rounds, casesPerRound: cases, totalCases: rounds * cases, series,
       growth: { heapUsedMbFromFirstToLastRound: last.heapUsedMb - first.heapUsedMb, rssMbFromFirstToLastRound: last.rssMb - first.rssMb, heapUsedKbPerCase: Math.round(((last.heapUsedMb - first.heapUsedMb) * 1024) / Math.max(1, (rounds - 1) * cases) * 10) / 10 },
-      reading: 'With the heap capped, heapUsed and RSS stay flat across every round, so the higher RSS peaks in an uncapped recording are lazy garbage collection, not a leak. A long-lived worker still deserves the worker-health metrics (O01); this checks the fixture pipeline only.'
+      reading: 'With the old-space heap capped, JS heapUsed stays essentially flat across rounds (growth above, a few KB per case) while RSS creeps slowly upward. The large RSS peaks of an uncapped recording are therefore mostly lazy garbage collection, not a leak in the JS heap; the slow RSS creep is not attributed (allocator fragmentation or harness state in this all-in-one process) and is a reason to watch a long-lived worker with the worker-health metrics (O01) rather than assume it is flat. Fixture pipeline only.'
     };
   } finally { await s.close(); pg.restore(); }
 }
