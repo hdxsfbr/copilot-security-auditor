@@ -1,0 +1,88 @@
+# Grep-based static check of first-party source (heuristic, NOT a SAST tool). HDX-46.
+# Date: 2026-09-30   Base commit: d9af4c9   Run from the repository root.
+# Scope: apps packages contracts (*.ts *.tsx *.mjs *.js *.json), excluding node_modules and dist. 101 source files, about 9,100 lines of TypeScript.
+# Each section is: the grep pattern, then every match (empty = no match). Triage of every non-empty section is in docs/submission/ato-evidence-packet.md.
+
+## S1 dynamic code execution
+$ grep -rnE --include=*.ts --include=*.tsx --include=*.mjs --include=*.js --include=*.json --exclude-dir=node_modules --exclude-dir=dist '\beval\(|new Function\(' apps packages contracts
+[matches: 0]
+
+## S2 process execution (note: RegExp.exec also matches)
+$ grep -rnE --include=*.ts --include=*.tsx --include=*.mjs --include=*.js --include=*.json --exclude-dir=node_modules --exclude-dir=dist 'child_process|\bexecSync\(|\bspawnSync\(|\bexec\(|\bspawn\(' apps packages contracts
+apps/worker/src/session.ts:142:    const match = typeof fields.DT_RowId === 'string' ? /^pid_([1-9][0-9]*)$/.exec(fields.DT_RowId) : null;
+apps/worker/src/models.ts:81:  const match = /^(0|[1-9]\d*)(?:\.(\d+))?(?:e([+-]?\d{1,2}))?$/i.exec(text);
+apps/api/src/repository.ts:43:  const fields = cursorTime.exec(value);
+apps/web/src/pages/Workspace.tsx:36:  const caseRouteId = /^\/cases\/([^/]+)$/.exec(path)?.[1];
+apps/web/src/pages/Workspace.tsx:37:  const findingRouteId = /^\/findings\/([^/]+)$/.exec(path)?.[1];
+apps/web/src/pages/Workspace.tsx:38:  const runMatch = /^\/runs\/([^/]+)(?:\/cases\/([^/]+))?$/.exec(path);
+[matches: 6]
+
+## S3 HTML injection sinks
+$ grep -rnE --include=*.ts --include=*.tsx --include=*.mjs --include=*.js --include=*.json --exclude-dir=node_modules --exclude-dir=dist 'dangerouslySetInnerHTML|\.innerHTML|insertAdjacentHTML|document\.write' apps packages contracts
+[matches: 0]
+
+## S4 TLS verification disabled
+$ grep -rnE --include=*.ts --include=*.tsx --include=*.mjs --include=*.js --include=*.json --exclude-dir=node_modules --exclude-dir=dist 'rejectUnauthorized|NODE_TLS_REJECT_UNAUTHORIZED' apps packages contracts
+[matches: 0]
+
+## S5 weak hash or non-crypto randomness
+$ grep -rnE --include=*.ts --include=*.tsx --include=*.mjs --include=*.js --include=*.json --exclude-dir=node_modules --exclude-dir=dist 'createHash\(['"](md5|sha1)['"]\)|Math\.random' apps packages contracts
+[matches: 0]
+
+## S6 hard-coded secret shapes
+$ grep -rnE --include=*.ts --include=*.tsx --include=*.mjs --include=*.js --include=*.json --exclude-dir=node_modules --exclude-dir=dist 'sk-[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY|(password|secret|token|api_?key)['"]?\s*[:=]\s*['"][A-Za-z0-9/+_-]{12,}['"]' apps packages contracts
+[matches: 0]
+
+## S7 permissive CORS
+$ grep -rnE --include=*.ts --include=*.tsx --include=*.mjs --include=*.js --include=*.json --exclude-dir=node_modules --exclude-dir=dist 'Access-Control-Allow-Origin|cors\(' apps packages contracts
+[matches: 0]
+
+## S8 SQL text built with template interpolation
+$ grep -rnE --include=*.ts --include=*.tsx --include=*.mjs --include=*.js --include=*.json --exclude-dir=node_modules --exclude-dir=dist 'query\(`[^`]*\$\{' apps packages contracts
+apps/api/src/schedules.ts:33:  const rows = (await pool.query(`${scheduleSql} WHERE s.deleted=$1 ORDER BY ${order} LIMIT $2`, [archived, archived ? ARCHIVED_LIST_LIMIT : null])).rows;
+apps/api/src/schedules.ts:38:  const row = (await pool.query(`${scheduleSql} WHERE s.id=$1`, [id])).rows[0];
+apps/api/src/regression-identity.ts:135:  const sources = group((await db.query(`SELECT * FROM (${sourceSql}) s WHERE n<=$2 ORDER BY identity_id,n`, [ids, sourceCap])).rows.map(({ n, ...row }) => row)
+apps/api/src/regression-identity.ts:142:  const replays = replayCap === null ? new Map() : group((await db.query(`SELECT * FROM (SELECT x.*,row_number() OVER (PARTITION BY x.identity_id ORDER BY x."cr
+apps/api/src/regression-identity.ts:154:  const rows = (await pool.query(`${identitySql} WHERE ($2::bigint IS NULL OR i.seq<$2::bigint) AND ($3::text IS NULL OR i.category=$3)
+apps/api/src/regression-identity.ts:170:  const row = (await pool.query(`${identitySql} WHERE i.id=$1`, [id])).rows[0];
+apps/api/src/report-jobs.ts:140:        const total = (await db.query(`SELECT ${held}::text AS amount FROM model_calls WHERE report_job_id=$1 AND provider='openrouter'`, [id])).rows[0].amount;
+apps/api/src/spend.ts:89:    const replay = (await db.query(`SELECT ${RECONCILIATION} FROM spend_reconciliations WHERE idempotency_key=$1`, [input.idempotencyKey])).rows[0];
+apps/api/src/spend.ts:97:      const others = (await db.query(`SELECT ${held}::text AS amount FROM model_calls WHERE report_job_id=$1 AND provider='openrouter' AND id<>$2`, [found.report_job_id, callI
+apps/api/src/spend.ts:104:    if (job && TERMINAL_JOB.includes(job.state)) await db.query(`UPDATE report_jobs SET held_nanos=(SELECT ${held} FROM model_calls WHERE report_job_id=$1 AND provider='openr
+apps/api/src/regression-suites.ts:154:    const rows = (await this.pool.query(`${summarySql} WHERE ($2::bigint IS NULL OR s.seq<$2::bigint) AND ($3::uuid IS NULL OR s.target_id=$3) ORDER BY s.seq DESC
+apps/api/src/regression-suites.ts:159:    const row = (await this.pool.query(`${summarySql} WHERE s.id=$1`, [id])).rows[0];
+[matches: 12]
+
+## S9 filesystem access by path
+$ grep -rnE --include=*.ts --include=*.tsx --include=*.mjs --include=*.js --include=*.json --exclude-dir=node_modules --exclude-dir=dist 'readFile|createReadStream|writeFile|sendFile|path\.(join|resolve)' apps packages contracts
+apps/api/src/app.ts:323:  if (existsSync(dist)) { app.use(express.static(dist)); app.get(/^(?!\/api\/).*/, (_req, res) => res.sendFile('index.html', { root: dist })); }
+apps/api/src/artifacts.ts:3:import { lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+apps/api/src/artifacts.ts:19:    const bytes = await file.readFile();
+apps/api/src/artifacts.ts:37:    await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 });
+apps/api/src/artifacts.ts:46:  const bytes = await readFile(join(root(), `${id}.pdf`));
+apps/api/src/artifacts.ts:65:      const [metadata, bytes] = await Promise.all([lstat(path), readFile(path)]);
+contracts/generate.ts:1:import { writeFileSync } from 'node:fs';
+contracts/generate.ts:21:    writeFileSync(new URL(`./v1/${schemaFiles[name]}`, import.meta.url), publishedSchemaText(name));
+[matches: 8]
+
+## S10 SQL keyword lines with template interpolation (catches multi-line templates S8 misses)
+$ grep -nE '\$\{' apps/api/src/*.ts apps/worker/src/*.ts | grep -iE 'select |update |insert |delete |where |order by|limit |interval|from |join '
+apps/api/src/spend.ts:89:    const replay = (await db.query(`SELECT ${RECONCILIATION} FROM spend_reconciliations WHERE idempotency_key=$1`, [input.idempotencyKey])).rows[0];
+apps/api/src/spend.ts:97:      const others = (await db.query(`SELECT ${held}::text AS amount FROM model_calls WHERE report_job_id=$1 AND provider='openrouter' AND id<>$2`, [found.report_job_id, callI
+apps/api/src/spend.ts:104:    if (job && TERMINAL_JOB.includes(job.state)) await db.query(`UPDATE report_jobs SET held_nanos=(SELECT ${held} FROM model_calls WHERE report_job_id=$1 AND provider='openr
+apps/api/src/regression-suites.ts:154:    const rows = (await this.pool.query(`${summarySql} WHERE ($2::bigint IS NULL OR s.seq<$2::bigint) AND ($3::uuid IS NULL OR s.target_id=$3) ORDER BY s.seq DESC
+apps/api/src/regression-suites.ts:159:    const row = (await this.pool.query(`${summarySql} WHERE s.id=$1`, [id])).rows[0];
+apps/api/src/schedules.ts:33:  const rows = (await pool.query(`${scheduleSql} WHERE s.deleted=$1 ORDER BY ${order} LIMIT $2`, [archived, archived ? ARCHIVED_LIST_LIMIT : null])).rows;
+apps/api/src/schedules.ts:38:  const row = (await pool.query(`${scheduleSql} WHERE s.id=$1`, [id])).rows[0];
+apps/api/src/report-jobs.ts:37:    held_nanos=(SELECT ${held} FROM model_calls WHERE report_job_id=$1 AND provider='openrouter') WHERE id=$1 RETURNING held_nanos::text AS held`, [id, state, reason])).
+apps/api/src/report-jobs.ts:140:        const total = (await db.query(`SELECT ${held}::text AS amount FROM model_calls WHERE report_job_id=$1 AND provider='openrouter'`, [id])).rows[0].amount;
+apps/api/src/regression-identity.ts:135:  const sources = group((await db.query(`SELECT * FROM (${sourceSql}) s WHERE n<=$2 ORDER BY identity_id,n`, [ids, sourceCap])).rows.map(({ n, ...row }) => row)
+apps/api/src/regression-identity.ts:139:      SELECT DISTINCT ON (x.identity_id,x."targetId",COALESCE(x."targetVersion",'')) x.* FROM (${replaySql} WHERE l.identity_id=ANY($1::uuid[])) x
+apps/api/src/regression-identity.ts:142:  const replays = replayCap === null ? new Map() : group((await db.query(`SELECT * FROM (SELECT x.*,row_number() OVER (PARTITION BY x.identity_id ORDER BY x."cr
+apps/api/src/regression-identity.ts:154:  const rows = (await pool.query(`${identitySql} WHERE ($2::bigint IS NULL OR i.seq<$2::bigint) AND ($3::text IS NULL OR i.category=$3)
+apps/api/src/regression-identity.ts:170:  const row = (await pool.query(`${identitySql} WHERE i.id=$1`, [id])).rows[0];
+apps/worker/src/adaptive.ts:274:    if (!assignment) throw new Error(`Active ${role} model missing from run snapshot`);
+[matches: 15]
+
+## Manual confirmation for S8 and S10 (performed by reading the definitions, not by grep)
+Every interpolated identifier below is a module-level string constant in the same file, or a two-way literal chosen by a boolean: RECONCILIATION, held (spend.ts, report-jobs.ts), TERMINAL_JOB, scheduleSql, order (schedules.ts:32), sourceSql, replaySql, identitySql (regression-identity.ts), summarySql (regression-suites.ts). All data values are bound through $1..$n parameters.
