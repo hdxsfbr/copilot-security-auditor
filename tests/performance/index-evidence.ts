@@ -169,7 +169,25 @@ export async function regressionsRouteSweep(runSizes = [2500, 5000, 10000, 20000
   return { statement: 'apps/api/src/repository.ts regressions() (GET /api/regressions), executed directly (no HTTP)', points, reading: 'Doubling the runs roughly quadruples payload and time. The candidate index speeds the lookup by a modest factor but leaves the payload, which is the cost; the remedy is product code (bound or paginate replays per regression), not an index.' };
 }
 
-export type PlanEvidenceOptions = { scale?: Partial<SeedScale>; repeats?: number; routeRepeats?: number; sweep?: number[] };
+
+/**
+ * The same repository.regressions() call the route makes, on the full synthetic database, followed by the JSON.stringify that
+ * `res.json` performs. Records whether it finishes and what breaks, instead of asserting it.
+ */
+export async function regressionsAtFullScale(pool: pg.Pool) {
+  const { Repository } = await import('../../apps/api/src/repository.js');
+  const repo = new Repository(pool);
+  const t0 = performance.now();
+  const rows = await repo.regressions();
+  const sqlMs = Math.round(performance.now() - t0);
+  let serialization: { ok: true; bytes: number; ms: number } | { ok: false; error: string };
+  const t1 = performance.now();
+  try { const text = JSON.stringify(rows); serialization = { ok: true, bytes: text.length, ms: Math.round(performance.now() - t1) }; }
+  catch (error) { serialization = { ok: false, error: `${(error as Error).constructor.name}: ${(error as Error).message}` }; }
+  return { statement: 'Repository#regressions() then JSON.stringify, as GET /api/regressions does (apps/api/src/app.ts:288)', runs: Number((await pool.query('SELECT count(*) AS n FROM runs')).rows[0].n), regressions: rows.length, sqlMs, serialization, v8MaxStringLength: 536870888 };
+}
+
+export type PlanEvidenceOptions = { scale?: Partial<SeedScale>; repeats?: number; routeRepeats?: number; sweep?: number[]; skipFullScaleRegressions?: boolean };
 
 export async function collectPlanEvidence(options: PlanEvidenceOptions = {}) {
   const repeats = options.repeats ?? 5, routeRepeats = options.routeRepeats ?? 3;
@@ -206,6 +224,7 @@ export async function collectPlanEvidence(options: PlanEvidenceOptions = {}) {
 
     await createIndexes(pool); await statsFor(pool); // leave the database as the migration defines it
     const sweepResult = await regressionsRouteSweep(options.sweep);
+    const atScale = options.skipFullScaleRegressions ? null : await regressionsAtFullScale(pool);
     const queries = catalog.map(entry => {
       const a = withIndexes[entry.name], b = without[entry.name];
       const usedIndexes = entry.uses.filter(name => a.scans.some(scan => scan.includes(name)));
@@ -223,6 +242,7 @@ export async function collectPlanEvidence(options: PlanEvidenceOptions = {}) {
       queries, rejectedCandidates: rejected,
       writeOverhead: { withMigration: writeWith, withoutMigration: writeWithout },
       regressionsRouteSweep: sweepResult,
+      regressionsAtFullScale: atScale,
       routeTimings: { withMigration: routesWith, withoutMigration: routesWithout },
       knownLimits: [
         'Synthetic rows are uniform: 8 targets, 40 cases, 6 versions, one JSONB shape. Real data skew changes plans; re-run `npm run perf:plans` after a schema or query change.',

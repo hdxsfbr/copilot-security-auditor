@@ -25,7 +25,8 @@
     "perf:baseline": "tsx tests/performance/baseline.ts",
     "perf:plans": "tsx tests/performance/index-evidence.ts",
     "perf:scenarios": "tsx tests/performance/scenarios.ts",
-    "perf:memory": "node --max-old-space-size=200 --import tsx tests/performance/memory-stability.ts"
+    "perf:memory": "node --max-old-space-size=200 --import tsx tests/performance/memory-stability.ts",
+    "perf:bottlenecks": "tsx tests/performance/bottlenecks.ts"
   },
   "dependencies": {
     "@langchain/langgraph": "^1.4.18",
