@@ -96,7 +96,10 @@ test('verified per-token and request pricing reserves a whole model context', ()
   assert.equal(nanos(7e-8), 70n);
   assert.equal(nanos('0.00000000001'), 1n);
   assert.throws(() => verifiedPrice(models, 'missing'), /unavailable/);
-  assert.throws(() => verifiedPrice([{ ...models[0], pricing: { ...models[0].pricing, image: '0.001' } }], 'test/paid'), /Unsupported/);
+  // Known extra pricing dimensions (image, caching, reasoning) are allowed and ignored for reservation; our text-only calls never incur them.
+  assert.equal(reserveAmount(verifiedPrice([{ ...models[0], pricing: { ...models[0].pricing, image: '0.001', input_cache_read: '0.0000005' } }], 'test/paid'), 100), nanos('0.0022'));
+  // A genuinely unrecognized nonzero pricing dimension still fails closed.
+  assert.throws(() => verifiedPrice([{ ...models[0], pricing: { ...models[0].pricing, mystery_fee: '0.001' } }], 'test/paid'), /Unsupported/);
   assert.throws(() => reserveAmount(verifiedPrice(models, 'test/paid'), 1001), /Unbounded/);
 });
 
