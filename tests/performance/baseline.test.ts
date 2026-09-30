@@ -85,3 +85,12 @@ test('[P01] the deployed-cadence phase pays the worker pause once per drained ru
     assert.equal((await s.rows("SELECT count(*)::int AS count FROM runs WHERE status='finished'"))[0].count, 3);
   } finally { await s.close(); }
 });
+
+test('[P01] the memory-stability check reports a series per round and labels itself a fixture check', async () => {
+  const { measureMemoryStability, MEMORY_LABEL } = await import('./memory-stability.js');
+  const report = await measureMemoryStability({ rounds: 2, cases: 20 });
+  assert.equal(report.label, MEMORY_LABEL);
+  assert.equal(report.series.length, 3);
+  assert.equal(report.totalCases, 40);
+  assert.ok(report.series.every(point => point.rssMb > 50 && point.heapUsedMb > 5) && Number.isFinite(report.growth.heapUsedKbPerCase));
+});
