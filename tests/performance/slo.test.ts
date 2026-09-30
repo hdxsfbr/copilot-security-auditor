@@ -68,7 +68,8 @@ test('[P01] evaluateSlo passes the reference, passes the limit itself, and fails
 });
 
 test('[P01] CI policy: a deterministic breach fails at once, a timed-only breach is re-measured once, and a repeated breach fails', async () => {
-  const slow = at(1000), fast = at(1), extraStatements = at(1);
+  const slow = at(1), fast = at(1), extraStatements = at(1);
+  for (const name of Object.keys(slow.timed) as (keyof SloMeasurement['timed'])[]) slow.timed[name] = SLO_LIMITS.timed[name] * 100; // slow, but doing exactly the same work
   extraStatements.deterministic.workerStatementsPerCase = SLO_LIMITS.deterministic.workerStatementsPerCase + 1;
   const script = (...runs: SloMeasurement[]) => { let calls = 0; return { measure: async () => runs[Math.min(calls++, runs.length - 1)], get calls() { return calls; } }; };
 

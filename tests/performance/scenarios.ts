@@ -45,7 +45,7 @@ export const ASSUMPTIONS = {
 const usd = (value: number) => value >= 1000 ? `$${Math.round(value).toLocaleString('en-US')}` : value >= 10 ? `$${value.toFixed(0)}` : value >= 1 ? `$${value.toFixed(2)}` : value >= 0.01 ? `$${value.toFixed(2)}` : `$${value.toFixed(3)}`;
 const num = (value: number, digits = 0) => value.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 const cost = (tokens: { in: number; out: number }, price: { in: number; out: number }) => (tokens.in * price.in + tokens.out * price.out) / 1e6;
-const duration = (seconds: number) => seconds < 7200 ? `${num(seconds / 60, 0)} min` : seconds < 172800 ? `${num(seconds / 3600, 1)} h` : `${num(seconds / 86400, 1)} days`;
+const duration = (seconds: number) => seconds < 120 ? `${num(seconds, 0)} s` : seconds < 7200 ? `${num(seconds / 60, 0)} min` : seconds < 172800 ? `${num(seconds / 3600, 1)} h` : `${num(seconds / 86400, 1)} days`;
 const bytes = (value: number) => value < 1e6 ? `${num(value / 1e3, 0)} KB` : value < 1e9 ? `${num(value / 1e6, 0)} MB` : `${num(value / 1e9, 1)} GB`;
 
 /** Attempts needed to obtain `finished` usable outcomes when a share of attempts is unusable and is simply rerun. */
@@ -88,6 +88,7 @@ export function renderWorkload(m: Measured): string {
     row('One lane, serial, paid Judge (S1, S2)', (_, attempts) => duration(attempts * wallPaid)),
     row('Lanes needed to finish in 24 h', (_, attempts) => num(Math.ceil(attempts * wallPaid / a.lanesFor24h))),
     row('Target instances needed for 24 h (S3)', (_, attempts) => num(Math.ceil(attempts * targetTokensPerAttempt / a.targetDailyTokenCap))),
+    row('Worker pause alone, one lane, serial (S2)', (_, attempts) => duration(attempts * m.workerPauseSeconds)),
     row('Auditor CPU, all attempts (R1)', (_, attempts) => duration(attempts * m.cpuSecondsPerCase)),
     row('Auditor SQL statements (R1)', (_, attempts) => num(attempts * m.statementsPerCase)),
     row('Auditor storage: fixture floor / planning (R2)', (_, attempts) => `${bytes(attempts * m.storageBytesPerCase)} / ${bytes(attempts * a.realStorageBytesPerCase)}`),
@@ -108,14 +109,14 @@ export function renderCost(m: Measured): string {
   lines.push(row('All-local auditor (Ollama): inference', () => '$0'));
   lines.push(row('All-local auditor: host time, one lane (S1, S2)', (_, attempts) => duration(attempts * (a.wallSecondsPerAttempt.allLocal + m.workerPauseSeconds))));
   for (const [model, price] of Object.entries(a.pricePerMillion)) {
-    lines.push(row(`Paid Judge only, ${model} (local Orchestrator and Red Team, or selected and regression runs)`, (_, attempts) => usd(judgedAttempts(attempts) * cost(judge, price))));
+    lines.push(row(`Paid Judge only, ${model}`, (_, attempts) => usd(judgedAttempts(attempts) * cost(judge, price))));
   }
   for (const [model, price] of Object.entries(a.pricePerMillion)) {
     const perCase = cost(orchestrator, price) + cost(redTeam, price);
     lines.push(row(`All three roles paid (adaptive), ${model}`, (_, attempts) => usd(attempts * perCase + judgedAttempts(attempts) * cost(judge, price))));
   }
   const ref = a.pricePerMillion['moonshotai/kimi-k2-0905'];
-  lines.push(row('Combined, recommended shape: paid Judge kimi-k2-0905 plus target-side', (_, attempts) => usd(attempts * targetPerAttempt + judgedAttempts(attempts) * cost(judge, ref))));
+  lines.push(row('Target-side plus paid Judge only, moonshotai/kimi-k2-0905', (_, attempts) => usd(attempts * targetPerAttempt + judgedAttempts(attempts) * cost(judge, ref))));
   return lines.join('\n');
 }
 
