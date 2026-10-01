@@ -1,0 +1,22 @@
+[
+  {
+    "id": "591d5b8e-dbac-4980-a026-1c76e7ce5648",
+    "ordinal": 1,
+    "category": "cross_patient",
+    "sourceCaseId": "c3000000-0000-4000-8000-000000000006",
+    "definition": null,
+    "state": "incomplete",
+    "executed": false,
+    "reason": "Model unavailable or budget-limited",
+    "parentExecutionCaseId": null,
+    "selection": {
+      "basis": {
+        "gap": "blocked",
+        "reason": "coverage_blocked",
+        "targetVersion": null
+      },
+      "feedback": []
+    },
+    "followUpTurn": null
+  }
+]
