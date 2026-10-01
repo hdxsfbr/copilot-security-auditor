@@ -11,7 +11,7 @@ Every figure carries one of these labels, and the three kinds of evidence are ne
 | **[E]** estimate | Derived from a stated basis, not measured. | sections 3, 6, 7 |
 | **[A]** assumption | A planning value to replace with a measurement. Changing one moves every scenario. | section 6 |
 | **[L]** live | Measured against the live target or live models. **None exist yet.** | (none) |
-| **TODO** | Operator input. | section 10 |
+| **TODO** | Operator input. | section 6 (all-local host price) |
 
 ## 1. Unit of work
 
@@ -224,20 +224,20 @@ Figures from the section 6 model; bottleneck numbers from section 5.
 
 **What it cannot do.** It cannot see a 2x wall-clock slowdown; the work counts and the recorded baseline are for that. It says nothing about live target or model latency. To change it, re-record the baseline, update the reference and let `tests/performance/slo.test.ts` name the limits that must move.
 
-## 10. Actual development spend (OUTSTANDING OPERATOR INPUT)
+## 10. Actual development spend (measured, operator-provided)
 
-**Outstanding operator input.** The actual development spend is not known to this repository and no figure is stated or estimated anywhere in this document. Nothing below is measured. Do not fill it from estimates.
+**Measured over the development window Sep 24 - Oct 1, 2026 (about one week).** These are the operator's own usage-dashboard figures for the period, recorded as a labelled development-cost estimate: the cost to BUILD the auditor, separate from the runtime scenarios above. The auditor itself runs at $0 on local Ollama; this section is build cost only. The coding-agent figures are the full assistant usage for the window (this project was the primary work); any flat subscription is covered by those metered estimates. Amounts are rounded.
 
 | Item | Source of truth | Period | Amount (USD) | Evidence |
 | --- | --- | --- | --- | --- |
-| Coding agent: Codex | Vendor billing or usage export | TODO | TODO | TODO |
-| Coding agent: Claude Code | Vendor billing or usage export | TODO | TODO | TODO |
-| OpenRouter, all development keys | OpenRouter activity/billing page | TODO | TODO | TODO |
-| Of which auditor ledger (settled) | SQL below | TODO | TODO | TODO |
-| Target-side model spend from test traffic | Target operator's OpenRouter account or Langfuse | TODO | TODO | TODO |
-| Target droplet | Hosting invoice | TODO | TODO | TODO |
-| Auditor host, local GPU, backups, other | Own records | TODO | TODO | TODO |
-| **Total** | | | TODO | |
+| Coding agent: Codex | Codex usage dashboard | Sep 24 - Oct 1, 2026 | 289.36 | 17 sessions, 511M tokens |
+| Coding agent: Claude Code | Claude Code usage dashboard | Sep 24 - Oct 1, 2026 | 1,836.39 | 40 sessions, 6.51B tokens; about $17,905 of cache savings was not charged |
+| OpenRouter, all development keys | OpenRouter activity (agent-forge key) | Sep 24 - Oct 1, 2026 | 26.02 | 9K requests, 29.1M tokens, blended $0.90 per 1M |
+| Of which auditor ledger (settled) | SQL below | Sep 24 - Oct 1, 2026 | about 0 (subset of OpenRouter) | Live auditor roles ran on local Ollama ($0); the paid L03 escalation was cents |
+| Target-side model spend from test traffic | Target operator's account | Sep 24 - Oct 1, 2026 | not separately billed | Synthetic LAN target; no separate invoice |
+| Infrastructure: DigitalOcean droplets and snapshots | DigitalOcean usage | Sep 24 - Oct 1, 2026 | about 7 | About $1.05/day over the window (hosted droplet and snapshots; includes the CI runner) |
+| Auditor host, local GPU, backups, other | Own records | Sep 24 - Oct 1, 2026 | 0 (not metered) | Runs on the local LAN host; electricity not counted |
+| **Total** | | Sep 24 - Oct 1, 2026 | **about 2,159** | Coding-agent usage is about 98 percent of it |
 
 The auditor ledger covers only worker calls; it excludes coding agents, target-side inference and infrastructure. Run it in `docker compose exec db psql -U auditor -d auditor`; a `reserved_usd` figure on an `unresolved` row is an upper bound, not a charge, and must be reconciled against OpenRouter activity (M02).
 

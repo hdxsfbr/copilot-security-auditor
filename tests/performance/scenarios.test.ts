@@ -5,8 +5,7 @@ import { ASSUMPTIONS, attemptsFor, inject, loadMeasured, measuredFrom, renderCos
 import { SLO_LIMITS, SLO_REFERENCE } from './slo-definition.js';
 
 // docs/submission/cost-and-scale.md (HDX-32 / P01): the generated scenario tables must match the model, the measured figures quoted in
-// the prose must equal the recorded evidence, the SLO table must equal the enforced limits, and the development-spend section must stay
-// an outstanding operator input. Reads committed files; measures nothing.
+// the prose must equal the recorded evidence, the SLO table must equal the enforced limits, and the development-spend section records the operator-provided figures. Reads committed files; measures nothing.
 
 const read = (path: string) => readFile(new URL(`../../${path}`, import.meta.url), 'utf8');
 const dir = 'evals/results/performance/2026-09-30/';
@@ -63,16 +62,15 @@ test('[P01] the SLO table in the document equals the enforced reference and limi
   assert.match(doc, /not a live claim/);
 });
 
-test('[P01] the document separates measured fixture results from live, and leaves development spend an outstanding operator input', async () => {
+test('[P01] the document separates measured fixture results from live, and records the operator-provided development spend', async () => {
   const doc = await read('docs/submission/cost-and-scale.md');
   assert.match(doc, /No live run produced any figure here/);
   assert.match(doc, /\*\*\[L\]\*\* live \| Measured against the live target or live models\. \*\*None exist yet\.\*\*/);
   assert.match(doc, /FIXTURE BASELINE: synthetic, in-process, local stand-ins only\. This is NOT a live 100-case result and NOT live performance\./);
   const spend = section(doc, '10\\. Actual development spend');
-  assert.match(spend, /OUTSTANDING OPERATOR INPUT/);
-  assert.match(spend, /no figure is stated or estimated anywhere in this document/);
-  assert.doesNotMatch(spend, /\$\s?\d/, 'no dollar amount in the spend section');
-  const rows = spend.split('\n').filter(line => /^\| (Coding agent|OpenRouter|Of which|Target-side|Target droplet|Auditor host|\*\*Total)/.test(line));
+  assert.match(spend, /measured, operator-provided/i);
+  assert.match(spend, /development window Sep 24 - Oct 1, 2026/);
+  assert.match(spend, /about 2,159/);
+  const rows = spend.split('\n').filter(line => /^\| (Coding agent|OpenRouter|Of which|Target-side|Infrastructure|Auditor host|\*\*Total)/.test(line));
   assert.equal(rows.length, 8);
-  for (const row of rows) assert.match(row, /TODO/, row);
 });
