@@ -17,6 +17,7 @@
     "test:fixtures": "find tests -type f \\( -name '*.test.ts' -o -name '*.test.mjs' \\) -print0 | xargs -0 -r node --import tsx --test --test-concurrency=1",
     "test:local": "find tests -type f \\( -name '*.test.ts' -o -name '*.test.mjs' \\) -print0 | xargs -0 -r node --import tsx --test --test-concurrency=${TEST_CONCURRENCY:-8}",
     "test:live": "tsx tests/live-smoke.ts",
+    "judge:calibrate": "tsx evals/judge/run-calibration.ts",
     "migrate": "tsx db/migrate.ts",
     "dev:api": "tsx apps/api/src/main.ts",
     "dev:worker": "tsx apps/worker/src/main.ts",
