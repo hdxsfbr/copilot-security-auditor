@@ -1,14 +1,19 @@
 # AgentForge requirement-to-evidence register
 
-Source: the local [original 18-page AgentForge PRD](../../docs/Week%203_AgentForge_PRD.pdf); target guarantees come from the later [Co-Pilot feature brief](../../docs/COPILOT_FEATURE.md). This is the final-submission revision (D02), written against `main` at `8daa7e0`. It is a tracking register, not a declaration that the submission is complete.
+Source: the local [original 18-page AgentForge PRD](../../docs/Week%203_AgentForge_PRD.pdf); target guarantees come from the later [Co-Pilot feature brief](../../docs/COPILOT_FEATURE.md). This is the final-submission revision (D02), written against `main` at `8daa7e0` and reconciled on 2026-10-01 for the two confirmed PRD corrections below. It is a tracking register, not a declaration that the submission is complete.
 
-`Implemented` means the linked merged code, test or artifact directly supports the requirement as stated, with any caveat named in the same cell. `Partial` means a working mechanism with an identified gap. `Planned` means an owned issue without implementation proof. `External gate` means the remaining evidence must come from the operator or an independent party and cannot come from a fixture pass. The PRD labels some deliverables "Optional Engineering Deliverables" but says they are graded and "not optional", so they are tracked here as required. Linked Linear issues are owners of open work, not evidence of completion.
+`Implemented` means the linked merged code, test or artifact directly supports the requirement as stated, with any caveat named in the same cell. `Partial` means a working mechanism with an identified gap. `Planned` means an owned issue without implementation proof. `External gate` means the remaining evidence must come from the operator or an independent party and cannot come from a fixture pass. Linked Linear issues are owners of open work, not evidence of completion.
+
+**Two confirmed PRD corrections (from the instructor, 2026-10-01).** The PRD contains two copy-paste errors, both applied in this register:
+
+1. **"GitHub" means GitLab.** The Submission Requirements repository row (PRD p. 14) says "GitHub Repository", but the course repository is GitLab (`labs.gauntletai.com/andrebatista/copilot-security-auditor`). The GitLab repository satisfies that deliverable; no GitHub mirror is required.
+2. **"Optional Engineering Deliverables" are optional.** That section (PRD pp. 12-13) has the correct header, but its body sentence — "graded alongside the core submission and are not optional" — is a copy-paste duplicate of the preceding required "Engineering Requirements" intro. The section is genuinely optional. The only mandatory item from that part of the PRD is **OWASP LLM-risk coverage**, which sits under the separate, required "Engineering Requirements" header. Every other row in the pp. 12-13 section is optional: it is kept for evidence of what was built, and an incomplete optional row is **not** a submission gap.
 
 The [submission index](../submission/README.md) lists every artifact and its path. The [delivery plan](audit-delivery/PLAN.md) and [task manifest](audit-delivery/tasks.json) hold issue scope and dependencies.
 
-**Not met, stated plainly.** The PRD requires at least three distinct discovered vulnerability reports. Targeted passes against the planted-vulnerability charts, escalated to a frontier model (GPT-4o) as both Red Team and Judge, still produced **0 confirmed findings** ([L03 evidence](../../evals/results/live/2026-09-30/l03/paid/README.md)): the Co-Pilot resisted the two exercised vectors (indirect injection, cross-chart disclosure) and the other two are blocked at the target's own boundaries (the squad ACL and document ingestion). The operator has accepted this gap. The simulated triage findings (`SIM-001` to `SIM-013`) are not discoveries and do not count. Also not done: independent peer integration and the demo video.
+**Not met, stated plainly.** The PRD requires at least three distinct discovered vulnerability reports. Targeted passes against the planted-vulnerability charts, escalated to a frontier model (GPT-4o) as both Red Team and Judge, still produced **0 confirmed findings** ([L03 evidence](../../evals/results/live/2026-09-30/l03/paid/README.md)): the Co-Pilot resisted the two exercised vectors (indirect injection, cross-chart disclosure) and the other two are blocked at the target's own boundaries (the squad ACL and document ingestion). The operator has accepted this gap. The simulated triage findings (`SIM-001` to `SIM-013`) are not discoveries and do not count. This is the one unmet **core** requirement. Also outstanding, but not core gaps: the demo video is a core submission item that has been recorded (operator owns final linking), and independent peer integration is now an **optional** deliverable under the correction above, not a gap.
 
-**Status counts (64 requirement rows):** 31 Implemented, 23 Partial, 0 Planned, 10 External gate.
+**Status counts (64 requirement rows):** 32 Implemented, 22 Partial, 0 Planned, 10 External gate. Of the remaining `Partial` and `External gate` rows, most sit in the optional pp. 12-13 section; after the corrections above, the only unmet requirement that is both core and achievable by the team is the three discovered vulnerability reports.
 
 **Validation status.** The 406-test fixture suite passes locally (one browser test occasionally times out on first page load and passes when its file is rerun alone), and a remote fixture pipeline was verified once on 2026-09-29 (pipeline 32849, runner 282, revision `14883c7`). Since then GitLab CI runs on `main` only and merge requests are gated by exact-head local validation ([validation](validation.md)). Neither counts as live acceptance, and an MR without a pipeline is never described as green CI.
 
@@ -54,7 +59,9 @@ The [submission index](../submission/README.md) lists every artifact and its pat
 | Finding open/in-progress/resolved status | Partial | Candidate states `pending_review` / `confirmed` / `rejected`, append-only decision history with corrections, and derived regression states ([F01](../../apps/api/src/findings.ts)). No operator-assigned in-progress or resolved workflow | |
 | Per-run cost/rate and ordered agent activity visible to operator/Orchestrator | Partial | Operator: ledger and usage ([M02](spend-reconciliation.md)), ordered events with cursor paging, worker and queue health ([O01](../../tests/operations-health.test.ts)). The Orchestrator sees remaining case and time bounds and prior verdicts but not spend | |
 
-## Graded engineering requirements (PRD pp. 12-13)
+## Engineering requirements and optional deliverables (PRD pp. 12-13)
+
+*Only the first row (OWASP LLM-risk coverage) is a required Engineering Requirement. Every other row in this section is an **Optional Engineering Deliverable** under the corrected PRD (see the ruling at the top): it is recorded because it was built, but an incomplete `Partial` or `External gate` optional row is not a submission gap. Most of this section was built anyway.*
 
 | PRD requirement | Status | Evidence and precise gap | Open owner |
 | --- | --- | --- | --- |
@@ -82,7 +89,7 @@ The [submission index](../submission/README.md) lists every artifact and its pat
 
 | Deliverable | Status | Evidence and precise gap | Open owner |
 | --- | --- | --- | --- |
-| Independent **GitHub** repo, setup/architecture/live instructions/deployed link | Partial | [README](../../README.md) has setup, an architecture overview, live-run instructions and the target URL. The configured remote is GitLab (`labs.gauntletai.com`), not GitHub, and public accessibility is unverified | Operator |
+| Independent **GitLab** repo, setup/architecture/live instructions/deployed link | Implemented | [README](../../README.md) has setup, an architecture overview, live-run instructions and the target URL. The repository is the GitLab project (`labs.gauntletai.com/andrebatista/copilot-security-auditor`); the PRD's "GitHub" is a confirmed typo for GitLab. The project is private to the course | |
 | `THREAT_MODEL.md` full map and ~500-word opening | Implemented | [File](../../THREAT_MODEL.md) | |
 | `USERS.md` users, workflow, automation justification | Implemented | [File](../../USERS.md) | |
 | `ARCHITECTURE.md` ~500-word opening, roles, communication, diagram, tradeoffs | Implemented | [File](../../ARCHITECTURE.md) | |

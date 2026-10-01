@@ -2,11 +2,13 @@
 
 Every submission artifact, its path and its honest status. The broad local live pass and the public-deployment starter matrix are reported separately. The full requirement-by-requirement register, with links to code, tests and evidence, is [docs/implementation/rubric.md](../implementation/rubric.md).
 
+**Two confirmed PRD corrections (instructor, 2026-10-01):** (1) the Submission Requirements "GitHub Repository" row means **GitLab** — the course repo is `labs.gauntletai.com/andrebatista/copilot-security-auditor`, which satisfies the deliverable; no GitHub mirror is needed. (2) The "Optional Engineering Deliverables" section (PRD pp. 12-13) is genuinely **optional** — its "not optional" body line is a copy-paste typo; only OWASP LLM-risk coverage from that part of the PRD is mandatory. See the [register](../implementation/rubric.md) for how each row is classified.
+
 **Not met, stated plainly.** The PRD requires at least three distinct discovered vulnerability reports. The first live pass found **zero** confirmed findings, so **no vulnerability report exists**. The operator accepted this gap for the early submission. The simulated triage findings (`SIM-001` to `SIM-013`) are exercises, not discoveries, and do not count toward that minimum.
 
 | Artifact | Path | Status |
 | --- | --- | --- |
-| Repository: setup guide, architecture overview, deployed link, live-run instructions | [README.md](../../README.md) | Done. Remote is GitLab ([`labs.gauntletai.com/andrebatista/copilot-security-auditor`](https://labs.gauntletai.com/andrebatista/copilot-security-auditor)), not GitHub; public accessibility is unverified (operator) |
+| Repository: setup guide, architecture overview, deployed link, live-run instructions | [README.md](../../README.md) | Done. The GitLab project ([`labs.gauntletai.com/andrebatista/copilot-security-auditor`](https://labs.gauntletai.com/andrebatista/copilot-security-auditor)) satisfies this; the PRD's "GitHub" is a confirmed typo for GitLab. Private to the course |
 | Threat model with ~500-word summary | [THREAT_MODEL.md](../../THREAT_MODEL.md) | Done. 511-word summary, attack surface map, live coverage table |
 | Users, workflows, use cases, automation justification | [USERS.md](../../USERS.md) | Done |
 | Architecture with ~500-word summary, roles, messages, orchestration, regression harness, observability, tradeoffs, diagram, AI-use disclosure, API rate-limit/auth/pagination/429 handling | [ARCHITECTURE.md](../../ARCHITECTURE.md) | Done. 507-word summary; Mermaid diagram; no 429-specific code exists and the document says so |
@@ -23,7 +25,7 @@ Every submission artifact, its path and its honest status. The broad local live 
 | AI cost analysis | [cost-and-scale.md](cost-and-scale.md) | Draft with labeled estimates for 100 / 1K / 10K / 100K cases. Actual development spend is recorded in §10 (about $2,159, operator-provided). |
 | Deployed target | `https://openemr-137-184-4-22.sslip.io` ([brief](../COPILOT_FEATURE.md#2-actors-accounts-data)) | The 10 starter-matrix cases ran on 2026-09-30 (version 0.8.0): 2 `safe`, 8 `inconclusive`, 0 findings; results are scoped to the visible replies and do not verify underlying chart access ([evidence](../../evals/results/live/2026-09-30/public-matrix/README.md)). The broader pass used a LAN copy. The auditor itself is intentionally LAN-only and has no public URL |
 | 100-case live baseline | [l02](../../evals/results/live/2026-10-01/l02/README.md) | Done. 100/100 live cases in about 22 min, 0 findings; latency-bound (p50 12 s) at one in-flight run per target, daily-token halt did not bind at this scale |
-| Independent peer integration | none | Not done (external gate); roles are in-process |
+| Independent peer integration | none | **Optional** under the corrected PRD (not a core gap); not done, roles are in-process |
 | Early technical interview | none | Operator |
 | Final social post | none | Operator |
 | Final AI interview | none | Operator |
