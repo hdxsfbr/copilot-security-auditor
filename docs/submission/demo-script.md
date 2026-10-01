@@ -82,7 +82,7 @@ A scene-by-scene script for an automated recorder that drives the browser, recor
 **Actions:** stay on **Overview**. Optionally show `docs/submission/README.md` from the repository as a local file.
 
 **Narration:**
-> The limits are stated plainly. The original full pass used a local copy. A separate public example follows. It has found no confirmed vulnerability yet, and independent peer integration and a 100-case live load test are still to come. The code, evidence and cost analysis are in the repository's submission index.
+> The limits are stated plainly. The original full pass used a local copy. A separate public example follows. It has found no confirmed vulnerability yet; the 100-case live load test has been run (latency-bound, no findings), and independent peer integration is still to come. The code, evidence and cost analysis are in the repository's submission index.
 
 ### 11 · 4:19–4:58 · A separate example on the public deployment
 
