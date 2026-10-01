@@ -1,13 +1,23 @@
+// Inter-role contract envelopes: the typed, Zod-validated messages passed between the
+// orchestrator, red team, judge and documentation roles, published as the contracts/v1
+// JSON Schema. These schemas are the trust boundary between roles — parseAgentMessage
+// enforces them (shape, version, context and cross-field evidence consistency) BEFORE
+// any target or provider transport happens.
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { category, observation, policyTrace } from './index.js';
 
+// Shared id primitive: a short slug-safe string reused for run/case/attempt ids.
 const stableId = z
   .string()
   .min(1)
   .max(120)
   .regex(/^[A-Za-z0-9_-]+$/);
+// A reference to one of a case's at-most-three turns: the string `turn-1|2|3`.
 const turnRef = z.string().regex(/^turn-[1-3]$/);
+// The common header on every inter-role message: the contract version (always 1), this
+// message's id and its parent message id, and the run/case/attempt ids that pin the
+// message to one execution. `.strict()` forbids unknown fields.
 export const agentHeader = z
   .object({
     version: z.literal(1),
@@ -18,6 +28,9 @@ export const agentHeader = z
     attemptId: stableId,
   })
   .strict();
+// A pointer to one observed turn used as evidence: the run/attempt it belongs to, the
+// turn ref, the observation schema version, its completeness, and (for v2) the target's
+// turn id. parseAgentMessage later checks these refs map one-to-one onto real observations.
 export const agentEvidenceRef = z
   .object({
     runId: stableId,
@@ -28,6 +41,8 @@ export const agentEvidenceRef = z
     targetTurnId: z.string().min(1).max(120).optional(),
   })
   .strict();
+// Describes a stage that hit its time limit: which stage, how long it ran vs. its limit,
+// and whether the work was actually attempted before the deadline fired.
 export const agentDeadline = z
   .object({
     stage: z.string().min(1).max(80),
@@ -36,6 +51,8 @@ export const agentDeadline = z
     attempted: z.boolean(),
   })
   .strict();
+// The closed set of reasons a role can fail a case (unreachable target, exhausted
+// budget, judge/provider unavailable, incomplete evidence, invalid contract, stopped).
 export const agentFailureCode = z.enum([
   'target_unreachable',
   'target_boundary_unavailable',
@@ -47,6 +64,8 @@ export const agentFailureCode = z.enum([
   'invalid_contract',
   'stopped',
 ]);
+// The error payload carried by an 'error' envelope: a failure code, the stage that
+// produced it, and optional deadline detail.
 export const agentFailure = z
   .object({
     code: agentFailureCode,
@@ -55,6 +74,9 @@ export const agentFailure = z
   })
   .strict();
 const header = agentHeader;
+// One policy check the red team ran against the target's reply: which rule, its outcome
+// (safe/violation/undecidable), the claim it covered, up to three evidence turn refs, and
+// an optional present/absent/unknown signal.
 export const checkResult = z
   .object({
     kind: z.enum([
@@ -69,6 +91,9 @@ export const checkResult = z
     signal: z.enum(['present', 'absent', 'unknown']).optional(),
   })
   .strict();
+// One action the red team performed in a case, discriminated by `kind`: a plain
+// `chat_turn` (just a message) or `attach_pdf` (a message plus the uploaded artifact's
+// document type and source id). `turn` is 1-3, matching the observation it produced.
 const executedAction = z.discriminatedUnion('kind', [
   z
     .object({
@@ -88,6 +113,10 @@ const executedAction = z.discriminatedUnion('kind', [
     })
     .strict(),
 ]);
+// The evidence bundle the red team hands the judge (packet v2): the category, the
+// expected-safe behavior, the 1-3 actions taken and their observations, the policy
+// checks, an effect result (did the chart change?) and any limitations. Overall size is
+// bounded separately via MAX_AGENT_JUDGE_PACKET_CHARS at validation time.
 export const agentJudgePacket = z
   .object({
     v: z.literal(2),
@@ -107,6 +136,10 @@ export const agentJudgePacket = z
   .strict();
 export const MAX_AGENT_JUDGE_PACKET_CHARS = 100_000;
 
+// Builds the two-variant discriminated union shared by every channel: an 'ok' message
+// carrying a channel-specific payload, or an 'error' message carrying an agentFailure.
+// Both variants are `.strict()` and share the common header. Each channel below is an
+// instance of this with its own payload schema.
 function envelope<S extends string, P extends z.ZodType>(channel: S, payload: P) {
   return z.discriminatedUnion('status', [
     z.object({ channel: z.literal(channel), status: z.literal('ok'), header, payload }).strict(),
@@ -122,6 +155,8 @@ function envelope<S extends string, P extends z.ZodType>(channel: S, payload: P)
 }
 // A17 optional v1 fields. `selection` says why the seed was chosen; `feedback` is the sanitized outcome of earlier cases in this run;
 // `mutation` records what this proposal derives from (the seed and, when one exists, the earlier execution it was shown).
+// A17 `selection`: why the orchestrator chose this seed case — the triggering reason plus
+// optional regression/severity/gap detail and the target version in play.
 export const explorationBasis = z
   .object({
     reason: z.enum([
@@ -140,6 +175,9 @@ export const explorationBasis = z
     targetVersion: z.string().max(200).nullable(),
   })
   .strict();
+// A17 `feedback` entry: a sanitized outcome of an earlier executed case in this run (its
+// execution/seed ids, ordinal, outcome/verdict, claim and any failed gates), shown to the
+// red team so a mutation can trace back to a verdict it actually saw.
 export const priorVerdict = z
   .object({
     executionCaseId: z.uuid(),
@@ -159,9 +197,15 @@ export const priorVerdict = z
     failedGates: z.array(z.string().max(80)).max(10),
   })
   .strict();
+// A17 `mutation`: what this proposal derives from — the seed case and, when one exists,
+// the earlier execution case it was mutated from.
 export const mutationParent = z
   .object({ seedCaseId: stableId, parentExecutionCaseId: z.uuid().nullable() })
   .strict();
+// Channel 1 (orchestrator -> red team): assigns the seed case and category, the bounds
+// the red team must stay within (max actions, remaining cases, remaining ms), prior
+// evidence refs, and the optional A17 selection/feedback/mutation context. The 'ok'
+// variant carries this payload; 'error' carries a failure.
 export const orchestratorToRedTeam = envelope(
   'orchestrator_to_red_team',
   z
@@ -182,6 +226,9 @@ export const orchestratorToRedTeam = envelope(
     })
     .strict(),
 );
+// Channel 2 (red team -> judge): the completed judge packet, the evidence refs that must
+// map one-to-one onto its observations, and the policy version. The 'ok' variant carries
+// this payload; 'error' carries a failure.
 export const redTeamToJudge = envelope(
   'red_team_to_judge',
   z
@@ -192,6 +239,8 @@ export const redTeamToJudge = envelope(
     })
     .strict(),
 );
+// Whether a finding is new, recurring, fixed, resurfaced, unknown or not applicable
+// relative to prior runs.
 const regressionStatus = z.enum([
   'new',
   'recurring',
@@ -200,6 +249,11 @@ const regressionStatus = z.enum([
   'unknown',
   'not_applicable',
 ]);
+// Channel 3 (judge -> documentation), a three-way union by status: 'ok' records a finding
+// (auto_confirmed -> sourceOutcome auto_confirm, or human_confirmed -> pending_review)
+// with its evidence refs, policy trace and regression status; 'no_findings' reports a
+// clean outcome (safe/inconclusive/incomplete/blocked); 'error' carries a failure. Each
+// 'ok' basis pins sourceOutcome so parseAgentMessage can cross-check it against the policy.
 export const judgeToDocumentation = z.discriminatedUnion('status', [
   z
     .object({
@@ -253,11 +307,14 @@ export const judgeToDocumentation = z.discriminatedUnion('status', [
     .strict(),
 ]);
 
+// The three channel schemas exported together as the published contracts/v1 JSON Schema.
 export const publishedAgentSchemas = {
   orchestratorToRedTeam,
   redTeamToJudge,
   judgeToDocumentation,
 } as const;
+// The expected identity a message must match: the run/case/attempt it belongs to and,
+// optionally, the parent message id it must reference.
 export type AgentContext = {
   runId: string;
   caseId: string;
@@ -275,6 +332,9 @@ export type PriorVerdict = z.infer<typeof priorVerdict>;
 export type RedTeamToJudge = z.infer<typeof redTeamToJudge>;
 export type JudgeToDocumentation = z.infer<typeof judgeToDocumentation>;
 
+// Thrown when a message fails the contract, before any target/provider transport. The
+// `code` says which stage failed (bad shape, incompatible version, context mismatch, or
+// cross-field evidence mismatch) and `channel` names where.
 export class AgentContractError extends Error {
   constructor(
     readonly code:
@@ -284,6 +344,8 @@ export class AgentContractError extends Error {
     super(`Agent contract ${code} at ${channel}`);
   }
 }
+// Builds a fresh, validated header for a new outgoing message from the given context,
+// generating a new messageId and defaulting parentMessageId to null.
 export function agentMessageHeader(context: AgentContext): AgentHeader {
   return agentHeader.parse({
     version: 1,
@@ -294,6 +356,9 @@ export function agentMessageHeader(context: AgentContext): AgentHeader {
     attemptId: context.attemptId,
   });
 }
+// Projects a list of observations into the evidence refs that describe them (run/attempt,
+// turn ref, version, completeness and the v2 target turn id), so a packet's refs stay in
+// lockstep with its observations.
 export function agentRefs(
   observations: z.infer<typeof observation>[],
   context: AgentContext,
@@ -309,10 +374,16 @@ export function agentRefs(
     }),
   );
 }
+// The validation core and trust boundary: turns untrusted input into a typed, verified
+// message or throws AgentContractError, ALWAYS before any target/provider transport. Runs
+// the checks in order — version, shape, header context, then per-channel cross-field
+// evidence consistency — and returns the parsed value only if every check passes.
 export function parseAgentMessage<
   S extends z.ZodType<{ header: AgentHeader; status: string; channel: string }>,
 >(schema: S, input: unknown, context: AgentContext): z.infer<S> {
   const candidate = input && typeof input === 'object' ? (input as Record<string, unknown>) : null;
+  // 1. Reject an incompatible contract version up front (before schema parsing), so a
+  //    future version produces a clear error rather than a confusing shape failure.
   if (
     candidate &&
     candidate.header &&
@@ -321,10 +392,13 @@ export function parseAgentMessage<
     candidate.header.version !== 1
   )
     throw new AgentContractError('incompatible_version', String(candidate.channel ?? 'unknown'));
+  // 2. Structural validation against the channel schema; any mismatch is 'invalid_shape'.
   const parsed = schema.safeParse(input);
   if (!parsed.success)
     throw new AgentContractError('invalid_shape', String(candidate?.channel ?? 'unknown'));
   const value = parsed.data;
+  // 3. The header must name the run/case/attempt we expect (and the parent message id
+  //    when the caller pinned one); otherwise this message belongs to another execution.
   if (
     value.header.runId !== context.runId ||
     value.header.caseId !== context.caseId ||
@@ -333,6 +407,9 @@ export function parseAgentMessage<
       value.header.parentMessageId !== context.parentMessageId)
   )
     throw new AgentContractError('context_mismatch', value.channel);
+  // 4. orchestrator -> red team cross-field checks: the selected seed must BE this case,
+  //    every history ref must share this run/attempt, and a mutation's seed must match the
+  //    case. (The parent-traceability + unique-feedback check follows just below.)
   if (value.channel === 'orchestrator_to_red_team' && value.status === 'ok') {
     const handoff = value as OrchestratorToRedTeam & { status: 'ok' };
     if (
@@ -353,6 +430,11 @@ export function parseAgentMessage<
     )
       throw new AgentContractError('evidence_mismatch', value.channel);
   }
+  // 5. red team -> judge cross-field checks: the packet is size-bounded and its
+  //    observations, actions and evidence refs must line up one-to-one by turn — each ref
+  //    matches its observation's version/completeness/target id, each action matches its
+  //    observation (an attach_pdf must point at a v2 attachment's sourceId; a chat_turn
+  //    must have none), and every check's refs must name a real observation.
   if (value.channel === 'red_team_to_judge' && value.status === 'ok') {
     const handoff = value as RedTeamToJudge & { status: 'ok' };
     const seen = new Map(handoff.payload.packet.observations.map(item => [item.ref, item]));
@@ -392,6 +474,8 @@ export function parseAgentMessage<
     )
       throw new AgentContractError('evidence_mismatch', value.channel);
   }
+  // 6. judge -> documentation cross-field checks: evidence refs are unique and share this
+  //    run/attempt, and the recorded policy outcome must equal the declared sourceOutcome.
   if (value.channel === 'judge_to_documentation' && value.status === 'ok') {
     const handoff = value as JudgeToDocumentation & { status: 'ok' };
     const refs = handoff.payload.evidenceRefs;
@@ -404,6 +488,9 @@ export function parseAgentMessage<
   }
   return value as z.infer<S>;
 }
+// Convenience builder for an 'error' envelope on a given channel: assembles the message
+// with a fresh header and the supplied failure, then runs it back through
+// parseAgentMessage so even error messages are contract-validated before being sent.
 export function agentErrorMessage(
   channel: 'orchestrator_to_red_team' | 'red_team_to_judge' | 'judge_to_documentation',
   context: AgentContext,

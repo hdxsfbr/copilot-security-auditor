@@ -1,3 +1,7 @@
+// Regression identity (G01): give every attack a stable identity so that the same attack seen again is recognized as
+// the same one, and record each replay of it. Normalization canonicalizes a case definition, a sha256 fingerprint keys
+// equal attacks, confirmed findings are linked to their identity, and replay launches and outcomes are recorded per
+// target and version. The G02 state machine that reads these rows lives in regression-states.ts (not edited here).
 import { createHash, randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { caseInput, type CaseInput } from '../../../packages/contracts/src/index.js';
@@ -37,6 +41,9 @@ export const normalizeMessage = (text: string) =>
     .map(line => line.replace(/[^\S\n]+/g, ' ').trim())
     .join('\n')
     .trim();
+// Canonical form of a whole case definition, tagged with the normalization version. Keeps only what changes what is
+// actually sent — category, user slot, and each action's kind plus NFC-normalized message in order; an attachment also
+// keeps its document type and lower-cased artifact id. Title, checks and rubric are dropped. See the v1 note above for why.
 export function normalizeAttack(definition: CaseInput): CanonicalAttack {
   return {
     v: regressionNormalizationVersion,
@@ -54,6 +61,8 @@ export function normalizeAttack(definition: CaseInput): CanonicalAttack {
     ),
   };
 }
+// sha256 over the normalized attack: the key that two definitions share exactly when they are the "same" attack. It is
+// folded over the same fields `normalizeAttack` keeps, so the digest changes if and only if the canonical form changes.
 export const attackFingerprint = (definition: CaseInput) => {
   const attack = normalizeAttack(definition);
   return createHash('sha256')
@@ -102,6 +111,9 @@ async function linkRow(
   await db.query('UPDATE regressions SET identity_id=$2 WHERE id=$1', [row.id, identity]);
   return identity;
 }
+// Links a confirmed finding's regressions row (looked up by its candidate id) to the attack identity its definition
+// normalizes to, and returns that identity id. An already-linked row returns its existing id unchanged, a missing row
+// returns null, and first-sight creation plus the unlinkable-definition path are handled by `linkRow`.
 export async function linkRegressionIdentity(db: pg.PoolClient, candidateId: string) {
   const row = (
     await db.query(
@@ -114,6 +126,9 @@ export async function linkRegressionIdentity(db: pg.PoolClient, candidateId: str
 }
 
 // Every run of a regression's replay case is a replay of that regression, on whichever target it was launched against.
+// `trigger` records why this replay ran (manual, suite or version_change). It first links any regressions for this
+// replay case that are still unlinked, then writes one regression_replays row per linked regression; it is idempotent
+// per run (ON CONFLICT (run_id) DO NOTHING), so re-launching the same run adds nothing.
 export async function recordReplayLaunch(
   db: pg.PoolClient,
   run: { id: string; targetId: string; caseId: string },
@@ -190,6 +205,9 @@ const observationKind = {
   violation_observed: 'violation',
   unknown: 'inconclusive',
 } as const;
+// Builds the G02 observation timeline for each identity: its source findings (each a confirmed 'violation') plus its
+// replays (mapped through signalFor into an observation kind), then folds each identity's observations through
+// deriveTargetStates to get the per-target, per-version state. Read-only.
 async function loadStates(db: Db, ids: string[]) {
   const sources = (
     await db.query(
@@ -268,6 +286,9 @@ const group = (rows: Row[]) => {
   return map;
 };
 
+// Assembles the rich view for each identity: its source findings (capped at `sourceCap`), total source and replay
+// counts, the latest replay per (target, version) scope, the derived target states, and — only when `replayCap` is
+// non-null — the capped replay history. Returns [] for an empty input.
 async function hydrate(db: Db, identities: Row[], sourceCap: number, replayCap: number | null) {
   if (!identities.length) return [];
   const ids = identities.map(row => row.id as string);
@@ -339,6 +360,9 @@ async function hydrate(db: Db, identities: Row[], sourceCap: number, replayCap: 
 const identitySql = `SELECT i.id,i.seq,i.normalization_version,i.fingerprint,i.category,i.user_slot,i.canonical,i.first_seen_candidate_id,i.created_at,
   (SELECT g.definition->>'title' FROM regressions g WHERE g.candidate_id=i.first_seen_candidate_id) AS title FROM regression_identities i`;
 
+// Paginated list of regression identities, newest `seq` first, optionally filtered by category, target and version.
+// Backfills legacy rows first, hydrates each identity with its source findings, latest replays and derived target
+// states (narrowed to the asked target/version), and also returns a capped sample of unlinked regressions with a count.
 export async function listRegressionIdentities(
   pool: pg.Pool,
   query: RegressionIdentityQuery,
@@ -381,6 +405,8 @@ export async function listRegressionIdentities(
     unlinked: { count: unlinked[0]?.count ?? 0, items: unlinked.map(({ count, ...row }) => row) },
   } as RegressionIdentityList;
 }
+// Full lineage for one identity by id: like a list row but hydrated with deeper caps (up to 200 source findings and
+// 500 replays, with a flag when replays were truncated). Returns null when no identity has that id.
 export async function regressionIdentityLineage(
   pool: pg.Pool,
   id: string,

@@ -1,3 +1,8 @@
+// Session adapter: the only module that speaks to the OpenEMR "Co-Pilot" target over
+// HTTP. One Session is one authorized, cookie-backed conversation for a single case
+// (two are opened for cross_patient cases). Everything the target sends back is treated
+// as untrusted data; credentials live only in request bodies/headers and never reach
+// anything a model sees.
 import { observationV2, type Observation } from '../../../packages/contracts/src/index.js';
 import { createHash, randomUUID } from 'node:crypto';
 import {
@@ -20,6 +25,12 @@ const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 const boundedString = (value: unknown, max = 120): string | undefined =>
   typeof value === 'string' && value.length > 0 && value.length <= max ? value : undefined;
+// Normalizes ONE citation value from a target claim into a structured SourceEvidence
+// record. Picks the citation kind, then builds a locator only for the shapes we
+// recognize (chart_fact -> record/id; document_extract -> `source_id#page=N`;
+// guideline_reference -> publisher/title/section). `support` is 'supported' only when a
+// locator could be built; recognizing the shape is NOT proof the cited fact is real.
+// Returns null when the value is not an object.
 function sourceEvidence(
   value: unknown,
   field: SourceField,
@@ -46,6 +57,10 @@ function sourceEvidence(
   // This is a recognized reference shape, not independent proof of the cited fact.
   return { field, kind, locator, support: locator ? 'supported' : 'unsupported', metadata: value };
 }
+// Collects every citation attached to one claim across the `source`/`sources`/
+// `citation`/`citations` fields (each may be a single value or an array) and normalizes
+// each into a SourceEvidence. Any value we cannot recognize is still recorded as an
+// explicit `unsupported` entry, so nothing is silently dropped.
 function claimSources(claim: Record<string, unknown>, kind?: string): SourceEvidence[] {
   const sources: SourceEvidence[] = [];
   for (const field of ['source', 'sources', 'citation', 'citations'] as const) {
@@ -59,6 +74,11 @@ function claimSources(claim: Record<string, unknown>, kind?: string): SourceEvid
   }
   return sources;
 }
+// Reads a turn response body as JSON under a hard size cap: streams the body chunk by
+// chunk and aborts with TargetFailure('incomplete') the moment it exceeds
+// MAX_TURN_RESPONSE_BYTES, so an oversized or never-ending body cannot exhaust memory.
+// Honors the abort signal (deadline) both before and during the read, and treats any
+// malformed or non-object payload as 'incomplete'. Returns the parsed object.
 async function boundedTurnJson(
   response: Response,
   signal: AbortSignal,
@@ -107,6 +127,10 @@ async function boundedTurnJson(
 }
 
 export type Identity = { username: string; password: string; pubpid: string };
+// Raised when the target cannot produce usable evidence. `kind` distinguishes a case
+// that never got off the ground ('blocked', e.g. a handshake failure) from one that
+// started but cannot be trusted to completion ('incomplete'); `timeout` carries deadline
+// detail when a stage ran out of time.
 export class TargetFailure extends Error {
   constructor(
     readonly kind: 'blocked' | 'incomplete',
@@ -116,11 +140,17 @@ export class TargetFailure extends Error {
     super(message);
   }
 }
+// One record per turn-delivery attempt: 'observed' (a trustworthy reply came back),
+// 'unprocessed' (the target proved it did NOT apply the turn), or 'ambiguous' (unknown
+// whether it applied — never safe to silently replay).
 export type Attempt = {
   number: number;
   outcome: 'observed' | 'unprocessed' | 'ambiguous';
   status?: number;
 };
+// A TargetFailure specialized for the turn channel: always 'incomplete' and carries the
+// full list of attempts made, so the caller can see exactly how turn delivery ended
+// (proven-unapplied vs. ambiguous).
 export class TurnFailure extends TargetFailure {
   constructor(
     readonly attempts: Attempt[],
@@ -133,6 +163,11 @@ export class TurnFailure extends TargetFailure {
 
 export type SessionOptions = { runUntil?: number; limits?: TargetDeadlineLimits };
 
+// The per-case session state plus the operations that drive one target conversation.
+// Owns the cookie jar, CSRF token, conversation id and issued tickets. The injectable
+// `transport` lets tests stand in for fetch; the constructor clamps each stage's
+// deadline and rejects an invalid `runUntil` wall-clock budget. A fresh Session is
+// opened per case (two for cross_patient).
 export class Session {
   private cookies = new Map<string, string>();
   private csrf = '';
@@ -159,6 +194,9 @@ export class Session {
     )
       throw new Error('Invalid run deadline');
   }
+  // Returns every live secret this session holds (password, CSRF token, cookie values,
+  // issued tickets) so the evidence pipeline can redact them from anything recorded.
+  // Deterministic code owns these values; they must never enter a model prompt.
   secrets() {
     return [this.user.password, this.csrf, ...this.cookies.values(), ...this.issuedTickets].filter(
       Boolean,
@@ -174,6 +212,10 @@ export class Session {
   ) {
     return withinDeadline(stage, this.limits[kind], this.options.runUntil, work);
   }
+  // Shared authenticated transport for every target call: injects the current cookie
+  // jar, disables automatic redirects (so a 302 stays visible — that is how login
+  // success is detected) and wires the deadline signal. Captures any Set-Cookie back
+  // into the jar, and discards a body that only arrived after the deadline aborted.
   private async request(path: string, init: RequestInit = {}, signal?: AbortSignal) {
     const response = await this.transport(this.url(path), {
       ...init,
@@ -210,6 +252,11 @@ export class Session {
       body: JSON.stringify(fields),
     };
   }
+  // Resolves an external patient id (pubpid) to OpenEMR's internal pid through the
+  // authenticated finder. Rejects ids outside a strict charset, then requires EXACTLY
+  // one filtered row whose pubpid matches and whose DT_RowId parses as `pid_<n>`;
+  // anything else (no match, multiple matches, mismatch) throws TargetFailure('blocked').
+  // Defaults to the session's assigned pubpid.
   private async resolvePid(pubpid = this.user.pubpid): Promise<number> {
     if (!/^[A-Za-z0-9-]{1,64}$/.test(pubpid))
       throw new TargetFailure('blocked', 'Invalid external patient ID');
@@ -263,6 +310,9 @@ export class Session {
       throw new TargetFailure('blocked', 'External patient ID lookup mismatch');
     return pid;
   }
+  // Probes whether a patient id is NOT uniquely resolvable for this session: returns
+  // true only on the specific "not uniquely resolved" failure (used to confirm a chart
+  // is out of reach for cross_patient tests), and re-throws every other error.
   async cannotAccess(pubpid: string) {
     try {
       await this.resolvePid(pubpid);
@@ -273,6 +323,10 @@ export class Session {
       throw e;
     }
   }
+  // Hashes the patient's report HTML into a fingerprint used to detect whether a turn
+  // caused an unintended chart write (the effect check for unintended_tool_action).
+  // Returns null when no chart is assigned, the report is not HTML, it is implausibly
+  // large, or it lacks the expected order markers; records a timeout instead of throwing.
   async chartReportFingerprint(): Promise<string | null> {
     this.lastTimeout = null;
     if (this.assignedPid === null) return null;
@@ -310,6 +364,11 @@ export class Session {
     }
     throw new TargetFailure('incomplete', 'Malformed target response');
   }
+  // Runs the full handshake that makes the session usable, each step under a handshake
+  // deadline: GET ready, POST the form login (a 302 is success, not an error), resolve
+  // and open the assigned chart, fetch the module session for the CSRF token + module
+  // version, then start a conversation and capture its id. Records assignedPid and the
+  // target version; ANY failure is normalized to TargetFailure('blocked').
   async open() {
     try {
       const ready = await this.timed('target.ready', 'handshake', signal =>
@@ -384,6 +443,9 @@ export class Session {
       throw new TargetFailure('blocked', 'Target handshake failed');
     }
   }
+  // Mints a fresh one-time `X-Copilot-Token` for the next turn and remembers it (so it
+  // can later be redacted). Each turn attempt consumes its own ticket; a failure to mint
+  // is 'incomplete'.
   private async ticket() {
     const data = await this.timed('target.ticket', 'handshake', async signal => {
       const response = await this.request(
@@ -402,6 +464,11 @@ export class Session {
     this.issuedTickets.push(data.token);
     return data.token;
   }
+  // Uploads a synthetic PDF in the target's two-step flow: document_intent (yields a
+  // 32-hex intent id) then a multipart document_upload. Returns the namespaced
+  // `document:<hex>` source id the target assigns, which a later turn can attach. Every
+  // failure here is 'incomplete' (the turn cannot be trusted); see the inline note below
+  // on why ':' must be allowed in the accepted source-id charset.
   async upload(documentType: 'lab_pdf' | 'intake_form', bytes: Buffer) {
     const base = 'interface/modules/custom_modules/oe-module-copilot/public/api/';
     const data = await this.timed('target.upload_intent', 'upload', async signal => {
@@ -460,6 +527,14 @@ export class Session {
       throw new TargetFailure('incomplete', 'Invalid document source');
     return source.source_id;
   }
+  // Sends exactly ONE admitted message as a conversation turn and parses the reply into
+  // a versioned Observation v2 (status, summary, structured claims/sources, limitations,
+  // completeness/truncation). The retry CONTRACT is strict: only a 409 carrying
+  // `X-Copilot-Turn-Not-Applied: true` proves the turn was not applied and permits one
+  // retry with a fresh ticket; every other non-OK or uncertain reply is ambiguous and
+  // ends the case as a TurnFailure rather than being silently replayed. Response size is
+  // bounded (MAX_TURN_RESPONSE_BYTES / MAX_VISIBLE_CHARS). Returns the observation, the
+  // per-attempt log and send/receive timestamps.
   async turn(
     message: string,
     turn: number,
@@ -605,6 +680,9 @@ export class Session {
     }
     throw new TurnFailure(attempts);
   }
+  // Best-effort teardown: tries to end the conversation on the target (under its own
+  // bounded deadline, ignoring failures) and then clears all per-case state — cookies,
+  // CSRF token, conversation id, assigned pid and issued tickets.
   async close() {
     if (this.conversation) {
       // Cleanup is best effort after execution stops, including when its run

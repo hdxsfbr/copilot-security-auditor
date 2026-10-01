@@ -1,3 +1,7 @@
+// Postgres data-access layer for the Clinical Co-Pilot Auditor. The Repository below
+// wraps a single pg.Pool and owns ALL persistence plus the run queue; the API and worker
+// reach the database only through it. Target credentials are AES-GCM encrypted at rest here,
+// and the run-creation, worker-leasing, and cost-ledger invariants are enforced in transactions.
 import { randomUUID, createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import pg from 'pg';
 import {
@@ -76,11 +80,16 @@ type CandidateEvidenceRow = {
   source_case_id: string | null;
 };
 export type RunDefinitionReference = { id: string; revision: number };
+// Thrown by fenceDefinition when the saved run definition a launch/schedule was built from
+// changed revision or was archived mid-preflight, so the operation must abort rather than
+// start a run from a stale definition.
 export class DefinitionRevisionConflict extends Error {
   constructor() {
     super('Run definition changed or archived during preflight');
   }
 }
+// Thrown when a run-history pagination cursor is missing required fields, malformed,
+// or fails strict validation (so a forged or corrupted cursor can never reach the query).
 export class InvalidRunCursor extends Error {
   constructor() {
     super('Invalid run history cursor');
@@ -88,6 +97,8 @@ export class InvalidRunCursor extends Error {
 }
 const cursorTime = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{6})Z$/;
 const cursorId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Validates a cursor timestamp string down to a real calendar date (leap years included),
+// rejecting values that match the regex shape but are not actual dates.
 function validCursorTime(value: string) {
   const fields = cursorTime.exec(value);
   if (!fields) return false;
@@ -105,6 +116,9 @@ function validCursorTime(value: string) {
     second <= 59
   );
 }
+// Decodes a base64url keyset cursor for run history into { t, id }, or null when none is given.
+// Strictly validated (schema version, exact key set, real timestamp, uuid shape); any malformed or
+// tampered input throws InvalidRunCursor instead of silently returning a usable value.
 export function decodeRunCursor(cursor?: string): { t: string; id: string } | null {
   if (!cursor) return null;
   try {
@@ -126,12 +140,15 @@ export function decodeRunCursor(cursor?: string): { t: string; id: string } | nu
     throw new InvalidRunCursor();
   }
 }
+// Encodes the (created_at, id) keyset position of the last returned row into an opaque base64url cursor.
 export function encodeRunCursor(row: { cursorCreatedAt: string; id: string }) {
   return Buffer.from(JSON.stringify({ v: 1, t: row.cursorCreatedAt, id: row.id })).toString(
     'base64url',
   );
 }
 
+// Classifies a case definition's metadata completeness: 'complete' when both category and rubric
+// parse, otherwise 'incomplete_draft' for drafts or 'unknown_legacy' for older published cases.
 function caseMetadataStatus(definition: unknown, state: string) {
   const fields =
     definition && typeof definition === 'object' && !Array.isArray(definition)
@@ -144,18 +161,23 @@ function caseMetadataStatus(definition: unknown, state: string) {
       : 'unknown_legacy';
 }
 
+// Loads the 32-byte AES credential key from the CREDENTIAL_KEY env var (64 hex chars),
+// throwing if it is unset or malformed so credentials are never processed with a bad key.
 function key() {
   const value = process.env.CREDENTIAL_KEY;
   if (!value || !/^[a-f0-9]{64}$/i.test(value))
     throw new Error('CREDENTIAL_KEY must be 32 bytes of hex');
   return Buffer.from(value, 'hex');
 }
+// AES-256-GCM encrypts a JSON value under a fresh random IV, returning base64 of iv|authTag|ciphertext.
+// Used for target credential secrets so their plaintext is never persisted.
 export function encrypt(value: unknown) {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key(), iv);
   const payload = Buffer.concat([cipher.update(JSON.stringify(value)), cipher.final()]);
   return Buffer.concat([iv, cipher.getAuthTag(), payload]).toString('base64');
 }
+// Reverses encrypt(): verifies the GCM auth tag (tamper detection) and returns the parsed plaintext value.
 export function decrypt<T>(value: string): T {
   const bytes = Buffer.from(value, 'base64');
   const decipher = createDecipheriv('aes-256-gcm', key(), bytes.subarray(0, 12));
@@ -170,12 +192,16 @@ export class Repository {
   readonly reportRevisions: ReportRevisions;
   readonly spend: SpendStore;
   readonly suites: RegressionSuites;
+  // Wires up the sub-stores that share this pool/repository: report jobs, report revisions,
+  // spend reconciliation, and regression suites.
   constructor(readonly pool: pg.Pool) {
     this.reports = new ReportJobStore(pool);
     this.reportRevisions = new ReportRevisions(this);
     this.spend = new SpendStore(pool);
     this.suites = new RegressionSuites(this);
   }
+  // Returns a page of runs newest-first using keyset pagination on (created_at, id). Fetches
+  // limit+1 rows to decide whether a nextCursor exists; limit is bounded to 1..100.
   async runHistory(limit = 25, cursor?: string) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       throw new Error('Invalid run history limit');
@@ -220,6 +246,10 @@ export class Repository {
       nextCursor: rows.length > limit ? encodeRunCursor(page.at(-1)) : null,
     };
   }
+  // Optimistic-concurrency guard for launches built from a saved run definition: inside the
+  // caller's transaction it takes a FOR SHARE lock on the definition row and throws
+  // DefinitionRevisionConflict if it is gone, archived, or at a different revision than the caller
+  // validated. No-op when no reference is supplied.
   private async fenceDefinition(db: pg.PoolClient, reference?: RunDefinitionReference) {
     if (!reference) return;
     const row = (
@@ -230,6 +260,7 @@ export class Repository {
     if (!row || row.archived || row.revision !== reference.revision)
       throw new DefinitionRevisionConflict();
   }
+  // Maps a run_definitions row to the API shape, parsing/validating the stored definition JSON.
   private definitionRow(row: Record<string, unknown>) {
     return {
       id: row.id as string,
@@ -241,6 +272,7 @@ export class Repository {
       updatedAt: (row.updated_at as Date).toISOString(),
     };
   }
+  // Lists all non-archived run definitions, most-recently-updated first.
   async runDefinitions() {
     const rows = (
       await this.pool.query(
@@ -249,10 +281,12 @@ export class Repository {
     ).rows;
     return rows.map(row => this.definitionRow(row));
   }
+  // Fetches one run definition by id, or null if it does not exist.
   async runDefinition(id: string) {
     const row = (await this.pool.query('SELECT * FROM run_definitions WHERE id=$1', [id])).rows[0];
     return row ? this.definitionRow(row) : null;
   }
+  // Validates and inserts a new run definition (revision starts at the column default) and returns it.
   async createRunDefinition(input: RunDefinitionInput) {
     const valid = runDefinitionInput.parse(input),
       id = randomUUID();
@@ -264,6 +298,8 @@ export class Repository {
     ).rows[0];
     return this.definitionRow(row);
   }
+  // Optimistically updates a definition only if its revision still matches and it is not archived,
+  // bumping the revision. Returns { ok } with the new row, or re-reads to report conflict/not_found.
   async editRunDefinition(id: string, revision: number, input: RunDefinitionInput) {
     const valid = runDefinitionInput.parse(input);
     const row = (
@@ -277,6 +313,7 @@ export class Repository {
       status: (await this.runDefinition(id)) ? ('conflict' as const) : ('not_found' as const),
     };
   }
+  // Archives a definition under the same optimistic-revision check as editRunDefinition.
   async archiveRunDefinition(id: string, revision: number) {
     const row = (
       await this.pool.query(
@@ -289,6 +326,8 @@ export class Repository {
       status: (await this.runDefinition(id)) ? ('conflict' as const) : ('not_found' as const),
     };
   }
+  // Reads a definition and confirms it is live at the expected revision, returning its run config;
+  // reports not_found, or conflict when archived or the revision has drifted.
   async resolveRunDefinition(
     id: string,
     revision: number,
@@ -298,6 +337,7 @@ export class Repository {
     if (value.archived || value.revision !== revision) return { status: 'conflict' };
     return { status: 'ok', run: value.run };
   }
+  // Lists non-deleted schedules with their next fire time and paused flag, newest first.
   async schedules() {
     return (
       await this.pool.query(
@@ -305,6 +345,7 @@ export class Repository {
       )
     ).rows;
   }
+  // Lists the most recent (up to 100) fire occurrences for one schedule, newest first.
   async occurrences(scheduleId: string) {
     return (
       await this.pool.query(
@@ -313,10 +354,17 @@ export class Repository {
       )
     ).rows;
   }
+  // True if the given run was created by a schedule occurrence.
   async isScheduled(runId: string) {
     return !!(await this.pool.query('SELECT 1 FROM schedule_occurrences WHERE run_id=$1', [runId]))
       .rowCount;
   }
+  // Creates or updates a schedule in one transaction. Validates the role/pricing selections and
+  // snapshots the verified model pricing (paid OpenRouter roles require a verified price and a paid cap),
+  // fences the source run definition, confirms the target exists and that every chosen case is published
+  // (and, for adaptive, that each category has a seed case and every attached PDF is linked), then stores
+  // the prepared run snapshot plus the computed next fire time. Returns null when editing a schedule that
+  // no longer exists; an existing id is row-locked FOR UPDATE to serialize concurrent edits.
   async saveSchedule(
     input: ScheduleInput,
     models: Snapshot,
@@ -444,6 +492,8 @@ export class Repository {
       db.release();
     }
   }
+  // Pauses or resumes a schedule under a row lock. When resuming a schedule whose fire time is already
+  // in the past, it recomputes the next fire time so resuming does not immediately backfire. Null if missing.
   async scheduleState(id: string, paused: boolean, now = new Date()) {
     const db = await this.pool.connect();
     try {
@@ -476,6 +526,7 @@ export class Repository {
       db.release();
     }
   }
+  // Soft-deletes a schedule (sets deleted + archived_at); returns false if it was already deleted/gone.
   async deleteSchedule(id: string) {
     return (
       (
@@ -486,6 +537,12 @@ export class Repository {
       ).rowCount !== 0
     );
   }
+  // Fires every schedule due at `now`, one locked row at a time (FOR UPDATE SKIP LOCKED so concurrent
+  // tickers never fire the same schedule). For each due schedule: a missing or already-reserved target,
+  // or an unavailable case, records a blocked/skipped occurrence; otherwise it snapshots and inserts the
+  // run, its report policy, a job row, and reserves the target via targets.active_run_id. The schedule's
+  // next_fire_at is always advanced regardless of outcome. Finally sweeps regression suites that were
+  // waiting on a reserved target, and returns the list of what was processed.
   async tick(now = new Date()) {
     const processed: { id: string; state: string; runId?: string }[] = [];
     for (;;) {
@@ -589,6 +646,8 @@ export class Repository {
     await this.suites.sweep(); // suites waiting for a reserved target retry here
     return processed;
   }
+  // Creates a new target plus its two AES-encrypted credential rows (user A / user B) in one transaction.
+  // Only the generated credential ids are stored on the target row; credential plaintext is never persisted.
   async target(input: TargetInput) {
     const db = await this.pool.connect();
     try {
@@ -615,6 +674,8 @@ export class Repository {
       db.release();
     }
   }
+  // Loads a target with its two credentials decrypted for the edit form, but exposes only the
+  // non-secret identity fields (username, pubpid) — the stored passwords are deliberately omitted.
   async targetForEdit(id: string) {
     const row = (
       await this.pool.query(
@@ -633,6 +694,10 @@ export class Repository {
       userB: { username: b.username, pubpid: b.pubpid ?? '' },
     };
   }
+  // Updates a target under a row lock. Refuses (returns { active_run_id }) while a run currently holds
+  // the target, so credentials cannot change mid-run. Re-encrypts both identities into fresh credential
+  // rows, carrying forward each stored password when the input omits it (an edit that does not retype the
+  // password keeps the existing one). Null if the target is missing.
   async updateTarget(
     id: string,
     input: TargetUpdateInput,
@@ -691,6 +756,7 @@ export class Repository {
       db.release();
     }
   }
+  // Lists all targets with their active_run_id (non-null means a run currently holds that target).
   async targets() {
     return (
       await this.pool.query(
@@ -698,6 +764,8 @@ export class Repository {
       )
     ).rows;
   }
+  // Publishes a brand-new case immediately (it is its own family root). Rejects attach_pdf actions
+  // because PDFs must first be uploaded to a draft, which is where artifacts can be linked.
   async createCase(input: CaseInput) {
     if (input.actions.some(action => action.kind === 'attach_pdf'))
       throw new Error('Upload PDFs to a draft before publishing');
@@ -708,6 +776,7 @@ export class Repository {
     );
     return { id, ...input };
   }
+  // Creates an unpublished versioned draft case (version 1, its own family root) from authoring input.
   async createDraft(input: CaseDraftInput) {
     const id = randomUUID();
     await this.pool.query(
@@ -723,6 +792,7 @@ export class Repository {
       metadataStatus: caseMetadataStatus(input, 'draft'),
     };
   }
+  // Fetches one case version flattened with its definition fields and computed metadata status, or null.
   async caseRecord(id: string) {
     const row = (
       await this.pool.query(
@@ -734,6 +804,7 @@ export class Repository {
       ? { ...row, ...row.definition, metadataStatus: caseMetadataStatus(row.definition, row.state) }
       : null;
   }
+  // True if the case still accepts artifact uploads: any draft, or a legacy-authored published case.
   async canUploadArtifact(id: string) {
     return !!(
       await this.pool.query(
@@ -742,6 +813,8 @@ export class Repository {
       )
     ).rowCount;
   }
+  // Returns every version in the case's family (resolved via the given id's family_id), ordered by version.
+  // Null if the id matches no case.
   async caseVersions(id: string) {
     const rows = (
       await this.pool.query(
@@ -757,6 +830,8 @@ export class Repository {
         }))
       : null;
   }
+  // Lists every run that executed this case, unioning selected runs (by case_id) with adaptive execution
+  // cases seeded from it, newest first.
   async caseExecutions(id: string) {
     return (
       await this.pool.query(
@@ -772,6 +847,7 @@ export class Repository {
       )
     ).rows;
   }
+  // Lists all draft cases, newest first.
   async drafts() {
     return (
       await this.pool.query(
@@ -783,6 +859,7 @@ export class Repository {
       metadataStatus: caseMetadataStatus(row.definition, row.state),
     }));
   }
+  // Lists archived cases with just the summary fields the archive view needs, most-recently-archived first.
   async archivedCases() {
     return (
       await this.pool.query(
@@ -798,6 +875,8 @@ export class Repository {
       metadataStatus: caseMetadataStatus(row.definition, row.state),
     }));
   }
+  // Overwrites a versioned draft's definition, optionally guarded by an expected-current definition for
+  // optimistic concurrency (a compare-and-set). Returns null when no matching draft row was updated.
   async updateDraft(id: string, definition: CaseDraftInput, expectedDefinition?: CaseDraftInput) {
     const row = (
       await this.pool.query(
@@ -816,6 +895,10 @@ export class Repository {
         }
       : null;
   }
+  // Transitions a versioned draft to published in one transaction: locks the draft FOR UPDATE, validates
+  // it against the publishable schema, and verifies each attached PDF is linked to the case and its stored
+  // file is intact before flipping state. Returns the published case; null if no publishable draft; or a
+  // typed invalid result (schema / artifact_unlinked / artifact_integrity) after rolling back.
   async publishDraft(id: string) {
     const db = await this.pool.connect();
     try {
@@ -881,6 +964,11 @@ export class Repository {
       db.release();
     }
   }
+  // Clones a published/archived case into a new draft version within the same family. The first
+  // transaction locks the family root (version 1) FOR UPDATE to serialize version-number assignment, then
+  // inserts the draft with no actions. Afterwards (outside that transaction) it copies each attached PDF and
+  // compare-and-set updates the draft with the remapped artifact ids; if copying fails the draft is returned
+  // flagged copyFailed rather than throwing. Null if the source id is unknown.
   async cloneCase(id: string) {
     const db = await this.pool.connect();
     let draftId: string;
@@ -957,6 +1045,7 @@ export class Repository {
       };
     }
   }
+  // Archives a published case; returns null if it was not in the published state.
   async archiveCase(id: string) {
     const row = (
       await this.pool.query(
@@ -973,6 +1062,8 @@ export class Repository {
         }
       : null;
   }
+  // Links an already-uploaded artifact to a case, but only while the case still accepts uploads (draft, or
+  // legacy published) — enforced atomically by the INSERT...SELECT FOR SHARE guard. Throws otherwise.
   async addArtifact(ref: {
     id: string;
     caseId: string;
@@ -989,6 +1080,8 @@ export class Repository {
     );
     if (!result.rowCount) throw new Error('Case no longer accepts artifacts');
   }
+  // Looks up one artifact's size/hash for a case, accepting either a direct case_id match or a
+  // case_artifact_links association (shared/cloned attachments). Null if not found for that case.
   async artifact(
     caseId: string,
     id: string,
@@ -1003,9 +1096,11 @@ export class Repository {
       ).rows[0] ?? null
     );
   }
+  // Lists every artifact's id/size/hash (used for reconciling the backing file store).
   async artifactRefs(): Promise<{ id: string; bytes: number; sha256: string }[]> {
     return (await this.pool.query('SELECT id,bytes,sha256 FROM artifacts ORDER BY id')).rows;
   }
+  // Lists all published cases flattened with their definitions, newest first.
   async cases(): Promise<(CaseInput & { id: string })[]> {
     return (
       await this.pool.query(
@@ -1013,6 +1108,10 @@ export class Repository {
       )
     ).rows.map(r => ({ id: r.id as string, ...(r.definition as CaseInput) }));
   }
+  // In-place edit of a legacy published case, under a row lock. Permitted only when the case is
+  // published + legacy AND has never been referenced anywhere (no runs, adaptive cases, regressions, or
+  // schedules); otherwise returns { conflict }. Also verifies each attach_pdf is still linked, else
+  // { invalid }. Null if the case is missing. This keeps edits from silently mutating evaluated history.
   async updateCase(id: string, definition: CaseInput) {
     const db = await this.pool.connect();
     try {
@@ -1072,6 +1171,13 @@ export class Repository {
       db.release();
     }
   }
+  // Creates a selected (single-case) run in one transaction. Validates the judge/role selection and that
+  // paid roles have verified pricing and a cap, builds the model snapshot, fences the source definition,
+  // then locks the target FOR UPDATE and requires it be free (a busy target returns { active_run_id }).
+  // Confirms the case is published and its attached PDFs are linked, snapshots the run (the target snapshot
+  // stores credential REFERENCES, never plaintext), snapshots any report policy, enqueues a job, reserves
+  // the target via targets.active_run_id (one active run per target), and records the replay launch. The
+  // optional afterLaunch hook runs inside the same transaction. Returns { id, status:'queued' } or null.
   async start(
     input: StartInput,
     models?: Snapshot,
@@ -1172,6 +1278,12 @@ export class Repository {
       db.release();
     }
   }
+  // Creates an adaptive run in one transaction, mirroring start(): validates adaptive roles/pricing and the
+  // model snapshot, fences the definition, then locks the target FOR UPDATE and requires it be free (busy
+  // returns { active_run_id }). Confirms every seed case is published and that the seeds cover each chosen
+  // category with their PDFs linked, then snapshots the run (with the adaptive config, seed definitions, and
+  // credential references), snapshots any report policy, enqueues a job, and reserves the target. Returns
+  // { id, status:'queued' } or null.
   async startAdaptive(
     input: AdaptiveStart,
     models: Snapshot,
@@ -1277,6 +1389,10 @@ export class Repository {
       db.release();
     }
   }
+  // Requests a stop for a run, serialized on the run row (FOR UPDATE). A still-queued run is cancelled
+  // immediately (marked finished/incomplete, its lease cleared, target released, and replay/suite/allowance
+  // settled); a running run only gets stop_requested=true so the worker winds down on its next lease-checked
+  // call. Null when the run is missing or already finished.
   async stop(id: string) {
     const db = await this.pool.connect();
     try {
@@ -1317,6 +1433,9 @@ export class Repository {
       db.release();
     }
   }
+  // Lease-fenced poll the worker uses to learn whether it should stop: true when a stop was requested, or
+  // when an adaptive run has passed its maxMinutes budget. Throws 'Lease lost' if this generation no longer
+  // holds a live lease, so a fenced/zombie worker cannot keep running past its lease.
   async stopped(id: string, generation: number) {
     const row = (
       await this.pool.query(
@@ -1331,6 +1450,7 @@ export class Repository {
         Date.now() >= new Date(row.started_at).getTime() + row.adaptive.maxMinutes * 60000)
     );
   }
+  // Lists all adaptive cases of a run in proposal order (ordinal).
   async adaptiveCases(id: string) {
     return (
       await this.pool.query(
@@ -1339,6 +1459,7 @@ export class Repository {
       )
     ).rows;
   }
+  // Thin wrapper delegating to the exploration-signals query used by adaptive planning.
   explorationSignals(input: Parameters<typeof explorationSignals>[1]) {
     return explorationSignals(this.pool, input);
   }
@@ -1353,6 +1474,9 @@ export class Repository {
       )
     ).rows;
   }
+  // Inserts the next adaptive case in the 'proposed' state under the run's lease. Row-locks the run and
+  // requires a live lease of this generation with no stop requested, and (per the note inside) enforces
+  // that any mutation parent is an earlier case of THIS run. Returns the new execution case id.
   async beginAdaptiveCase(
     id: string,
     generation: number,
@@ -1406,6 +1530,9 @@ export class Repository {
       db.release();
     }
   }
+  // Moves a 'proposed' adaptive case to 'executing' and stores its admitted definition, under a row lock
+  // that requires a live lease, no stop requested, and the adaptive time budget not yet exhausted.
+  // Throws if the case was not in the 'proposed' state.
   async executeAdaptiveCase(id: string, generation: number, caseId: string, definition: CaseInput) {
     const db = await this.pool.connect();
     try {
@@ -1471,6 +1598,11 @@ export class Repository {
       db.release();
     }
   }
+  // Finalizes an adaptive case under the run lease. If the run was stopped or has timed out, the outcome is
+  // forced to 'incomplete' and no assessment is stored. Otherwise it records the assessment and, for
+  // executed hits (pending_review / auto_confirm), opens a candidate; an auto_confirm whose evidence
+  // integrity checks out is confirmed and turned into a regression, else it is downgraded to pending_review.
+  // Returns the final recorded state.
   async completeAdaptiveCase(
     id: string,
     generation: number,
@@ -1543,6 +1675,9 @@ export class Repository {
       db.release();
     }
   }
+  // Assembles the full run detail view for one run id: status, model/target snapshots, and either the
+  // selected case snapshot or the adaptive seeds enriched with their current family/version metadata.
+  // Null if the run is unknown.
   async run(id: string) {
     const row = (
       await this.pool.query(
@@ -1582,6 +1717,9 @@ export class Repository {
         : null,
     };
   }
+  // Returns one adaptive execution case in full: its admitted definition, source seed, assessment, and the
+  // ids of events tagged to it (eventLinkage marks whether any were found). Null if the case is not part
+  // of the run.
   async adaptiveCaseDetail(runId: string, executionCaseId: string) {
     const row = (
       await this.pool.query(
@@ -1630,6 +1768,8 @@ export class Repository {
       eventLinkage: events.length ? ('tagged' as const) : ('unknown' as const),
     };
   }
+  // Lists every model call of a run with its reserved/charged amounts, token counts, latency, and whether
+  // it has been reconciled against external spend, in creation order.
   async usage(id: string) {
     return (
       await this.pool.query(
@@ -1638,6 +1778,11 @@ export class Repository {
       )
     ).rows;
   }
+  // Reserves budget for a model call BEFORE it is dispatched, under the run lease (the run is row-locked and
+  // must still be running, unstopped, and within its adaptive time budget). For paid (OpenRouter) calls it
+  // refuses when any prior paid call is still 'unresolved' (an ambiguous charge blocks further paid spend)
+  // and when reserved+settled spend plus this amount would exceed the run's paid cap (net of the report
+  // allowance). Inserts a 'reserved' model_calls row and returns its id. Throws 'Lease lost' if the lease is gone.
   async reserveCall(
     id: string,
     generation: number,
@@ -1691,6 +1836,10 @@ export class Repository {
       db.release();
     }
   }
+  // Settles a previously reserved model call under the run lease (run and the reserved call row both
+  // locked FOR UPDATE). A paid call becomes 'settled' only when a measured charge within the reserved
+  // amount is known; an ambiguous or over-reserve charge is left 'unresolved' — which blocks future paid
+  // reserves until resolved. Ollama calls carry no money and always settle. Returns whether it resolved.
   async settleCall(id: string, generation: number, callId: string, usage?: ModelUsage) {
     const db = await this.pool.connect();
     try {
@@ -1737,6 +1886,7 @@ export class Repository {
       db.release();
     }
   }
+  // Returns all evidence events of a run in insertion order.
   async events(id: string) {
     return (
       await this.pool.query(
@@ -1745,6 +1895,7 @@ export class Repository {
       )
     ).rows;
   }
+  // Lists candidate findings still awaiting review, newest first.
   async candidates() {
     return (
       await this.pool.query(
@@ -1752,6 +1903,9 @@ export class Repository {
       )
     ).rows;
   }
+  // Atomically leases the oldest queued, non-stopped run to one worker using FOR UPDATE SKIP LOCKED, so no
+  // two workers can claim the same run. Bumps lease_generation (fencing any previous holder), sets a 60s
+  // lease, flips the run to 'running', and marks its schedule occurrence 'running'. Null if nothing is queued.
   async claim(owner: string) {
     const db = await this.pool.connect();
     try {
@@ -1799,12 +1953,17 @@ export class Repository {
       db.release();
     }
   }
+  // Decrypts and returns the stored plaintext of one credential by its reference id. This is the only place
+  // the worker obtains a target identity's secrets; credential plaintext stays out of snapshots and prompts.
   async credential<T>(ref: string): Promise<T> {
     const row = (await this.pool.query('SELECT ciphertext FROM credentials WHERE id=$1', [ref]))
       .rows[0];
     if (!row) throw new Error('Missing credential');
     return decrypt<T>(row.ciphertext);
   }
+  // Appends one evidence event under the run lease (optionally recording the observed target version),
+  // in a transaction. Throws 'Lease lost' if this generation's lease is no longer live, so a fenced worker
+  // cannot write events for a run it no longer owns.
   async append(id: string, generation: number, event: EvidenceEvent, version?: string) {
     const db = await this.pool.connect();
     try {
@@ -1823,6 +1982,8 @@ export class Repository {
       db.release();
     }
   }
+  // Extends the run's lease by 60s, but only while this generation still holds a live lease; throws
+  // 'Lease lost' otherwise so a fenced worker stops renewing.
   async heartbeat(id: string, generation: number) {
     const result = await this.pool.query(
       "UPDATE runs SET lease_until=now()+interval '60 seconds' WHERE id=$1 AND lease_generation=$2 AND status='running' AND lease_until>now()",
@@ -1830,6 +1991,11 @@ export class Repository {
     );
     if (!result.rowCount) throw new Error('Lease lost');
   }
+  // Completes a run under its lease in one transaction. Forces the outcome to 'incomplete' if the run was
+  // stopped or an adaptive run overran its time budget (and then skips storing the assessment). For a
+  // selected hit it opens a candidate, auto-confirming it into a regression when evidence integrity is
+  // complete or downgrading to pending_review otherwise. Finally settles the schedule occurrence, releases
+  // the target (active_run_id=NULL), and settles replay/suites. Throws 'Lease lost' if the lease is gone.
   async finish(
     id: string,
     generation: number,
@@ -1891,6 +2057,9 @@ export class Repository {
       db.release();
     }
   }
+  // Materializes a confirmed candidate into a regression, idempotent on candidate_id (ON CONFLICT DO
+  // NOTHING), using the adaptive case definition when present else the run's case snapshot. It then links
+  // the regression identity, records the automatic decision, and enqueues the report job (see note below).
   private async insertRegression(
     db: pg.PoolClient,
     candidate: string,
@@ -1906,6 +2075,7 @@ export class Repository {
     await recordAutomaticDecision(db, candidate);
     await enqueueReportJob(db, candidate);
   }
+  // Lists all candidate findings with their run version, outcome, and title, newest first.
   async findings() {
     return (
       await this.pool.query(
@@ -1913,6 +2083,11 @@ export class Repository {
       )
     ).rows;
   }
+  // Resolves a regression into a replayable published case under a row lock (FOR UPDATE OF g), memoizing the
+  // result in replay_case_id so repeated calls are idempotent. If already resolved it returns that case
+  // (erroring if it was archived). Otherwise it verifies the source case and its attachments still exist,
+  // inserts a fresh published case from the stored definition, relinks its PDFs, and records the replay case
+  // id. Null if the regression is unknown.
   async selectRegression(id: string) {
     const db = await this.pool.connect();
     try {
@@ -1981,6 +2156,8 @@ export class Repository {
       db.release();
     }
   }
+  // Backfills any missing regression identities, then lists regressions with their prior replay runs
+  // (same case + target, finished, excluding the source run) aggregated per row, newest first.
   async regressions() {
     await backfillRegressionIdentities(this.pool);
     return (
@@ -1991,9 +2168,11 @@ export class Repository {
     FROM regressions g JOIN runs r ON r.id=g.source_run_id ORDER BY g.created_at DESC`)
     ).rows;
   }
+  // Thin wrapper delegating to the scoped-coverage query.
   scopedCoverage(query: CoverageQuery, now?: Date) {
     return scopedCoverage(this.pool, query, now);
   }
+  // Aggregates finished evaluations (selected runs and executed adaptive cases) by category and outcome.
   async coverage() {
     return (
       await this.pool.query(
@@ -2001,6 +2180,9 @@ export class Repository {
       )
     ).rows;
   }
+  // Loads a candidate joined to its source (a selected run's case, or an adaptive case) and takes
+  // FOR UPDATE OF c, so callers that then re-check integrity and decide are serialized on the candidate row.
+  // Null if the candidate is unknown.
   private async candidateEvidenceRow(
     db: pg.PoolClient,
     id: string,
@@ -2020,6 +2202,10 @@ export class Repository {
       ).rows[0] ?? null
     );
   }
+  // Recomputes and persists a candidate's evidence integrity: the definition must parse and every attached
+  // PDF must still be linked to the source case and verify on disk. Returns 'complete' only when all
+  // artifacts are available, else the first failing status; a definition that fails to parse (or lacks a
+  // source case) yields 'invalid_definition'. The result is written back to candidates.evidence_integrity.
   private async checkCandidateEvidence(
     db: pg.PoolClient,
     row: CandidateEvidenceRow,
@@ -2069,6 +2255,8 @@ export class Repository {
     await db.query('UPDATE candidates SET evidence_integrity=$2 WHERE id=$1', [row.id, integrity]);
     return integrity;
   }
+  // Public entry point that locks the candidate and (re)computes and stores its evidence integrity in a
+  // transaction. Null if the candidate is unknown.
   async candidateIntegrity(id: string): Promise<CandidateIntegrity | null> {
     const db = await this.pool.connect();
     try {
@@ -2088,6 +2276,10 @@ export class Repository {
       db.release();
     }
   }
+  // Records an operator confirm/reject on a pending candidate, serialized on the candidate row. Confirming
+  // re-checks evidence integrity first (returns { integrityFailure } without changing state if it fails),
+  // then sets the state + decision route and, on confirm, creates the regression. A decision matching the
+  // already-terminal state is idempotent; a conflicting one returns { conflict }. Null if the candidate is unknown.
   async review(id: string, decision: 'confirm' | 'reject', rationale?: ReviewRationale) {
     const db = await this.pool.connect();
     try {
@@ -2125,6 +2317,9 @@ export class Repository {
       db.release();
     }
   }
+  // Marks a confirmed candidate approved for export, idempotently (COALESCE keeps the first approval time),
+  // but only after its evidence integrity re-verifies; returns { integrityFailure } if it does not, or null
+  // if the candidate is not in the confirmed state.
   async approveExport(id: string) {
     const db = await this.pool.connect();
     try {
@@ -2182,6 +2377,9 @@ export class Repository {
       db.release();
     }
   }
+  // Returns a confirmed, export-approved candidate's data for report generation, re-verifying evidence
+  // integrity first. Null if not confirmed; { export_approved_at: null } if approval is still pending;
+  // { integrityFailure } if the attachments no longer verify.
   async exportData(id: string) {
     const db = await this.pool.connect();
     try {
@@ -2215,6 +2413,10 @@ export class Repository {
       db.release();
     }
   }
+  // Reaper for runs whose lease has lapsed: marks each finished/incomplete and bumps lease_generation to
+  // fence the lost worker, flips its still-'reserved' model calls to 'unresolved', closes open adaptive
+  // cases, blocks the schedule occurrence (execution uncertain), releases the target, and settles
+  // replay/suites. Runs in one transaction, then fires suite after-settle hooks.
   async expire() {
     const db = await this.pool.connect();
     try {

@@ -1,3 +1,6 @@
+// Worker-side handler for the Documentation report job: the final stage that
+// drafts a vulnerability report for a confirmed finding. Wired in as a
+// ReportJobHandler; the detailed contract is on createDocumentationHandler below.
 import {
   agentMessageHeader,
   agentRefs,
@@ -30,6 +33,8 @@ import {
 } from './models.js';
 import type { ReportJobHandler } from './report-jobs.js';
 
+// Helper to end the job as a typed failure. Every early return below uses it; a
+// failed job writes no draft revision -- there is no deterministic fallback.
 const failed = (reason: string) => ({ status: 'failed' as const, reason });
 // A lease loss aborts the signal; every transport request (catalog and model) carries it.
 const fenced = (transport: typeof fetch, signal: AbortSignal): typeof fetch =>
@@ -38,6 +43,8 @@ const fenced = (transport: typeof fetch, signal: AbortSignal): typeof fetch =>
       ...init,
       signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
     })) as typeof fetch;
+// Pick the larger of two decimal prices (compared as nanos) so re-pricing a job
+// never reserves below either the originally quoted or the latest catalog price.
 const higher = (latest: string, original: string) =>
   nanos(latest) > nanos(original) ? latest : original;
 
@@ -49,6 +56,9 @@ export function createDocumentationHandler(
   modelFetch: typeof fetch = fetch,
 ): ReportJobHandler {
   return async ({ job, signal, reserveCall, settleCall }) => {
+    // Gate on persisted evidence before spending anything: the finding must be
+    // confirmed, have all required evidence, and not duplicate a prior attack
+    // sequence. These are cheap, deterministic refusals made before any model call.
     const evidence: FindingEvidence | null = await loadEvidence(repo.pool, job.candidateId);
     if (!evidence || evidence.state !== 'confirmed') return failed('not_confirmed');
     if (evidence.missing.length)
@@ -124,6 +134,9 @@ export function createDocumentationHandler(
     const transport = fenced(modelFetch, signal);
     let price: Price | undefined,
       amount = 0n;
+    // Paid provider only: re-verify the catalog price now (it may have moved
+    // since the job was queued) and reserve against the higher of old/new, so a
+    // mid-flight price rise can never under-reserve the call.
     if (job.model.provider === 'openrouter') {
       try {
         const latest = verifiedPrice(await catalog(transport), job.model.model),
@@ -139,6 +152,8 @@ export function createDocumentationHandler(
         return failed('verified_pricing_unavailable');
       }
     }
+    // Reserve the funds against the job's report allowance before dispatch; a
+    // lost lease propagates, while allowance exhaustion and other errors fail the job.
     let callId: string;
     try {
       callId = await reserveCall(amount);
@@ -169,6 +184,8 @@ export function createDocumentationHandler(
               : 'model_unavailable',
       );
     }
+    // Settle the reservation with the real usage/charge; if settlement itself is
+    // unresolved we fail rather than commit a draft against an uncertain spend.
     if (!(await settleCall(callId, call.usage))) return failed('model_settlement_unresolved');
     // Never trust the model to redact: alias and scrub the reply, then validate the strict schema and every citation and quote.
     const parsed = documentationReport.safeParse(redactor.deep(call.result));
@@ -177,6 +194,9 @@ export function createDocumentationHandler(
     if (problem) return failed(`invalid_output:${problem}`);
     const content = reportContent.parse({ v: 1, facts, narrative: parsed.data });
     if (redactor.leaks(content)) return failed('redaction_failed');
+    // Success: hand back a commit callback so the validated, redacted draft is
+    // written in the same transaction that marks the job complete -- the draft
+    // never exists without a completed job, nor the reverse.
     return {
       status: 'completed',
       commit: async db => {

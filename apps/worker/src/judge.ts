@@ -1,3 +1,7 @@
+// Builds the bounded, redacted evidence packet for the LLM Judge and calls the
+// local (Ollama) Judge model. Everything a model sees is scrubbed first, and
+// evidence is size- and count-bounded here. The model only PROPOSES a verdict;
+// this module just validates its shape and never treats model output as proof.
 import {
   verdict,
   type Observation,
@@ -24,6 +28,11 @@ export type PacketContext = {
 };
 export const MAX_JUDGE_PACKET_CHARS = MAX_AGENT_JUDGE_PACKET_CHARS;
 
+// Redaction for anything that will reach a model or an event. Rewrites the two
+// assigned patient IDs to PATIENT_A / PATIENT_B (by position in `identities`)
+// and replaces each identity's password/username, any extra secrets, and any
+// csrf/cookie/ticket-style token with [REDACTED]. Must run BEFORE evidence
+// leaves the worker; it returns a new string and mutates nothing.
 export function scrub(value: string, identities: Identity[], secrets: string[] = []) {
   let result = value;
   for (const [index, user] of identities.entries()) {
@@ -36,6 +45,9 @@ export function scrub(value: string, identities: Identity[], secrets: string[] =
     '[REDACTED]',
   );
 }
+// Like scrub, but does NOT alias the patient IDs -- used where the patient
+// identifier is itself legitimate evidence to preserve, while still stripping
+// credentials, extra secrets and token-bearing headers.
 export function scrubEvidence(value: string, identities: Identity[], secrets: string[] = []) {
   let result = value;
   for (const user of identities)
@@ -46,6 +58,12 @@ export function scrubEvidence(value: string, identities: Identity[], secrets: st
     '[REDACTED]',
   );
 }
+// Assembles the bounded, scrubbed Judge input from the expected-safe-behavior
+// note, the observations, the identities/secrets to redact and the run context
+// (category, executed actions, checks, effect). Enforces evidence bounds -- at
+// most 3 actions, at most 30 limitations, and a total serialized size cap -- and
+// requires full PDF provenance (artifactId, documentType, sourceId) on any
+// attach_pdf action, throwing if a bound or provenance requirement is unmet.
 export function packet(
   expectedSafeBehavior: string,
   observations: Observation[],
@@ -109,6 +127,12 @@ export function packet(
     throw new Error('Judge packet evidence bounds exceeded');
   return result;
 }
+// Calls the local Ollama Judge model with the scrubbed packet and the fixed
+// Judge system prompt, then validates the returned JSON against the verdict
+// schema. If the verdict cites an evidence ref that is not in the packet, it is
+// downgraded to `inconclusive` with an added uncertainty -- the model is never
+// trusted to reference evidence we did not give it. The identical system prompt
+// also lives in models.ts `judgeMessages`, the production dispatch path.
 export async function judge(
   base: string,
   model: string,
@@ -173,6 +197,10 @@ export async function judge(
     },
   };
 }
+// Simple local routing of a raw verdict to safe / inconclusive / pending_review
+// (a lighter-weight cousin of judgePolicy for local callers and tests): unsafe
+// always goes to a human; safe counts only with cited evidence and no material
+// uncertainties; everything else is inconclusive.
 export function classify(result: Verdict): 'safe' | 'inconclusive' | 'pending_review' {
   if (result.outcome === 'unsafe') return 'pending_review';
   if (

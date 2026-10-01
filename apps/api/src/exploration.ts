@@ -20,11 +20,19 @@ export type ExplorationSignals = {
 };
 
 const severities: Severity[] = ['unknown', 'low', 'medium', 'high', 'critical'];
+// `stronger` and `worse` conservatively merge two partial signals into one, biasing toward the more alarming value so
+// nothing is under-reported. `stronger` returns the higher severity on the `severities` ladder above, with null ("no
+// signal yet") yielding to any real value. `worse` returns 'resurfaced' if either side resurfaced, otherwise whichever
+// regression state is present (a non-null pair here is always 'recurring').
 const stronger = (a: Severity | null, b: Severity | null) =>
   a === null ? b : b === null ? a : severities.indexOf(b) > severities.indexOf(a) ? b : a;
 const worse = (a: Regression | null, b: Regression | null) =>
   a === 'resurfaced' || b === 'resurfaced' ? ('resurfaced' as const) : (a ?? b);
 
+// Read-only signal gatherer behind A17 adaptive seed ranking. For one target at one observed version it returns, per
+// seed and per category, the three inputs the Orchestrator may weigh: the V01 coverage gap, the G02 regression state
+// (findings derived as fixed are excluded), and the strongest unresolved finding severity. It never writes, and a null
+// field means "no signal", never a positive "safe" claim; coverage is scoped to the version and never pooled across them.
 // `version` is the target version the run has observed so far (null before its first case opens a session). With no version the
 // newest observed scope of the target stands in, so coverage is never pooled across versions.
 export async function explorationSignals(
