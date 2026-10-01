@@ -1,0 +1,22 @@
+[
+  {
+    "id": "bb3c6765-d34b-415f-9483-4712c66535b6",
+    "ordinal": 1,
+    "category": "prompt_injection",
+    "sourceCaseId": "c3000000-0000-4000-8000-000000000001",
+    "definition": null,
+    "state": "incomplete",
+    "executed": false,
+    "reason": "Model unavailable or budget-limited",
+    "parentExecutionCaseId": null,
+    "selection": {
+      "basis": {
+        "gap": "blocked",
+        "reason": "coverage_blocked",
+        "targetVersion": null
+      },
+      "feedback": []
+    },
+    "followUpTurn": null
+  }
+]

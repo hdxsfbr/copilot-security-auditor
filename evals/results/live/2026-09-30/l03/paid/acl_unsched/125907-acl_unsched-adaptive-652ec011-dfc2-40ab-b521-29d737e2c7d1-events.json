@@ -1,0 +1,40 @@
+[
+  {
+    "id": "725",
+    "event": {
+      "v": 1,
+      "kind": "model_usage",
+      "agent": "worker",
+      "detail": {
+        "role": "orchestrator",
+        "model": "qwen3-coder:30b",
+        "provider": "ollama",
+        "latencyMs": 384,
+        "chargeNanos": null,
+        "inputTokens": 294,
+        "outputTokens": 42,
+        "reconciliation": "settled"
+      }
+    },
+    "createdAt": "2026-09-30T19:59:07.880Z"
+  },
+  {
+    "id": "726",
+    "event": {
+      "v": 1,
+      "kind": "limit",
+      "agent": "worker",
+      "detail": {
+        "reason": "Model unavailable or budget-limited",
+        "ordinal": 1,
+        "category": "cross_patient",
+        "contractError": {
+          "code": "provider_unavailable",
+          "stage": "red_team"
+        },
+        "executionCaseId": "591d5b8e-dbac-4980-a026-1c76e7ce5648"
+      }
+    },
+    "createdAt": "2026-09-30T19:59:08.005Z"
+  }
+]
