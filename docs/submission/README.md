@@ -20,9 +20,9 @@ Every submission artifact, its path and its honest status. The broad local live 
 | Evals: live results | [evals/results/live/2026-09-29](../../evals/results/live/2026-09-29/README.md) | Done for one pass. 14 selected and 4 adaptive runs on a LAN target, 3 categories, 0 confirmed findings, raw API exports included. Live outcomes cannot be replayed offline |
 | Evals: public deployment starter matrix | [evals/results/live/2026-09-30/public-matrix](../../evals/results/live/2026-09-30/public-matrix/README.md) | 10 starter cases, 3 categories, target version 0.8.0: 2 `safe`, 8 `inconclusive`, 0 findings, $0 auditor spend. The target mostly replied that chart sections could not be retrieved, so this is not evidence of a defense. A separate single-case run is in [public-single-current-chart](../../evals/results/live/2026-09-30/public-single-current-chart/README.md) |
 | Vulnerability reports (3 or more discovered) | none | **Not met** |
-| AI cost analysis | [cost-and-scale.md](cost-and-scale.md) | Draft with labeled estimates for 100 / 1K / 10K / 100K cases. Actual development spend is blank (operator input). |
+| AI cost analysis | [cost-and-scale.md](cost-and-scale.md) | Draft with labeled estimates for 100 / 1K / 10K / 100K cases. Actual development spend is recorded in §10 (about $2,159, operator-provided). |
 | Deployed target | `https://openemr-137-184-4-22.sslip.io` ([brief](../COPILOT_FEATURE.md#2-actors-accounts-data)) | The 10 starter-matrix cases ran on 2026-09-30 (version 0.8.0): 2 `safe`, 8 `inconclusive`, 0 findings; results are scoped to the visible replies and do not verify underlying chart access ([evidence](../../evals/results/live/2026-09-30/public-matrix/README.md)). The broader pass used a LAN copy. The auditor itself is intentionally LAN-only and has no public URL |
-| 100-case live baseline | none | Not run (external gate; the cost analysis holds estimates only) |
+| 100-case live baseline | [l02](../../evals/results/live/2026-10-01/l02/README.md) | Done. 100/100 live cases in about 22 min, 0 findings; latency-bound (p50 12 s) at one in-flight run per target, daily-token halt did not bind at this scale |
 | Independent peer integration | none | Not done (external gate); roles are in-process |
 | Early technical interview | none | Operator |
 | Final social post | none | Operator |

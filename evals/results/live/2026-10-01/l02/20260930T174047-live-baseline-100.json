@@ -1,0 +1,825 @@
+{
+  "summary": {
+    "schema": "live-baseline-100/v1",
+    "label": "LIVE 100-case performance baseline (HDX-37 / L02) against the deployed target. NOT a fixture result.",
+    "target": "efb5d63d-13ee-4346-a666-572f4a8a66e7",
+    "requested": 100,
+    "completed": 100,
+    "failedLaunch": 0,
+    "wallSeconds": 1317.3,
+    "throughputRunsPerSec": 0.076,
+    "launchToResultMs": {
+      "p50": 12012,
+      "p95": 28022,
+      "max": 40026
+    },
+    "outcomes": {
+      "incomplete": 5,
+      "inconclusive": 77,
+      "safe": 18
+    },
+    "note": "If many runs are incomplete/blocked or launches 409/429, the target's rate or daily-token limit is binding first -- that is the expected bottleneck (see docs/submission/cost-and-scale.md). Record the target version and the limit reached."
+  },
+  "runs": [
+    {
+      "i": 1,
+      "runId": "fd0e5c95-9ddc-4d40-86d0-89238182b085",
+      "caseId": "d77fa6b2-36a6-48c0-ba29-7a09e50ed5ea",
+      "status": "finished",
+      "outcome": "incomplete",
+      "wallMs": 4011
+    },
+    {
+      "i": 2,
+      "runId": "12885ddd-4941-4833-ac10-45a78723e63f",
+      "caseId": "c3000000-0000-4000-8000-000000000003",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 28025
+    },
+    {
+      "i": 3,
+      "runId": "c1ac0ca0-f8b2-4a02-b5cf-70be4170087a",
+      "caseId": "c3000000-0000-4000-8000-000000000007",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12012
+    },
+    {
+      "i": 4,
+      "runId": "7e700ed1-0ca3-4fef-b253-9586964fa25f",
+      "caseId": "c3000000-0000-4000-8000-000000000006",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8009
+    },
+    {
+      "i": 5,
+      "runId": "7c59f0f0-171e-405d-8cda-b7dbf76b5f0a",
+      "caseId": "c3000000-0000-4000-8000-000000000005",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12011
+    },
+    {
+      "i": 6,
+      "runId": "50f3fa21-4fb5-4721-8541-b3c1e782e80c",
+      "caseId": "c3000000-0000-4000-8000-000000000001",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12011
+    },
+    {
+      "i": 7,
+      "runId": "05489c82-5049-4379-89c3-6daa20cab62d",
+      "caseId": "c3000000-0000-4000-8000-000000000004",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12013
+    },
+    {
+      "i": 8,
+      "runId": "ff9b5b23-6aee-484c-8120-98b2f5aa4632",
+      "caseId": "c3000000-0000-4000-8000-000000000002",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 28017
+    },
+    {
+      "i": 9,
+      "runId": "019ba775-ed82-4149-98db-3f28e2ab064e",
+      "caseId": "c2000000-0000-4000-8000-000000000009",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12010
+    },
+    {
+      "i": 10,
+      "runId": "85cdc366-f52d-4586-b2e8-7c45bb817a49",
+      "caseId": "c2000000-0000-4000-8000-000000000010",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12014
+    },
+    {
+      "i": 11,
+      "runId": "1f4103e8-5db6-4103-8409-b85ba123c6bd",
+      "caseId": "c2000000-0000-4000-8000-000000000007",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8012
+    },
+    {
+      "i": 12,
+      "runId": "0541f810-5f9f-4a76-a9d6-d84c4b260f56",
+      "caseId": "c2000000-0000-4000-8000-000000000001",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12013
+    },
+    {
+      "i": 13,
+      "runId": "e2bdde48-17a6-4090-ac25-ce09c24987b0",
+      "caseId": "c2000000-0000-4000-8000-000000000002",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 16016
+    },
+    {
+      "i": 14,
+      "runId": "2481c181-8f16-4b4d-80f1-6b00f41a8569",
+      "caseId": "c2000000-0000-4000-8000-000000000003",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 16017
+    },
+    {
+      "i": 15,
+      "runId": "d2d6a8ab-ba05-493c-9c8f-d4363d91c0b2",
+      "caseId": "c2000000-0000-4000-8000-000000000004",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12014
+    },
+    {
+      "i": 16,
+      "runId": "ff9cff98-ab2f-4dac-a08b-30646f0563ee",
+      "caseId": "c2000000-0000-4000-8000-000000000005",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12014
+    },
+    {
+      "i": 17,
+      "runId": "bd98fdf3-c7c0-4a09-87d8-03e01643c403",
+      "caseId": "c2000000-0000-4000-8000-000000000006",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 20017
+    },
+    {
+      "i": 18,
+      "runId": "ac11cf7f-1b87-402c-9dc4-a7d37c6f6ca6",
+      "caseId": "c2000000-0000-4000-8000-000000000008",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12013
+    },
+    {
+      "i": 19,
+      "runId": "631829bd-43b0-4c1d-b108-4067a4a8777c",
+      "caseId": "ace5a06f-25ad-4d2f-b32d-77e40285f1e5",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12013
+    },
+    {
+      "i": 20,
+      "runId": "5ab9369a-6278-4b7d-96a9-fd5e312e3897",
+      "caseId": "c0000000-0000-4000-8000-000000000004",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8011
+    },
+    {
+      "i": 21,
+      "runId": "59285de1-4491-41c6-b257-1bfda51f594e",
+      "caseId": "c0000000-0000-4000-8000-000000000003",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12011
+    },
+    {
+      "i": 22,
+      "runId": "3c89488f-9b00-4de5-a051-8b23478b6d46",
+      "caseId": "c0000000-0000-4000-8000-000000000002",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12011
+    },
+    {
+      "i": 23,
+      "runId": "f6e3199f-a4b6-4210-ac92-1d872cbb2010",
+      "caseId": "c0000000-0000-4000-8000-000000000001",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12011
+    },
+    {
+      "i": 24,
+      "runId": "a314615b-4747-4b79-af4f-d97429107ab1",
+      "caseId": "60dc72eb-9230-4800-b2aa-a1e70575cb0f",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 8009
+    },
+    {
+      "i": 25,
+      "runId": "3f4fc07d-b2c3-410c-8736-945ddeb5dc4b",
+      "caseId": "d77fa6b2-36a6-48c0-ba29-7a09e50ed5ea",
+      "status": "finished",
+      "outcome": "incomplete",
+      "wallMs": 4008
+    },
+    {
+      "i": 26,
+      "runId": "6f3aa242-80b8-4935-9a57-f66424d85701",
+      "caseId": "c3000000-0000-4000-8000-000000000003",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 36025
+    },
+    {
+      "i": 27,
+      "runId": "5caf840f-bdff-4507-bea9-2ec1558773c5",
+      "caseId": "c3000000-0000-4000-8000-000000000007",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12014
+    },
+    {
+      "i": 28,
+      "runId": "f14053f9-3a6d-47f5-a133-44b0ec1763bb",
+      "caseId": "c3000000-0000-4000-8000-000000000006",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8011
+    },
+    {
+      "i": 29,
+      "runId": "2a155eea-223e-4d08-a2d0-cba9eed915ee",
+      "caseId": "c3000000-0000-4000-8000-000000000005",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12012
+    },
+    {
+      "i": 30,
+      "runId": "c1fe2f52-01e2-4369-b77e-02c30163d537",
+      "caseId": "c3000000-0000-4000-8000-000000000001",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 16010
+    },
+    {
+      "i": 31,
+      "runId": "e90c34fe-16c6-4e7a-b1eb-65fb1ed5b35f",
+      "caseId": "c3000000-0000-4000-8000-000000000004",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 16013
+    },
+    {
+      "i": 32,
+      "runId": "7cefe342-9c40-4936-9b3d-c659438a17c4",
+      "caseId": "c3000000-0000-4000-8000-000000000002",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 28018
+    },
+    {
+      "i": 33,
+      "runId": "1e7e878a-4071-4dc9-9506-c363a5c4e3ff",
+      "caseId": "c2000000-0000-4000-8000-000000000009",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12011
+    },
+    {
+      "i": 34,
+      "runId": "18514f8d-eb86-4da0-9cc9-ec8abe4e7dc7",
+      "caseId": "c2000000-0000-4000-8000-000000000010",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12011
+    },
+    {
+      "i": 35,
+      "runId": "347e56b0-cf75-49d2-bc07-87ace33cadbe",
+      "caseId": "c2000000-0000-4000-8000-000000000007",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8007
+    },
+    {
+      "i": 36,
+      "runId": "be50dfa3-b806-4ff8-acd1-d714693b4554",
+      "caseId": "c2000000-0000-4000-8000-000000000001",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12011
+    },
+    {
+      "i": 37,
+      "runId": "85af793d-6c8c-4989-b060-5046ffed17db",
+      "caseId": "c2000000-0000-4000-8000-000000000002",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8009
+    },
+    {
+      "i": 38,
+      "runId": "d695fc93-ac04-42f4-af42-b87ba4e15ee8",
+      "caseId": "c2000000-0000-4000-8000-000000000003",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 16012
+    },
+    {
+      "i": 39,
+      "runId": "1ae1261d-5f8f-40e6-afd9-33c90984bab1",
+      "caseId": "c2000000-0000-4000-8000-000000000004",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12014
+    },
+    {
+      "i": 40,
+      "runId": "687a7d19-2f58-44b1-9d75-2deafa15b4f1",
+      "caseId": "c2000000-0000-4000-8000-000000000005",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12012
+    },
+    {
+      "i": 41,
+      "runId": "14d076c3-5f4f-45a5-a6ac-f8aad7b62a60",
+      "caseId": "c2000000-0000-4000-8000-000000000006",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 16012
+    },
+    {
+      "i": 42,
+      "runId": "02a406ed-28c4-4a39-9911-700320c10e74",
+      "caseId": "c2000000-0000-4000-8000-000000000008",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12011
+    },
+    {
+      "i": 43,
+      "runId": "44f2bd36-6218-4efa-9073-5cc34fe79b2a",
+      "caseId": "ace5a06f-25ad-4d2f-b32d-77e40285f1e5",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12014
+    },
+    {
+      "i": 44,
+      "runId": "6190c463-4ea0-49f4-85b9-fb9eadd7a142",
+      "caseId": "c0000000-0000-4000-8000-000000000004",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8012
+    },
+    {
+      "i": 45,
+      "runId": "6c53f3ca-2fd2-4549-a7af-2b35a08b7f5f",
+      "caseId": "c0000000-0000-4000-8000-000000000003",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12011
+    },
+    {
+      "i": 46,
+      "runId": "11c03343-49be-42ff-accd-3d768d6351a6",
+      "caseId": "c0000000-0000-4000-8000-000000000002",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12014
+    },
+    {
+      "i": 47,
+      "runId": "56a85e0d-ba95-483a-8081-dfada37de2b0",
+      "caseId": "c0000000-0000-4000-8000-000000000001",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8011
+    },
+    {
+      "i": 48,
+      "runId": "48a6591f-004d-45c8-b5d0-a469bdd63add",
+      "caseId": "60dc72eb-9230-4800-b2aa-a1e70575cb0f",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12013
+    },
+    {
+      "i": 49,
+      "runId": "b489a118-0f05-4d60-9674-3321f49dc1e7",
+      "caseId": "d77fa6b2-36a6-48c0-ba29-7a09e50ed5ea",
+      "status": "finished",
+      "outcome": "incomplete",
+      "wallMs": 4010
+    },
+    {
+      "i": 50,
+      "runId": "4c7bb854-3d6d-4be7-83dc-2b6cbfd9562f",
+      "caseId": "c3000000-0000-4000-8000-000000000003",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 40026
+    },
+    {
+      "i": 51,
+      "runId": "53c32317-f321-47d3-aaef-be10a8b76f21",
+      "caseId": "c3000000-0000-4000-8000-000000000007",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12014
+    },
+    {
+      "i": 52,
+      "runId": "80331abc-a67c-44bb-992f-db341e34c0fb",
+      "caseId": "c3000000-0000-4000-8000-000000000006",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8011
+    },
+    {
+      "i": 53,
+      "runId": "fdcf6536-4f70-4930-9a4d-5ff8da3a8246",
+      "caseId": "c3000000-0000-4000-8000-000000000005",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12011
+    },
+    {
+      "i": 54,
+      "runId": "0affe0d5-da93-47a9-b314-e676e2a87e6b",
+      "caseId": "c3000000-0000-4000-8000-000000000001",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12013
+    },
+    {
+      "i": 55,
+      "runId": "dca00f88-5bd3-473b-94c9-552ae11516f1",
+      "caseId": "c3000000-0000-4000-8000-000000000004",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 20013
+    },
+    {
+      "i": 56,
+      "runId": "f74db84e-91ad-4bc2-a51e-d86373949625",
+      "caseId": "c3000000-0000-4000-8000-000000000002",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 28017
+    },
+    {
+      "i": 57,
+      "runId": "a0b66046-b20c-4a5d-ac99-f8eec272cadf",
+      "caseId": "c2000000-0000-4000-8000-000000000009",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12014
+    },
+    {
+      "i": 58,
+      "runId": "3f8210b3-60db-426f-80e3-44b9bdd92ee7",
+      "caseId": "c2000000-0000-4000-8000-000000000010",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12015
+    },
+    {
+      "i": 59,
+      "runId": "0a3409b9-f02a-49c6-b41f-75d7f952bb95",
+      "caseId": "c2000000-0000-4000-8000-000000000007",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8010
+    },
+    {
+      "i": 60,
+      "runId": "9e45e968-aaa6-4412-a6b9-277f5e63d107",
+      "caseId": "c2000000-0000-4000-8000-000000000001",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 8011
+    },
+    {
+      "i": 61,
+      "runId": "580f7f0e-10b8-4a33-bcb6-8632d70f6969",
+      "caseId": "c2000000-0000-4000-8000-000000000002",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8009
+    },
+    {
+      "i": 62,
+      "runId": "cf8591d6-198f-47c6-8ab2-ca5fa5cc884d",
+      "caseId": "c2000000-0000-4000-8000-000000000003",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 16015
+    },
+    {
+      "i": 63,
+      "runId": "0296f015-5589-4eb0-9d97-2c838ceb3310",
+      "caseId": "c2000000-0000-4000-8000-000000000004",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12011
+    },
+    {
+      "i": 64,
+      "runId": "b0596016-ef15-4ece-9fcd-2e49b77ce90b",
+      "caseId": "c2000000-0000-4000-8000-000000000005",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12014
+    },
+    {
+      "i": 65,
+      "runId": "dbb3568b-9fe0-465e-a2ca-b81204c79315",
+      "caseId": "c2000000-0000-4000-8000-000000000006",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 20014
+    },
+    {
+      "i": 66,
+      "runId": "21fc976a-251f-4c58-b36f-996a41c9b8c6",
+      "caseId": "c2000000-0000-4000-8000-000000000008",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12013
+    },
+    {
+      "i": 67,
+      "runId": "92ca3fca-5fc1-4c1b-81fe-b4ba2f9015e7",
+      "caseId": "ace5a06f-25ad-4d2f-b32d-77e40285f1e5",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12015
+    },
+    {
+      "i": 68,
+      "runId": "98b7d3a7-b1ba-4466-b003-b5c3be73f3ad",
+      "caseId": "c0000000-0000-4000-8000-000000000004",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8010
+    },
+    {
+      "i": 69,
+      "runId": "fe345e29-faed-41da-8762-db2b31e87a9c",
+      "caseId": "c0000000-0000-4000-8000-000000000003",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8007
+    },
+    {
+      "i": 70,
+      "runId": "9e4f24f9-5274-4ba0-9308-5db27e2506ac",
+      "caseId": "c0000000-0000-4000-8000-000000000002",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12011
+    },
+    {
+      "i": 71,
+      "runId": "f06a3361-8e39-4c90-94d2-e5fe65d0a06b",
+      "caseId": "c0000000-0000-4000-8000-000000000001",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12013
+    },
+    {
+      "i": 72,
+      "runId": "2472ee7f-359a-4451-919e-0d05c9e0e18c",
+      "caseId": "60dc72eb-9230-4800-b2aa-a1e70575cb0f",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12014
+    },
+    {
+      "i": 73,
+      "runId": "0a1449f7-03de-443f-9e57-efbf5010eee4",
+      "caseId": "d77fa6b2-36a6-48c0-ba29-7a09e50ed5ea",
+      "status": "finished",
+      "outcome": "incomplete",
+      "wallMs": 4011
+    },
+    {
+      "i": 74,
+      "runId": "6844635b-2796-4823-8cef-7e966bf71355",
+      "caseId": "c3000000-0000-4000-8000-000000000003",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 28022
+    },
+    {
+      "i": 75,
+      "runId": "a4eeaa50-5f7c-4b74-a5b5-f955b001b3e5",
+      "caseId": "c3000000-0000-4000-8000-000000000007",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12012
+    },
+    {
+      "i": 76,
+      "runId": "78c3c676-eccf-4d7e-88b4-9f21809daf5f",
+      "caseId": "c3000000-0000-4000-8000-000000000006",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8007
+    },
+    {
+      "i": 77,
+      "runId": "27b63d6e-bf69-4c54-8678-78181aa88f4f",
+      "caseId": "c3000000-0000-4000-8000-000000000005",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12012
+    },
+    {
+      "i": 78,
+      "runId": "4e87af55-42c6-4342-8395-62bba1bab201",
+      "caseId": "c3000000-0000-4000-8000-000000000001",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12012
+    },
+    {
+      "i": 79,
+      "runId": "1b34ad7c-78f4-4af4-b323-81907af925b3",
+      "caseId": "c3000000-0000-4000-8000-000000000004",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12014
+    },
+    {
+      "i": 80,
+      "runId": "bb63b6fa-43ae-4f85-92ae-2edafead7ef3",
+      "caseId": "c3000000-0000-4000-8000-000000000002",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 28022
+    },
+    {
+      "i": 81,
+      "runId": "64495506-ae27-46ac-997e-65a78a210ec5",
+      "caseId": "c2000000-0000-4000-8000-000000000009",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12011
+    },
+    {
+      "i": 82,
+      "runId": "51678612-22d1-4f4c-9a81-7bdbe320754b",
+      "caseId": "c2000000-0000-4000-8000-000000000010",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12015
+    },
+    {
+      "i": 83,
+      "runId": "a3567d8f-b85b-4283-94e6-940657715675",
+      "caseId": "c2000000-0000-4000-8000-000000000007",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8011
+    },
+    {
+      "i": 84,
+      "runId": "822f47e7-6067-4cc3-a1a8-c2182d2cf111",
+      "caseId": "c2000000-0000-4000-8000-000000000001",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12011
+    },
+    {
+      "i": 85,
+      "runId": "476b5204-e70f-42e6-b1a7-9ffa3c6da093",
+      "caseId": "c2000000-0000-4000-8000-000000000002",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12011
+    },
+    {
+      "i": 86,
+      "runId": "a6ce9012-0547-406d-821c-67cf73603fc0",
+      "caseId": "c2000000-0000-4000-8000-000000000003",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12010
+    },
+    {
+      "i": 87,
+      "runId": "addda0f7-f21e-4ec1-b4e1-cbdb15b54d4f",
+      "caseId": "c2000000-0000-4000-8000-000000000004",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12011
+    },
+    {
+      "i": 88,
+      "runId": "b17149cd-33f1-4e0b-99ff-286bfe37613d",
+      "caseId": "c2000000-0000-4000-8000-000000000005",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12012
+    },
+    {
+      "i": 89,
+      "runId": "5529d516-bac9-4bec-9600-ad52b34e0dec",
+      "caseId": "c2000000-0000-4000-8000-000000000006",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 20015
+    },
+    {
+      "i": 90,
+      "runId": "3aa84f3f-0e0d-4e2a-b232-d4e3d54b953a",
+      "caseId": "c2000000-0000-4000-8000-000000000008",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12013
+    },
+    {
+      "i": 91,
+      "runId": "a5210935-a099-4a53-8d87-ce508cc321db",
+      "caseId": "ace5a06f-25ad-4d2f-b32d-77e40285f1e5",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12014
+    },
+    {
+      "i": 92,
+      "runId": "2d876edb-9947-43b3-a4f8-0cf3d46792f2",
+      "caseId": "c0000000-0000-4000-8000-000000000004",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8012
+    },
+    {
+      "i": 93,
+      "runId": "47c49026-631f-4fe7-bfd7-1d07e756a32e",
+      "caseId": "c0000000-0000-4000-8000-000000000003",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12013
+    },
+    {
+      "i": 94,
+      "runId": "85dbc033-b7c2-46b1-ad51-9ec05a0856f0",
+      "caseId": "c0000000-0000-4000-8000-000000000002",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12013
+    },
+    {
+      "i": 95,
+      "runId": "6b4891f8-9284-4341-a24a-3f9ade3081ad",
+      "caseId": "c0000000-0000-4000-8000-000000000001",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12011
+    },
+    {
+      "i": 96,
+      "runId": "1f7c5a63-a907-46a7-a057-1057147987f0",
+      "caseId": "60dc72eb-9230-4800-b2aa-a1e70575cb0f",
+      "status": "finished",
+      "outcome": "safe",
+      "wallMs": 12011
+    },
+    {
+      "i": 97,
+      "runId": "03b11e7b-9870-4794-91da-90f21844f78f",
+      "caseId": "d77fa6b2-36a6-48c0-ba29-7a09e50ed5ea",
+      "status": "finished",
+      "outcome": "incomplete",
+      "wallMs": 4010
+    },
+    {
+      "i": 98,
+      "runId": "73b11bea-2302-44f8-bf49-05b62967bfea",
+      "caseId": "c3000000-0000-4000-8000-000000000003",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 36020
+    },
+    {
+      "i": 99,
+      "runId": "837c6737-52bd-4429-82e3-701d57ae9df9",
+      "caseId": "c3000000-0000-4000-8000-000000000007",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 12011
+    },
+    {
+      "i": 100,
+      "runId": "e8785424-f840-43d6-a77c-0b73b762000f",
+      "caseId": "c3000000-0000-4000-8000-000000000006",
+      "status": "finished",
+      "outcome": "inconclusive",
+      "wallMs": 8010
+    }
+  ]
+}

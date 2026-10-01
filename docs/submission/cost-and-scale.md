@@ -1,6 +1,6 @@
 # AI cost analysis and scale plan
 
-**Status:** P01 / HDX-32. This revision adds a reproducible **fixture** baseline, a regression SLO wired into CI and an explicit scenario model. Basis: source at `6781412` and the public OpenRouter catalog retrieved **2026-09-29 21:07 UTC** (unauthenticated `GET https://openrouter.ai/api/v1/models`, 464 rows; no API key, no paid call). **No live run produced any figure here.** The authorized 100-case live acceptance (L02 / HDX-37) has not been run and needs separate authorization; until it is, this document states no live performance.
+**Status:** P01 / HDX-32. This revision adds a reproducible **fixture** baseline, a regression SLO wired into CI and an explicit scenario model. Basis: source at `6781412` and the public OpenRouter catalog retrieved **2026-09-29 21:07 UTC** (unauthenticated `GET https://openrouter.ai/api/v1/models`, 464 rows; no API key, no paid call). **No live run produced any figure here.** The authorized 100-case live acceptance (L02 / HDX-37) has since been run; its figures live in [its own evidence file](../../evals/results/live/2026-10-01/l02/README.md), not here, so this document remains fixture-only and states no live performance.
 
 Every figure carries one of these labels, and the three kinds of evidence are never mixed in one cell:
 
