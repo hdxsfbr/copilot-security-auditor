@@ -120,7 +120,7 @@ The injected latencies are arbitrary illustrative values, not measurements of a 
 
 - **Bug (O9).** A target handshake without `module_version` is recorded as the label `unknown`. Coverage treats that as an unestablished version, but regression state treats it as a verified one, so a safe replay there after a violation can be reported `fixed`. Contradicts the documented rule that version-less results are always `unknown`.
 - **Gap (O2).** `POST /api/runs` accepts a paid Judge whose conservative reservation exceeds the cap (202); only the worker refuses, after the target turn. The composer blocks it; the API does not.
-- **Gap (O1, O3, O5).** The application footer still reads "PHASE 02 / THREE TRUST BOUNDARIES"; the stop route returns one 409 for unknown and finished runs; three pre-matrix starter cases have no rubric or OWASP mapping, and coverage cannot be filtered by OWASP tag.
+- **Gap (O1, O3, O5).** The application footer still reads "PHASE 02 / THREE TRUST BOUNDARIES"; the stop route returns one 409 for unknown and finished runs; three pre-matrix starter cases have no rubric or OWASP mapping; scoped coverage can now be read by OWASP tag, with the three legacy cases in an explicit `unmapped` row.
 - **Notes (O4, O6, O7, O8).** A stagnation stop finishes an adaptive run `safe`; unresolved-charge holds gate only their own run; two `scopeOutcome` branches are unreachable defence in depth; the legacy `GET /api/coverage` still pools targets.
 
 After changing `tests/acceptance/` or its requirement register, re-run `record.ts` and `baseline.ts` and commit the new files: `traceability.test.ts` fails while the recorded evidence no longer matches the tests, and it also checks that these results stay labeled as fixture-only.
