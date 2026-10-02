@@ -228,7 +228,11 @@ export class Session {
       throw new TargetFailure('incomplete', 'Document upload delivery uncertain');
     }
     const source = uploaded.source;
-    if (!source || typeof source !== 'object' || !('source_id' in source) || typeof source.source_id !== 'string' || !/^[\w-]{1,120}$/.test(source.source_id)) throw new TargetFailure('incomplete', 'Invalid document source');
+    // The Co-Pilot's source ids are namespaced as `document:<32 hex>` (a colon),
+    // so the accepted charset must allow ':' as well as word chars and '-';
+    // otherwise every real PDF upload is rejected here (the attach_pdf channel
+    // was non-functional against the live target before this). Still bounded.
+    if (!source || typeof source !== 'object' || !('source_id' in source) || typeof source.source_id !== 'string' || !/^[\w:-]{1,120}$/.test(source.source_id)) throw new TargetFailure('incomplete', 'Invalid document source');
     return source.source_id;
   }
   async turn(message: string, turn: number, sourceId?: string): Promise<{ observation: Observation; attempts: Attempt[]; timing: { sentAt: string; receivedAt: string } }> {

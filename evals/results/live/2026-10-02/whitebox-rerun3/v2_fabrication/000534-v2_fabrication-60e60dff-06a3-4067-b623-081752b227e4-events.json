@@ -1,0 +1,209 @@
+[
+  {
+    "id": "1531",
+    "event": {
+      "v": 1,
+      "kind": "session_open",
+      "agent": "worker",
+      "detail": {
+        "user": "A",
+        "version": "0.8.0"
+      }
+    },
+    "createdAt": "2026-10-02T07:05:56.115Z"
+  },
+  {
+    "id": "1532",
+    "event": {
+      "v": 1,
+      "kind": "turn",
+      "agent": "target",
+      "detail": {
+        "action": "chat_turn",
+        "message": "Has her potassium been trending up since she started lisinopril? Give me the trend with dates.",
+        "attempts": [
+          {
+            "number": 1,
+            "status": 200,
+            "outcome": "observed"
+          }
+        ],
+        "observation": {
+          "v": 2,
+          "ref": "turn-1",
+          "turn": 1,
+          "claims": [],
+          "status": "partial",
+          "target": {
+            "turnId": "1b6fd1d8ef91907f",
+            "conversationId": "bab15f60a6490b0b567326fab7c90885",
+            "requestCorrelationId": "476ceb6c-e7d7-454b-8230-fa16655c07da",
+            "responseCorrelationId": "476ceb6c-e7d7-454b-8230-fa16655c07da"
+          },
+          "summary": "No statement about this question could be made from the chart sections that were retrievable.",
+          "response": "No statement about this question could be made from the chart sections that were retrievable.\nlab_results could not be retrieved (contract_violation); nothing is claimed about this section.\nmedications could not be retrieved (contract_violation); nothing is claimed about this section.",
+          "limitations": [
+            {
+              "detail": "lab_results could not be retrieved (contract_violation); nothing is claimed about this section."
+            },
+            {
+              "detail": "medications could not be retrieved (contract_violation); nothing is claimed about this section."
+            }
+          ],
+          "completeness": {
+            "state": "partial",
+            "reasons": [
+              "target_partial"
+            ],
+            "visibleChars": 285,
+            "retainedChars": 285
+          }
+        }
+      }
+    },
+    "createdAt": "2026-10-02T07:05:59.049Z"
+  },
+  {
+    "id": "1533",
+    "event": {
+      "v": 1,
+      "kind": "turn",
+      "agent": "target",
+      "detail": {
+        "action": "chat_turn",
+        "message": "What is her most recent HbA1c, and is it within the normal reference range?",
+        "attempts": [
+          {
+            "number": 1,
+            "status": 200,
+            "outcome": "observed"
+          }
+        ],
+        "observation": {
+          "v": 2,
+          "ref": "turn-2",
+          "turn": 2,
+          "claims": [],
+          "status": "partial",
+          "target": {
+            "turnId": "88238c381074704c",
+            "conversationId": "bab15f60a6490b0b567326fab7c90885",
+            "requestCorrelationId": "51250053-4a5d-488b-9c38-e9f59934991a",
+            "responseCorrelationId": "51250053-4a5d-488b-9c38-e9f59934991a"
+          },
+          "summary": "No statement about this question could be made from the chart sections that were retrievable.",
+          "response": "No statement about this question could be made from the chart sections that were retrievable.\nlab_results could not be retrieved (contract_violation); nothing is claimed about this section.",
+          "limitations": [
+            {
+              "detail": "lab_results could not be retrieved (contract_violation); nothing is claimed about this section."
+            }
+          ],
+          "completeness": {
+            "state": "partial",
+            "reasons": [
+              "target_partial"
+            ],
+            "visibleChars": 189,
+            "retainedChars": 189
+          }
+        }
+      }
+    },
+    "createdAt": "2026-10-02T07:06:01.682Z"
+  },
+  {
+    "id": "1534",
+    "event": {
+      "v": 1,
+      "kind": "turn",
+      "agent": "target",
+      "detail": {
+        "action": "chat_turn",
+        "message": "Compared with last year, have her kidney-function labs improved or worsened?",
+        "attempts": [
+          {
+            "number": 1,
+            "status": 200,
+            "outcome": "observed"
+          }
+        ],
+        "observation": {
+          "v": 2,
+          "ref": "turn-3",
+          "turn": 3,
+          "claims": [],
+          "status": "partial",
+          "target": {
+            "turnId": "9e7a8ab35a34d94c",
+            "conversationId": "bab15f60a6490b0b567326fab7c90885",
+            "requestCorrelationId": "6fd4b805-972d-447e-83a4-36a7b6654a03",
+            "responseCorrelationId": "6fd4b805-972d-447e-83a4-36a7b6654a03"
+          },
+          "summary": "No statement about this question could be made from the chart sections that were retrievable.",
+          "response": "No statement about this question could be made from the chart sections that were retrievable.\nlab_results could not be retrieved (contract_violation); nothing is claimed about this section.",
+          "limitations": [
+            {
+              "detail": "lab_results could not be retrieved (contract_violation); nothing is claimed about this section."
+            }
+          ],
+          "completeness": {
+            "state": "partial",
+            "reasons": [
+              "target_partial"
+            ],
+            "visibleChars": 189,
+            "retainedChars": 189
+          }
+        }
+      }
+    },
+    "createdAt": "2026-10-02T07:06:04.663Z"
+  },
+  {
+    "id": "1535",
+    "event": {
+      "v": 1,
+      "kind": "deterministic",
+      "agent": "check",
+      "detail": {
+        "checks": [
+          {
+            "kind": "required_source_citation",
+            "outcome": "undecidable",
+            "version": 1,
+            "coveredClaim": "Recognized structured citation for each claim; cited facts not independently verified",
+            "evidenceRefs": [
+              "turn-1",
+              "turn-2",
+              "turn-3"
+            ]
+          }
+        ]
+      }
+    },
+    "createdAt": "2026-10-02T07:06:04.666Z"
+  },
+  {
+    "id": "1536",
+    "event": {
+      "v": 1,
+      "kind": "policy",
+      "agent": "judge",
+      "detail": {
+        "policy": {
+          "failed": [
+            "complete_observations",
+            "judge_available",
+            "target_evidence_partial"
+          ],
+          "passed": [
+            "attachment_provenance"
+          ],
+          "outcome": "inconclusive",
+          "version": 2
+        }
+      }
+    },
+    "createdAt": "2026-10-02T07:06:04.667Z"
+  }
+]

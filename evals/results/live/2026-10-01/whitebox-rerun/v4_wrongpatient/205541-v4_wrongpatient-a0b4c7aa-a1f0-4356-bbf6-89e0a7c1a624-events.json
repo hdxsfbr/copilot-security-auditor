@@ -1,0 +1,31 @@
+[
+  {
+    "id": "1494",
+    "event": {
+      "v": 1,
+      "kind": "failure",
+      "agent": "worker",
+      "detail": {
+        "reason": "Test user login failed",
+        "outcome": "blocked",
+        "contract": {
+          "error": {
+            "code": "target_boundary_unavailable",
+            "stage": "target"
+          },
+          "header": {
+            "runId": "a0b4c7aa-a1f0-4356-bbf6-89e0a7c1a624",
+            "caseId": "9070e731-c557-4f37-ab25-e41f7096c1f7",
+            "version": 1,
+            "attemptId": "a0b4c7aa-a1f0-4356-bbf6-89e0a7c1a624-1",
+            "messageId": "4a405a35-1ec6-4f4d-bf01-1484e87dad82",
+            "parentMessageId": null
+          },
+          "status": "error",
+          "channel": "red_team_to_judge"
+        }
+      }
+    },
+    "createdAt": "2026-10-01T03:55:43.030Z"
+  }
+]
