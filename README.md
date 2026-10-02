@@ -7,8 +7,9 @@ An adversarial security platform for an **operator-owned synthetic** OpenEMR / C
 The [submission index](docs/submission/README.md) lists every artifact and its status. Read these first: [ARCHITECTURE.md](ARCHITECTURE.md), [THREAT_MODEL.md](THREAT_MODEL.md), [USERS.md](USERS.md), [KEY_METRICS.md](KEY_METRICS.md) and the [requirement-to-evidence register](docs/implementation/rubric.md).
 
 - **Live evidence:** one operator-authorized pass on 2026-09-29 against a LAN copy of the target (version 0.8.0): 14 selected cases and 4 adaptive runs, **0 confirmed findings**, $0 auditor spend, all roles on local `qwen3-coder:30b` ([results](evals/results/live/2026-09-29/README.md)).
+- **Demo video:** [youtu.be/xWuVfy0nqEM](https://youtu.be/xWuVfy0nqEM) — the 4:58 walkthrough (architecture and trust boundaries, a live run with structured evidence, deterministic scoring, coverage and the regression harness) with a separate, clearly-labelled public-deployment example.
 - **Not met:** the PRD's three discovered vulnerability reports. The operator accepted this gap for the early submission. The 13 findings in [docs/submission/triage.md](docs/submission/triage.md) are **simulated** and are not discoveries.
-- **Not done yet:** a 100-case live baseline and independent peer integration. The 10 starter-matrix cases also ran once each against the public deployment on 2026-09-30 ([evidence](evals/results/live/2026-09-30/public-matrix/README.md): 2 `safe`, 8 `inconclusive`, 0 findings); that is a starter-level pass, not a broad security assessment. The updated video is available as a local OpenMontage export.
+- **Not done yet:** a 100-case live baseline and independent peer integration. The 10 starter-matrix cases also ran once each against the public deployment on 2026-09-30 ([evidence](evals/results/live/2026-09-30/public-matrix/README.md): 2 `safe`, 8 `inconclusive`, 0 findings); that is a starter-level pass, not a broad security assessment.
 
 ## Architecture overview
 
