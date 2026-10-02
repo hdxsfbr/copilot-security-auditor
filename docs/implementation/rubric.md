@@ -100,7 +100,7 @@ The [submission index](../submission/README.md) lists every artifact and its pat
 | Actual AI development spend and projected production costs at 100/1K/10K/100K, with scaling changes | Partial | [Projections and scaling changes](../submission/cost-and-scale.md) exist and are labeled estimates. Actual development spend is an operator input and is blank | Operator |
 | Publicly accessible deployed target and auditor running live against it | External gate | The 10 starter-matrix cases ran against the public target (2 `safe`, 8 `inconclusive`, 0 findings); the auditor itself remains intentionally LAN-only. See the [results](../../evals/results/live/2026-09-30/public-matrix/README.md) | [L01](https://linear.app/hdxsfbr/issue/HDX-35), operator |
 | Early technical interview with Gauntlet staff | External gate | No schedule or completion evidence in the repository | Operator |
-| Final social post on X/LinkedIn with tag | External gate | Publishing is an operator action; no evidence here | Operator |
+| Final social post on X/LinkedIn with tag | External gate | Published: [x.com/_hdx_](https://x.com/_hdx_/status/2105948632432418950), tagging @GauntletAI | Operator |
 | Final AI interview after submission email | External gate | Outside this repository | Operator |
 
 The final submission remains incomplete while any external gate or unverified item stays open. Do not replace a real finding with a simulated one, a live workload with fixtures, a peer service with local code, or actual spend with a token estimate.
