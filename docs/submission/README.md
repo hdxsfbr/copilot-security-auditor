@@ -27,7 +27,7 @@ Every submission artifact, its path and its honest status. The broad local live 
 | 100-case live baseline | [l02](../../evals/results/live/2026-10-01/l02/README.md) | Done. 100/100 live cases in about 22 min, 0 findings; latency-bound (p50 12 s) at one in-flight run per target, daily-token halt did not bind at this scale |
 | Independent peer integration | none | **Optional** under the corrected PRD (not a core gap); not done, roles are in-process |
 | Early technical interview | none | Operator |
-| Final social post | none | Operator |
+| Final social post | [x.com/_hdx_](https://x.com/_hdx_/status/2105948632432418950) | Published, tagging @GauntletAI |
 | Final AI interview | none | Operator |
 
 ## Reproducing and extending the evidence
