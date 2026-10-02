@@ -94,7 +94,7 @@ The [submission index](../submission/README.md) lists every artifact and its pat
 | `USERS.md` users, workflow, automation justification | Implemented | [File](../../USERS.md) | |
 | `ARCHITECTURE.md` ~500-word opening, roles, communication, diagram, tradeoffs | Implemented | [File](../../ARCHITECTURE.md) | |
 | `KEY_METRICS.md` metrics and rationale | Implemented | [File](../../KEY_METRICS.md) | |
-| 3-5 minute demo video of live target attacks and decisions | External gate | Updated [script](../submission/demo-script.md); the local OpenMontage export runs 4:58 and appends a separate public-deployment example. The public outcome is stated with its evidence limits | Operator |
+| 3-5 minute demo video of live target attacks and decisions | External gate | Updated [script](../submission/demo-script.md); the published video ([youtu.be/xWuVfy0nqEM](https://youtu.be/xWuVfy0nqEM)) runs 4:58 and appends a separate public-deployment example. The public outcome is stated with its evidence limits | Operator |
 | `evals/` with reproducible results from 3 or more attack categories | Partial | See the `evals/` row above | [L01](https://linear.app/hdxsfbr/issue/HDX-35) |
 | At least 3 distinct professional **discovered** vulnerability reports | External gate | **NOT MET.** 0 confirmed findings in the live pass. Simulated triage does not count. The operator accepted the gap for the early submission | [L01](https://linear.app/hdxsfbr/issue/HDX-35), operator |
 | Actual AI development spend and projected production costs at 100/1K/10K/100K, with scaling changes | Partial | [Projections and scaling changes](../submission/cost-and-scale.md) exist and are labeled estimates. Actual development spend is an operator input and is blank | Operator |
